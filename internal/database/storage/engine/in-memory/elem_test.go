@@ -12,7 +12,7 @@ import (
 func TestNewElem(t *testing.T) {
 	e := NewFqElem(60)
 
-	require.Equal(t, e.batchSize, uint32(60))
+	require.Equal(t, e.batchSize, database.TxTime(60))
 	require.Equal(t, e.ver, database.NoTx)
 	require.Equal(t, e.dumpVer, database.NoTx)
 }
@@ -83,13 +83,24 @@ func TestElem_Value(t *testing.T) {
 }
 
 func TestElem_DumpValue(t *testing.T) {
+	now := database.TxTime(time.Now().Unix())
+
 	e := NewFqElem(60)
 	e.Incr(1000, database.NoTx)
-	require.Equal(t, database.ValueType(1), e.DumpValue(1000))
-	require.Equal(t, database.ValueType(0), e.DumpValue(999))
+	v, lastTime := e.DumpValue(1000)
+	require.Equal(t, database.ValueType(1), v)
+	require.Equal(t, now, lastTime)
+
+	v, lastTime = e.DumpValue(999)
+	require.Equal(t, database.ValueType(0), v)
+	require.Equal(t, database.TxTime(0), lastTime)
 
 	e.Incr(1001, database.Tx(1001))
-	require.Equal(t, database.ErrorValue, e.DumpValue(1000))
+	v, lastTime = e.DumpValue(1000)
+	require.Equal(t, database.ErrorValue, v)
+	require.Equal(t, database.TxTime(0), lastTime)
 
-	require.Equal(t, database.ValueType(2), e.DumpValue(1001))
+	v, lastTime = e.DumpValue(1001)
+	require.Equal(t, database.ValueType(2), v)
+	require.Equal(t, now, lastTime)
 }

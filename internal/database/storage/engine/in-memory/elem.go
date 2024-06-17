@@ -8,48 +8,51 @@ import (
 )
 
 type FqElem struct {
-	ver   database.Tx
-	value database.ValueType
+	ver      database.Tx
+	value    database.ValueType
+	lastTxAt database.TxTime
 
-	dumpVer   database.Tx
-	dumpValue database.ValueType
+	dumpVer      database.Tx
+	dumpValue    database.ValueType
+	dumpLastTxAt database.TxTime
 
-	batchSize uint32
-	lastTxAt  uint32
-
-	mu sync.Mutex
+	batchSize database.TxTime
+	mu        sync.Mutex
 }
 
 func NewFqElem(batchSize uint32) *FqElem {
 	return &FqElem{
-		batchSize: batchSize,
+		batchSize: database.TxTime(batchSize),
 		ver:       database.NoTx,
 		dumpVer:   database.NoTx,
 	}
 }
 
 func (e *FqElem) Incr(tx, dumpTx database.Tx) database.ValueType {
-	now := uint32(time.Now().Unix())
+	now := database.TxTime(time.Now().Unix())
 	batchStartsAt := now / e.batchSize * e.batchSize
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	value := e.value
 	if e.lastTxAt < batchStartsAt {
-		e.value = 0
+		value = 0
 	}
 
 	if e.dumpVer != dumpTx {
 		if tx == dumpTx {
-			e.dumpValue = e.value + 1
+			e.dumpValue = value + 1
 			e.dumpVer = tx
+			e.dumpLastTxAt = now
 		} else {
 			e.dumpValue = e.value
 			e.dumpVer = e.ver
+			e.dumpLastTxAt = e.lastTxAt
 		}
 	}
 
-	e.value++
+	e.value = value + 1
 	e.ver = tx
 	e.lastTxAt = now
 
@@ -63,17 +66,17 @@ func (e *FqElem) Value() database.ValueType {
 	return e.value
 }
 
-func (e *FqElem) DumpValue(dumpTx database.Tx) database.ValueType {
+func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxTime) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.ver <= dumpTx {
-		return e.value
+		return e.value, e.lastTxAt
 	}
 
 	if e.dumpVer <= dumpTx {
-		return e.dumpValue
+		return e.dumpValue, e.dumpLastTxAt
 	}
 
-	return database.ErrorValue
+	return database.ErrorValue, 0
 }

@@ -9,3 +9,5 @@ const (
 type ValueType int32
 
 type Tx uint64
+
+type TxTime uint32
