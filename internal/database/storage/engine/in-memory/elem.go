@@ -28,7 +28,7 @@ func NewFqElem(batchSize uint32) *FqElem {
 	}
 }
 
-func (e *FqElem) Incr(tx, dumpTx database.Tx) database.ValueType {
+func (e *FqElem) Incr(txCtx database.TxContext) database.ValueType {
 	now := database.TxTime(time.Now().Unix())
 	batchStartsAt := now / e.batchSize * e.batchSize
 
@@ -40,10 +40,10 @@ func (e *FqElem) Incr(tx, dumpTx database.Tx) database.ValueType {
 		value = 0
 	}
 
-	if e.dumpVer != dumpTx {
-		if tx == dumpTx {
+	if e.dumpVer != txCtx.DumpTx {
+		if txCtx.Tx == txCtx.DumpTx {
 			e.dumpValue = value + 1
-			e.dumpVer = tx
+			e.dumpVer = txCtx.Tx
 			e.dumpLastTxAt = now
 		} else {
 			e.dumpValue = e.value
@@ -53,7 +53,7 @@ func (e *FqElem) Incr(tx, dumpTx database.Tx) database.ValueType {
 	}
 
 	e.value = value + 1
-	e.ver = tx
+	e.ver = txCtx.Tx
 	e.lastTxAt = now
 
 	return e.value

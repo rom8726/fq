@@ -31,7 +31,7 @@ func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) databa
 		s.data[key] = v
 	}
 
-	return v.Incr(txCtx.Tx, txCtx.DumpTx)
+	return v.Incr(txCtx)
 }
 
 func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {

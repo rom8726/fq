@@ -21,14 +21,14 @@ func TestElem_Incr(t *testing.T) {
 	e := NewFqElem(60)
 
 	t.Run("no dump tx", func(t *testing.T) {
-		curr := e.Incr(1000, database.NoTx)
+		curr := e.Incr(database.TxContext{Tx: 1000, DumpTx: database.NoTx})
 		require.Equal(t, database.ValueType(1), curr)
 		require.Equal(t, database.ValueType(1), e.value)
 		require.Equal(t, database.Tx(1000), e.ver)
 		require.Equal(t, database.NoTx, e.dumpVer)
 		require.Equal(t, database.ValueType(0), e.dumpValue)
 
-		curr = e.Incr(1001, database.NoTx)
+		curr = e.Incr(database.TxContext{Tx: 1001, DumpTx: database.NoTx})
 		require.Equal(t, database.ValueType(2), curr)
 		require.Equal(t, database.ValueType(2), e.value)
 		require.Equal(t, database.Tx(1001), e.ver)
@@ -37,7 +37,7 @@ func TestElem_Incr(t *testing.T) {
 	})
 
 	t.Run("tx = dump tx", func(t *testing.T) {
-		curr := e.Incr(1002, 1002)
+		curr := e.Incr(database.TxContext{Tx: 1002, DumpTx: 1002})
 		require.Equal(t, database.ValueType(3), curr)
 		require.Equal(t, database.ValueType(3), e.value)
 		require.Equal(t, database.Tx(1002), e.ver)
@@ -46,14 +46,14 @@ func TestElem_Incr(t *testing.T) {
 	})
 
 	t.Run("tx > dump tx", func(t *testing.T) {
-		curr := e.Incr(1003, 1002)
+		curr := e.Incr(database.TxContext{Tx: 1003, DumpTx: 1002})
 		require.Equal(t, database.ValueType(4), curr)
 		require.Equal(t, database.ValueType(4), e.value)
 		require.Equal(t, database.Tx(1003), e.ver)
 		require.Equal(t, database.Tx(1002), e.dumpVer)
 		require.Equal(t, database.ValueType(3), e.dumpValue)
 
-		curr = e.Incr(1004, 1003)
+		curr = e.Incr(database.TxContext{Tx: 1004, DumpTx: 1003})
 		require.Equal(t, database.ValueType(5), curr)
 		require.Equal(t, database.ValueType(5), e.value)
 		require.Equal(t, database.Tx(1004), e.ver)
@@ -63,22 +63,22 @@ func TestElem_Incr(t *testing.T) {
 
 	t.Run("current batch changed", func(t *testing.T) {
 		e := NewFqElem(1)
-		curr := e.Incr(1000, database.NoTx)
+		curr := e.Incr(database.TxContext{Tx: 1000, DumpTx: database.NoTx})
 		require.Equal(t, database.ValueType(1), curr)
-		curr = e.Incr(1001, database.NoTx)
+		curr = e.Incr(database.TxContext{Tx: 1001, DumpTx: database.NoTx})
 		require.Equal(t, database.ValueType(2), curr)
 
 		time.Sleep(time.Millisecond * 1200)
-		curr = e.Incr(1002, database.NoTx)
+		curr = e.Incr(database.TxContext{Tx: 1002, DumpTx: database.NoTx})
 		require.Equal(t, database.ValueType(1), curr)
 	})
 }
 
 func TestElem_Value(t *testing.T) {
 	e := NewFqElem(60)
-	e.Incr(1000, database.NoTx)
+	e.Incr(database.TxContext{Tx: 1000, DumpTx: database.NoTx})
 	require.Equal(t, database.ValueType(1), e.value)
-	e.Incr(1000, database.Tx(1000))
+	e.Incr(database.TxContext{Tx: 1000, DumpTx: database.Tx(1000)})
 	require.Equal(t, database.ValueType(2), e.value)
 }
 
@@ -86,7 +86,7 @@ func TestElem_DumpValue(t *testing.T) {
 	now := database.TxTime(time.Now().Unix())
 
 	e := NewFqElem(60)
-	e.Incr(1000, database.NoTx)
+	e.Incr(database.TxContext{Tx: 1000, DumpTx: database.NoTx})
 	v, lastTime := e.DumpValue(1000)
 	require.Equal(t, database.ValueType(1), v)
 	require.Equal(t, now, lastTime)
@@ -95,7 +95,7 @@ func TestElem_DumpValue(t *testing.T) {
 	require.Equal(t, database.ValueType(0), v)
 	require.Equal(t, database.TxTime(0), lastTime)
 
-	e.Incr(1001, database.Tx(1001))
+	e.Incr(database.TxContext{Tx: 1001, DumpTx: database.Tx(1001)})
 	v, lastTime = e.DumpValue(1000)
 	require.Equal(t, database.ErrorValue, v)
 	require.Equal(t, database.TxTime(0), lastTime)
