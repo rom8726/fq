@@ -1,1 +1,1 @@
-package in_memory
+package inmemory
