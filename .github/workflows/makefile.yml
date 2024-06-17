@@ -1,0 +1,38 @@
+name: Makefile CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-go@v5.0.0
+        with:
+          go-version: 1.22
+
+      - uses: golangci/golangci-lint-action@v3.7.0
+        with:
+          version: v1.59.1
+
+      - name: Run linter
+        run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-go@v5.0.0
+        with:
+          go-version: 1.22
+
+      - name: Run tests
+        run: make test
