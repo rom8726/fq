@@ -11,3 +11,13 @@ type ValueType int32
 type Tx uint64
 
 type TxTime uint32
+
+type TxContext struct {
+	Tx     Tx
+	DumpTx Tx
+}
+
+type BatchKey struct {
+	BatchSize uint32
+	Key       string
+}
