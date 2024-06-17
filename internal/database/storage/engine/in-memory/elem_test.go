@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -9,14 +10,15 @@ import (
 )
 
 func TestNewElem(t *testing.T) {
-	e := NewElem()
+	e := NewFqElem(60)
 
+	require.Equal(t, e.batchSize, uint32(60))
 	require.Equal(t, e.ver, database.NoTx)
 	require.Equal(t, e.dumpVer, database.NoTx)
 }
 
 func TestElem_Incr(t *testing.T) {
-	e := NewElem()
+	e := NewFqElem(60)
 
 	t.Run("no dump tx", func(t *testing.T) {
 		curr := e.Incr(1000, database.NoTx)
@@ -58,10 +60,22 @@ func TestElem_Incr(t *testing.T) {
 		require.Equal(t, database.Tx(1003), e.dumpVer)
 		require.Equal(t, database.ValueType(4), e.dumpValue)
 	})
+
+	t.Run("current batch changed", func(t *testing.T) {
+		e := NewFqElem(1)
+		curr := e.Incr(1000, database.NoTx)
+		require.Equal(t, database.ValueType(1), curr)
+		curr = e.Incr(1001, database.NoTx)
+		require.Equal(t, database.ValueType(2), curr)
+
+		time.Sleep(time.Millisecond * 1200)
+		curr = e.Incr(1002, database.NoTx)
+		require.Equal(t, database.ValueType(1), curr)
+	})
 }
 
 func TestElem_Value(t *testing.T) {
-	e := NewElem()
+	e := NewFqElem(60)
 	e.Incr(1000, database.NoTx)
 	require.Equal(t, database.ValueType(1), e.value)
 	e.Incr(1000, database.Tx(1000))
@@ -69,7 +83,7 @@ func TestElem_Value(t *testing.T) {
 }
 
 func TestElem_DumpValue(t *testing.T) {
-	e := NewElem()
+	e := NewFqElem(60)
 	e.Incr(1000, database.NoTx)
 	require.Equal(t, database.ValueType(1), e.DumpValue(1000))
 	require.Equal(t, database.ValueType(0), e.DumpValue(999))

@@ -2,32 +2,44 @@ package inmemory
 
 import (
 	"sync"
+	"time"
 
 	"fq/internal/database"
 )
 
-type Elem struct {
+type FqElem struct {
 	ver   database.Tx
 	value database.ValueType
 
 	dumpVer   database.Tx
 	dumpValue database.ValueType
 
+	batchSize uint32
+	lastTxAt  uint32
+
 	mu sync.Mutex
 }
 
-func NewElem() *Elem {
-	return &Elem{
-		ver:     database.NoTx,
-		dumpVer: database.NoTx,
+func NewFqElem(batchSize uint32) *FqElem {
+	return &FqElem{
+		batchSize: batchSize,
+		ver:       database.NoTx,
+		dumpVer:   database.NoTx,
 	}
 }
 
-func (e *Elem) Incr(tx, dumpTx database.Tx) database.ValueType {
+func (e *FqElem) Incr(tx, dumpTx database.Tx) database.ValueType {
+	now := uint32(time.Now().Unix())
+	batchStartsAt := now / e.batchSize * e.batchSize
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.dumpVer < dumpTx {
+	if e.lastTxAt < batchStartsAt {
+		e.value = 0
+	}
+
+	if e.dumpVer != dumpTx {
 		if tx == dumpTx {
 			e.dumpValue = e.value + 1
 			e.dumpVer = tx
@@ -39,18 +51,19 @@ func (e *Elem) Incr(tx, dumpTx database.Tx) database.ValueType {
 
 	e.value++
 	e.ver = tx
+	e.lastTxAt = now
 
 	return e.value
 }
 
-func (e *Elem) Value() database.ValueType {
+func (e *FqElem) Value() database.ValueType {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	return e.value
 }
 
-func (e *Elem) DumpValue(dumpTx database.Tx) database.ValueType {
+func (e *FqElem) DumpValue(dumpTx database.Tx) database.ValueType {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
