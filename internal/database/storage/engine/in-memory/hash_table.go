@@ -6,6 +6,10 @@ import (
 	"fq/internal/database"
 )
 
+var HashTableBuilder = func(sz int) hashTable {
+	return NewHashTable(sz)
+}
+
 type HashTable struct {
 	mu   sync.RWMutex
 	data map[database.BatchKey]*FqElem
