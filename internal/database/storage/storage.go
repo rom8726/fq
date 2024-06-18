@@ -17,7 +17,7 @@ type Engine interface {
 
 type WAL interface {
 	Start()
-	Incr(context.Context, database.BatchKey) tools.FutureError
+	Incr(ctx context.Context, tx database.Tx, key database.BatchKey) tools.FutureError
 	Shutdown()
 }
 
@@ -60,14 +60,14 @@ func (s *Storage) Shutdown() {
 }
 
 func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
+	var txCtx database.TxContext // TODO: implement!
+
 	if s.wal != nil {
-		future := s.wal.Incr(ctx, key)
+		future := s.wal.Incr(ctx, txCtx.Tx, key)
 		if err := future.Get(); err != nil {
 			return 0, err
 		}
 	}
-
-	txCtx := database.TxContext{} // TODO: implement!
 
 	return s.engine.Incr(txCtx, key), nil
 }

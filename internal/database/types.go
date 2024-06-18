@@ -18,6 +18,7 @@ type TxContext struct {
 }
 
 type BatchKey struct {
-	BatchSize uint32
-	Key       string
+	BatchSize    uint32
+	BatchSizeStr string
+	Key          string
 }
