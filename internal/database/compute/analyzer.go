@@ -10,7 +10,7 @@ import (
 
 const (
 	incrQueryArgumentsNumber = 2
-	getQueryArgumentsNumber  = 1
+	getQueryArgumentsNumber  = 2
 )
 
 var queryArgumentsNumber = map[CommandID]int{

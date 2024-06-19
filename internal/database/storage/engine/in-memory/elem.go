@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"sync"
+	"time"
 
 	"fq/internal/database"
 )
@@ -58,8 +59,15 @@ func (e *FqElem) Incr(txCtx database.TxContext) database.ValueType {
 }
 
 func (e *FqElem) Value() database.ValueType {
+	now := time.Now().Unix()
+	batchStartsAt := database.TxTime(now) / e.batchSize * e.batchSize
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if e.lastTxAt < batchStartsAt {
+		return 0
+	}
 
 	return e.value
 }
