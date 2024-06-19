@@ -2,11 +2,15 @@ package inmemory
 
 import (
 	"errors"
+	"fmt"
 	"hash/fnv"
+	"strconv"
 
 	"github.com/rs/zerolog"
 
 	"fq/internal/database"
+	"fq/internal/database/compute"
+	"fq/internal/database/storage/wal"
 )
 
 var (
@@ -29,6 +33,7 @@ func NewEngine(
 	partitionsNumber int,
 	initPartitionSize int,
 	logger *zerolog.Logger,
+	stream <-chan []wal.LogData,
 ) (*Engine, error) {
 	if tableBuilder == nil {
 		return nil, ErrInvalidArgument
@@ -54,6 +59,14 @@ func NewEngine(
 	engine := &Engine{
 		partitions: partitions,
 		logger:     logger,
+	}
+
+	if stream != nil {
+		go func() {
+			for logs := range stream {
+				engine.applyLogs(logs)
+			}
+		}()
 	}
 
 	return engine, nil
@@ -95,4 +108,23 @@ func (e *Engine) partitionIdx(key string) int {
 	_, _ = hash.Write([]byte(key))
 
 	return int(hash.Sum32()) % len(e.partitions)
+}
+
+func (e *Engine) applyLogs(logs []wal.LogData) {
+	for _, log := range logs {
+		if log.CommandID == compute.IncrCommandID {
+			batchSize, err := strconv.ParseUint(log.Arguments[1], 10, 32)
+			if err != nil {
+				panic(fmt.Errorf("WAL log: parse batch size: %w", err))
+			}
+
+			batchKey := database.BatchKey{
+				BatchSize:    uint32(batchSize),
+				BatchSizeStr: log.Arguments[1],
+				Key:          log.Arguments[0],
+			}
+
+			e.Incr(database.TxContext{}, batchKey)
+		}
+	}
 }
