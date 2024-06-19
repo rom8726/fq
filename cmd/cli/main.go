@@ -63,7 +63,7 @@ func main() {
 			logger.Fatal().Err(err).Msg("failed to send query")
 		}
 
-		fmt.Println(string(response) + "\tElapsed: " + elapsed.String())
+		fmt.Println(string(response) + "\t\t\t\tElapsed: " + elapsed.String())
 	}
 }
 
