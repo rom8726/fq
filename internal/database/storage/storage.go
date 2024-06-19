@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -17,7 +18,7 @@ type Engine interface {
 
 type WAL interface {
 	Start()
-	Incr(ctx context.Context, tx database.Tx, key database.BatchKey) tools.FutureError
+	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Shutdown()
 }
 
@@ -60,10 +61,13 @@ func (s *Storage) Shutdown() {
 }
 
 func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
-	var txCtx database.TxContext // TODO: implement!
+	txCtx := database.TxContext{
+		CurrTime: database.TxTime(time.Now().Unix()),
+		FromWAL:  false,
+	} // TODO: implement!
 
 	if s.wal != nil {
-		future := s.wal.Incr(ctx, txCtx.Tx, key)
+		future := s.wal.Incr(ctx, txCtx, key)
 		if err := future.Get(); err != nil {
 			return 0, err
 		}

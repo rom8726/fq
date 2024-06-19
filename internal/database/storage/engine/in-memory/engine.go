@@ -79,7 +79,7 @@ func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.
 
 	if e.logger.GetLevel() == zerolog.DebugLevel {
 		e.logger.Debug().
-			Any("tx", txCtx.Tx).
+			Any("tx_ctx", txCtx).
 			Any("key", key).
 			Any("value", value).
 			Msg("success incr query")
@@ -118,13 +118,23 @@ func (e *Engine) applyLogs(logs []wal.LogData) {
 				panic(fmt.Errorf("WAL log: parse batch size: %w", err))
 			}
 
+			currTime, err := strconv.ParseInt(log.Arguments[2], 16, 64)
+			if err != nil {
+				panic(fmt.Errorf("WAL log: parse curr time: %w", err))
+			}
+
 			batchKey := database.BatchKey{
 				BatchSize:    uint32(batchSize),
 				BatchSizeStr: log.Arguments[1],
 				Key:          log.Arguments[0],
 			}
 
-			e.Incr(database.TxContext{}, batchKey)
+			txCtx := database.TxContext{
+				CurrTime: database.TxTime(currTime),
+				FromWAL:  true,
+			}
+
+			e.Incr(txCtx, batchKey)
 		}
 	}
 }

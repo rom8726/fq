@@ -2,6 +2,7 @@ package wal
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -84,8 +85,10 @@ func (w *WAL) Shutdown() {
 	<-w.closeDoneCh
 }
 
-func (w *WAL) Incr(ctx context.Context, tx database.Tx, key database.BatchKey) tools.FutureError {
-	return w.push(ctx, tx, compute.IncrCommandID, []string{key.Key, key.BatchSizeStr})
+func (w *WAL) Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.IncrCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
 }
 
 func (w *WAL) flushBatch() {

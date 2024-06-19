@@ -13,8 +13,10 @@ type Tx uint64
 type TxTime uint32
 
 type TxContext struct {
-	Tx     Tx
-	DumpTx Tx
+	Tx       Tx
+	DumpTx   Tx
+	CurrTime TxTime
+	FromWAL  bool
 }
 
 type BatchKey struct {
