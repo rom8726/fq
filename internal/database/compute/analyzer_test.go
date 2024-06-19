@@ -24,25 +24,21 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"TRUNCATE"},
 			err:    compute.ErrInvalidCommand,
 		},
-		"invalid number arguments for set query": {
+		"invalid number arguments for incr query": {
 			tokens: []string{"INCR", "key"},
 			err:    compute.ErrInvalidArguments,
 		},
 		"invalid number arguments for get query": {
-			tokens: []string{"GET", "key", "value"},
+			tokens: []string{"GET", "key"},
 			err:    compute.ErrInvalidArguments,
 		},
-		"invalid number arguments for del query": {
-			tokens: []string{"GET", "key", "value"},
-			err:    compute.ErrInvalidArguments,
-		},
-		"valid set query": {
-			tokens: []string{"INCR", "key", "batch"},
-			query:  compute.NewQuery(compute.IncrCommandID, []string{"key", "batch"}),
+		"valid incr query": {
+			tokens: []string{"INCR", "key", "60"},
+			query:  compute.NewQuery(compute.IncrCommandID, []string{"key", "60"}),
 		},
 		"valid get query": {
-			tokens: []string{"GET", "key"},
-			query:  compute.NewQuery(compute.GetCommandID, []string{"key"}),
+			tokens: []string{"GET", "key", "60"},
+			query:  compute.NewQuery(compute.GetCommandID, []string{"key", "60"}),
 		},
 	}
 

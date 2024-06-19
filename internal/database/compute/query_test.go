@@ -10,7 +10,7 @@ import (
 )
 
 func TestQuery(t *testing.T) {
-	query := compute.NewQuery(compute.GetCommandID, []string{"GET", "key"})
+	query := compute.NewQuery(compute.GetCommandID, []string{"GET", "key", "60"})
 	require.Equal(t, compute.GetCommandID, query.CommandID())
-	require.True(t, reflect.DeepEqual([]string{"GET", "key"}, query.Arguments()))
+	require.True(t, reflect.DeepEqual([]string{"GET", "key", "60"}, query.Arguments()))
 }

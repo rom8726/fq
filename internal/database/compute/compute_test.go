@@ -50,16 +50,16 @@ func TestHandleQuery(t *testing.T) {
 	ctx := context.Background()
 
 	parser := mocks.NewQueryParser(t)
-	parser.On("ParseQuery", mock.Anything, "GET key").
-		Return([]string{"GET", "key"}, nil)
+	parser.On("ParseQuery", mock.Anything, "GET key 60").
+		Return([]string{"GET", "key", "60"}, nil)
 	analyzer := mocks.NewQueryAnalyzer(t)
-	analyzer.On("AnalyzeQuery", mock.Anything, []string{"GET", "key"}).
-		Return(compute.NewQuery(compute.GetCommandID, []string{"key"}), nil)
+	analyzer.On("AnalyzeQuery", mock.Anything, []string{"GET", "key", "60"}).
+		Return(compute.NewQuery(compute.GetCommandID, []string{"key", "60"}), nil)
 
 	log := zerolog.Nop()
 	comp := compute.NewCompute(parser, analyzer, &log)
 
-	query, err := comp.HandleQuery(ctx, "GET key")
+	query, err := comp.HandleQuery(ctx, "GET key 60")
 	require.NoError(t, err)
-	require.Equal(t, compute.NewQuery(compute.GetCommandID, []string{"key"}), query)
+	require.Equal(t, compute.NewQuery(compute.GetCommandID, []string{"key", "60"}), query)
 }
