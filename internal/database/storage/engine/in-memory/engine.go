@@ -74,7 +74,7 @@ func NewEngine(
 }
 
 func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
-	if txCtx.FromWAL && isExpired(txCtx.CurrTime, key.BatchSize) {
+	if txCtx.FromWAL && isExpired(txCtx.CurrTime, database.TxTime(key.BatchSize)) {
 		// expired value
 		return 0 // return 0 for WAL worker
 	}
@@ -146,8 +146,14 @@ func (e *Engine) applyLogs(logs []wal.LogData) {
 	}
 }
 
-func isExpired(currTime database.TxTime, batchSize uint32) bool {
-	batchEndsAt := uint32(currTime)/batchSize*batchSize + batchSize - 1
+func isExpired(currTime, batchSize database.TxTime) bool {
+	return database.TxTime(time.Now().Unix()) > endOfBatch(currTime, batchSize)
+}
 
-	return uint32(time.Now().Unix()) > batchEndsAt
+func startOfBatch(currTime, batchSize database.TxTime) database.TxTime {
+	return currTime / batchSize * batchSize
+}
+
+func endOfBatch(currTime, batchSize database.TxTime) database.TxTime {
+	return startOfBatch(currTime, batchSize) + batchSize - 1
 }

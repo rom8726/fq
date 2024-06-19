@@ -29,7 +29,7 @@ func NewFqElem(batchSize uint32) *FqElem {
 }
 
 func (e *FqElem) Incr(txCtx database.TxContext) database.ValueType {
-	batchStartsAt := txCtx.CurrTime / e.batchSize * e.batchSize
+	batchStartsAt := startOfBatch(txCtx.CurrTime, e.batchSize)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -60,7 +60,7 @@ func (e *FqElem) Incr(txCtx database.TxContext) database.ValueType {
 
 func (e *FqElem) Value() database.ValueType {
 	now := time.Now().Unix()
-	batchStartsAt := database.TxTime(now) / e.batchSize * e.batchSize
+	batchStartsAt := startOfBatch(database.TxTime(now), e.batchSize)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
