@@ -32,6 +32,10 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"GET", "key"},
 			err:    compute.ErrInvalidArguments,
 		},
+		"invalid number arguments for del query": {
+			tokens: []string{"DEL", "key"},
+			err:    compute.ErrInvalidArguments,
+		},
 		"valid incr query": {
 			tokens: []string{"INCR", "key", "60"},
 			query:  compute.NewQuery(compute.IncrCommandID, []string{"key", "60"}),
@@ -39,6 +43,10 @@ func TestAnalyzeQuery(t *testing.T) {
 		"valid get query": {
 			tokens: []string{"GET", "key", "60"},
 			query:  compute.NewQuery(compute.GetCommandID, []string{"key", "60"}),
+		},
+		"valid del query": {
+			tokens: []string{"DEL", "key", "60"},
+			query:  compute.NewQuery(compute.DelCommandID, []string{"key", "60"}),
 		},
 	}
 

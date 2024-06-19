@@ -14,11 +14,13 @@ import (
 type Engine interface {
 	Incr(database.TxContext, database.BatchKey) database.ValueType
 	Get(database.BatchKey) (database.ValueType, bool)
+	Del(database.TxContext, database.BatchKey) bool
 }
 
 type WAL interface {
 	Start()
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
+	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Shutdown()
 }
 
@@ -80,4 +82,20 @@ func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueT
 	value, _ := s.engine.Get(key)
 
 	return value, nil
+}
+
+func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) {
+	txCtx := database.TxContext{
+		CurrTime: database.TxTime(time.Now().Unix()),
+		FromWAL:  false,
+	} // TODO: implement!
+
+	if s.wal != nil {
+		future := s.wal.Del(ctx, txCtx, key)
+		if err := future.Get(); err != nil {
+			return false, err
+		}
+	}
+
+	return s.engine.Del(txCtx, key), nil
 }

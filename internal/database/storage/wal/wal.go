@@ -91,6 +91,12 @@ func (w *WAL) Incr(ctx context.Context, txCtx database.TxContext, key database.B
 	return w.push(ctx, txCtx.Tx, compute.IncrCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
 }
 
+func (w *WAL) Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.DelCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
+}
+
 func (w *WAL) flushBatch() {
 	var batch []Log
 	tools.WithLock(&w.mutex, func() {

@@ -6,18 +6,21 @@ const (
 	UnknownCommandID CommandID = iota
 	IncrCommandID
 	GetCommandID
+	DelCommandID
 )
 
 var (
 	UnknownCommand = "UNKNOWN"
 	IncrCommand    = "INCR"
 	GetCommand     = "GET"
+	DelCommand     = "DEL"
 )
 
 var commandNamesToID = map[string]CommandID{
 	UnknownCommand: UnknownCommandID,
 	IncrCommand:    IncrCommandID,
 	GetCommand:     GetCommandID,
+	DelCommand:     DelCommandID,
 }
 
 func (c CommandID) Int() int {

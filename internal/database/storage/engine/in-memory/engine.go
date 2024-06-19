@@ -22,6 +22,7 @@ var (
 type hashTable interface {
 	Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType
 	Get(key database.BatchKey) (database.ValueType, bool)
+	Del(key database.BatchKey) bool
 }
 
 type Engine struct {
@@ -109,6 +110,25 @@ func (e *Engine) Get(key database.BatchKey) (database.ValueType, bool) {
 	return value, found
 }
 
+func (e *Engine) Del(txCtx database.TxContext, key database.BatchKey) bool {
+	if txCtx.FromWAL && isExpired(txCtx.CurrTime, database.TxTime(key.BatchSize)) {
+		return false
+	}
+
+	idx := e.partitionIdx(key.Key)
+	partition := e.partitions[idx]
+	res := partition.Del(key)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Any("key", key).
+			Bool("result", res).
+			Msg("success del query")
+	}
+
+	return res
+}
+
 func (e *Engine) partitionIdx(key string) int {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(key))
@@ -119,31 +139,48 @@ func (e *Engine) partitionIdx(key string) int {
 //nolint:gocritic
 func (e *Engine) applyLogs(logs []wal.LogData) {
 	for _, log := range logs {
-		if log.CommandID == compute.IncrCommandID {
-			batchSize, err := strconv.ParseUint(log.Arguments[1], 10, 32)
-			if err != nil {
-				panic(fmt.Errorf("WAL log: parse batch size: %w", err))
-			}
-
-			currTime, err := strconv.ParseInt(log.Arguments[2], 16, 64)
-			if err != nil {
-				panic(fmt.Errorf("WAL log: parse curr time: %w", err))
-			}
-
-			batchKey := database.BatchKey{
-				BatchSize:    uint32(batchSize),
-				BatchSizeStr: log.Arguments[1],
-				Key:          log.Arguments[0],
-			}
-
-			txCtx := database.TxContext{
-				CurrTime: database.TxTime(currTime),
-				FromWAL:  true,
-			}
-
-			e.Incr(txCtx, batchKey)
+		switch log.CommandID {
+		case compute.IncrCommandID:
+			e.applyIncrFromLog(log)
+		case compute.DelCommandID:
+			e.applyDelFromLog(log)
 		}
 	}
+}
+
+func (e *Engine) applyIncrFromLog(log wal.LogData) {
+	batchKey, txCtx := parseWALBatchKeyAndCtx(log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	e.Incr(txCtx, batchKey)
+}
+
+func (e *Engine) applyDelFromLog(log wal.LogData) {
+	batchKey, txCtx := parseWALBatchKeyAndCtx(log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	e.Del(txCtx, batchKey)
+}
+
+func parseWALBatchKeyAndCtx(key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext) {
+	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 32)
+	if err != nil {
+		panic(fmt.Errorf("WAL log: parse batch size: %w", err))
+	}
+
+	currTime, err := strconv.ParseInt(currTimeStr, 16, 64)
+	if err != nil {
+		panic(fmt.Errorf("WAL log: parse curr time: %w", err))
+	}
+
+	batchKey := database.BatchKey{
+		BatchSize:    uint32(batchSize),
+		BatchSizeStr: batchSizeStr,
+		Key:          key,
+	}
+
+	txCtx := database.TxContext{
+		CurrTime: database.TxTime(currTime),
+		FromWAL:  true,
+	}
+
+	return batchKey, txCtx
 }
 
 func isExpired(currTime, batchSize database.TxTime) bool {

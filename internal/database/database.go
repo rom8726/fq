@@ -24,6 +24,7 @@ type computeLayer interface {
 type storageLayer interface {
 	Incr(ctx context.Context, key BatchKey) (ValueType, error)
 	Get(ctx context.Context, key BatchKey) (ValueType, error)
+	Del(ctx context.Context, key BatchKey) (bool, error)
 }
 
 type Database struct {
@@ -57,6 +58,8 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		return d.handleIncrQuery(ctx, query)
 	case compute.GetCommandID:
 		return d.handleGetQuery(ctx, query)
+	case compute.DelCommandID:
+		return d.handleDelQuery(ctx, query)
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -94,6 +97,21 @@ func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) stri
 	return makeValueMsg(value)
 }
 
+func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) string {
+	arguments := query.Arguments()
+	key, err := makeBatchKey(arguments[0], arguments[1])
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	value, err := d.storageLayer.Del(ctx, key)
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	return makeBoolMsg(value)
+}
+
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
 	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 64)
 	if err != nil {
@@ -117,4 +135,8 @@ func makeErrorMsg(err error) string {
 
 func makeValueMsg(v ValueType) string {
 	return "[ok] " + strconv.FormatUint(uint64(v), 10)
+}
+
+func makeBoolMsg(v bool) string {
+	return "[ok] " + strconv.FormatBool(v)
 }

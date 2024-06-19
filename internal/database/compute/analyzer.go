@@ -11,11 +11,13 @@ import (
 const (
 	incrQueryArgumentsNumber = 2
 	getQueryArgumentsNumber  = 2
+	delQueryArgumentsNumber  = 2
 )
 
 var queryArgumentsNumber = map[CommandID]int{
 	IncrCommandID: incrQueryArgumentsNumber,
 	GetCommandID:  getQueryArgumentsNumber,
+	DelCommandID:  delQueryArgumentsNumber,
 }
 
 var (
