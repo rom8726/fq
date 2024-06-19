@@ -2,7 +2,6 @@ package inmemory
 
 import (
 	"sync"
-	"time"
 
 	"fq/internal/database"
 )
@@ -28,11 +27,6 @@ func NewHashTable(sz int) *HashTable {
 }
 
 func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
-	if txCtx.FromWAL && isExpired(txCtx.CurrTime, key.BatchSize) {
-		// expired value
-		return 0 // return 0 for WAL worker
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -57,10 +51,4 @@ func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {
 	}
 
 	return 0, false
-}
-
-func isExpired(currTime database.TxTime, batchSize uint32) bool {
-	batchEndsAt := uint32(currTime)/batchSize*batchSize + batchSize - 1
-
-	return uint32(time.Now().Unix()) > batchEndsAt
 }

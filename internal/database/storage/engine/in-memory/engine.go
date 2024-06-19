@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strconv"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -73,6 +74,11 @@ func NewEngine(
 }
 
 func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
+	if txCtx.FromWAL && isExpired(txCtx.CurrTime, key.BatchSize) {
+		// expired value
+		return 0 // return 0 for WAL worker
+	}
+
 	idx := e.partitionIdx(key.Key)
 	partition := e.partitions[idx]
 	value := partition.Incr(txCtx, key)
@@ -110,6 +116,7 @@ func (e *Engine) partitionIdx(key string) int {
 	return int(hash.Sum32()) % len(e.partitions)
 }
 
+//nolint:gocritic
 func (e *Engine) applyLogs(logs []wal.LogData) {
 	for _, log := range logs {
 		if log.CommandID == compute.IncrCommandID {
@@ -137,4 +144,10 @@ func (e *Engine) applyLogs(logs []wal.LogData) {
 			e.Incr(txCtx, batchKey)
 		}
 	}
+}
+
+func isExpired(currTime database.TxTime, batchSize uint32) bool {
+	batchEndsAt := uint32(currTime)/batchSize*batchSize + batchSize - 1
+
+	return uint32(time.Now().Unix()) > batchEndsAt
 }
