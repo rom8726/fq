@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"errors"
+	"math"
 	"strconv"
 
 	"github.com/rs/zerolog"
@@ -12,7 +13,8 @@ import (
 
 var (
 	errInternalConfiguration = errors.New("internal configuration error")
-	errInvalidBatchSize      = errors.New("batch is not a number")
+	errBatchSizeNotNumber    = errors.New("batch is not a number")
+	errInvalidBatchSize      = errors.New("invalid batch size")
 )
 
 type computeLayer interface {
@@ -93,8 +95,12 @@ func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) stri
 }
 
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
-	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 32)
+	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 64)
 	if err != nil {
+		return BatchKey{}, errBatchSizeNotNumber
+	}
+
+	if batchSize > math.MaxUint32 {
 		return BatchKey{}, errInvalidBatchSize
 	}
 
