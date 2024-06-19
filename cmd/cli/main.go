@@ -52,7 +52,9 @@ func main() {
 			continue
 		}
 
+		start := time.Now()
 		response, err := client.Send([]byte(request))
+		elapsed := time.Since(start)
 		if err != nil {
 			if errors.Is(err, syscall.EPIPE) {
 				logger.Fatal().Err(err).Msg("connection was closed")
@@ -61,7 +63,7 @@ func main() {
 			logger.Fatal().Err(err).Msg("failed to send query")
 		}
 
-		fmt.Println(string(response))
+		fmt.Println(string(response) + "\t Elapsed: " + elapsed.String())
 	}
 }
 
