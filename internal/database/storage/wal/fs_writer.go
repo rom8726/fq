@@ -102,6 +102,7 @@ func (w *FSWriter) writeLogs(logs []*LogData) error {
 func (w *FSWriter) acknowledgeWrite(batch []Log, err error) {
 	for _, log := range batch {
 		log.SetResult(err)
+		log.ReleaseLogData()
 	}
 }
 

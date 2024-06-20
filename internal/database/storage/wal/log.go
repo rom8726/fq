@@ -5,24 +5,19 @@ import (
 	"fq/internal/tools"
 )
 
-// type LogData struct {
-//	LSN       int64
-//	CommandID compute.CommandID
-//	Arguments []string
-//}
-
 type Log struct {
 	data         *LogData
 	writePromise tools.Promise[error]
 }
 
 func NewLog(lsn uint64, commandID compute.CommandID, args []string) Log {
+	logData := logDataPool.Get()
+	logData.LSN = lsn
+	logData.CommandId = uint32(commandID)
+	logData.Arguments = args
+
 	return Log{
-		data: &LogData{
-			LSN:       lsn,
-			CommandId: uint32(commandID),
-			Arguments: args,
-		},
+		data:         logData,
 		writePromise: tools.NewPromise[error](),
 	}
 }
@@ -33,4 +28,9 @@ func (l *Log) SetResult(err error) {
 
 func (l *Log) Result() tools.Future[error] {
 	return l.writePromise.GetFuture()
+}
+
+func (l *Log) ReleaseLogData() {
+	logDataPool.Put(l.data)
+	l.data = nil
 }
