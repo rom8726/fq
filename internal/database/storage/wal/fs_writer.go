@@ -2,12 +2,13 @@ package wal
 
 import (
 	"bytes"
-	"encoding/gob"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/rs/zerolog"
+	"google.golang.org/protobuf/proto"
 )
 
 var now = time.Now
@@ -31,6 +32,10 @@ func NewFSWriter(directory string, maxSegmentSize int, logger *zerolog.Logger) *
 }
 
 func (w *FSWriter) WriteBatch(batch []Log) {
+	if len(batch) == 0 {
+		return
+	}
+
 	if w.segment == nil {
 		if err := w.rotateSegment(); err != nil {
 			w.acknowledgeWrite(batch, err)
@@ -47,7 +52,7 @@ func (w *FSWriter) WriteBatch(batch []Log) {
 		}
 	}
 
-	logs := make([]LogData, 0, len(batch))
+	logs := make([]*LogData, 0, len(batch))
 	for _, log := range batch {
 		logs = append(logs, log.data)
 	}
@@ -66,16 +71,23 @@ func (w *FSWriter) WriteBatch(batch []Log) {
 	w.acknowledgeWrite(batch, err)
 }
 
-func (w *FSWriter) writeLogs(logs []LogData) error {
-	var buffer bytes.Buffer
-	encoder := gob.NewEncoder(&buffer)
-	if err := encoder.Encode(logs); err != nil {
+func (w *FSWriter) writeLogs(logs []*LogData) error {
+	logDataArray := LogDataArray{Elems: logs}
+	data, err := proto.Marshal(&logDataArray)
+	if err != nil {
 		w.logger.Warn().Err(err).Msg("failed to encode logs data")
 
 		return err
 	}
 
-	writtenBytes, err := w.segment.Write(buffer.Bytes())
+	sizeData := uint32ToBytes(uint32(len(data)))
+
+	var buff bytes.Buffer
+	buff.Grow(len(data) + len(sizeData))
+	buff.Write(sizeData)
+	buff.Write(data)
+
+	writtenBytes, err := w.segment.Write(buff.Bytes())
 	if err != nil {
 		w.logger.Warn().Err(err).Msg("failed to write logs data")
 
@@ -108,4 +120,15 @@ func (w *FSWriter) rotateSegment() error {
 	w.segmentSize = 0
 
 	return nil
+}
+
+func uint32ToBytes(num uint32) []byte {
+	res := make([]byte, 4)
+	binary.BigEndian.PutUint32(res, num)
+
+	return res
+}
+
+func bytesToUint32(arr []byte) uint32 {
+	return binary.BigEndian.Uint32(arr)
 }

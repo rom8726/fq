@@ -20,11 +20,11 @@ type Initializer struct {
 	engine storage.Engine
 	server *network.TCPServer
 	logger *zerolog.Logger
-	stream chan []walPkg.LogData
+	stream chan []*walPkg.LogData
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
-	stream := make(chan []walPkg.LogData, 1)
+	stream := make(chan []*walPkg.LogData, 1)
 
 	logger, err := CreateLogger(cfg.Logging)
 	if err != nil {

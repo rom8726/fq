@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package wal;
+option go_package = "/wal";
+
+message LogData {
+  uint64 LSN = 1;
+  uint32 command_id = 2;
+  repeated string arguments = 3;
+}
+
+message LogDataArray {
+  repeated LogData elems = 1;
+}

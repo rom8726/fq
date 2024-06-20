@@ -35,7 +35,7 @@ func NewEngine(
 	partitionsNumber int,
 	initPartitionSize int,
 	logger *zerolog.Logger,
-	stream <-chan []wal.LogData,
+	stream <-chan []*wal.LogData,
 ) (*Engine, error) {
 	if tableBuilder == nil {
 		return nil, ErrInvalidArgument
@@ -137,9 +137,9 @@ func (e *Engine) partitionIdx(key string) int {
 }
 
 //nolint:gocritic
-func (e *Engine) applyLogs(logs []wal.LogData) {
+func (e *Engine) applyLogs(logs []*wal.LogData) {
 	for _, log := range logs {
-		switch log.CommandID {
+		switch compute.CommandID(log.CommandId) {
 		case compute.IncrCommandID:
 			e.applyIncrFromLog(log)
 		case compute.DelCommandID:
@@ -148,12 +148,12 @@ func (e *Engine) applyLogs(logs []wal.LogData) {
 	}
 }
 
-func (e *Engine) applyIncrFromLog(log wal.LogData) {
+func (e *Engine) applyIncrFromLog(log *wal.LogData) {
 	batchKey, txCtx := parseWALBatchKeyAndCtx(log.Arguments[0], log.Arguments[1], log.Arguments[2])
 	e.Incr(txCtx, batchKey)
 }
 
-func (e *Engine) applyDelFromLog(log wal.LogData) {
+func (e *Engine) applyDelFromLog(log *wal.LogData) {
 	batchKey, txCtx := parseWALBatchKeyAndCtx(log.Arguments[0], log.Arguments[1], log.Arguments[2])
 	e.Del(txCtx, batchKey)
 }

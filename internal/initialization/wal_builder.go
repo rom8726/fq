@@ -20,7 +20,7 @@ const defaultWALDataDirectory = "./data/picodb/wal"
 func CreateWAL(
 	cfg *config.WALConfig,
 	logger *zerolog.Logger,
-	stream chan<- []wal.LogData,
+	stream chan<- []*wal.LogData,
 ) (storage.WAL, error) {
 	flushingBatchSize := defaultFlushingBatchSize
 	flushingBatchTimeout := defaultFlushingBatchTimeout

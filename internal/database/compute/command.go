@@ -1,6 +1,6 @@
 package compute
 
-type CommandID int
+type CommandID uint32
 
 const (
 	UnknownCommandID CommandID = iota
