@@ -18,7 +18,7 @@ type fsWriter interface {
 }
 
 type fsReader interface {
-	ReadLogs() ([]LogData, error)
+	ReadLogs() ([]*LogData, error)
 }
 
 type WAL struct {
@@ -40,7 +40,7 @@ type WAL struct {
 func NewWAL(
 	fsWriter fsWriter,
 	fsReader fsReader,
-	stream chan<- []LogData,
+	stream chan<- []*LogData,
 	flushTimeout time.Duration,
 	maxBatchSize int,
 	logger *zerolog.Logger,
@@ -117,7 +117,7 @@ func (w *WAL) push(
 	commandID compute.CommandID,
 	args []string,
 ) tools.FutureError {
-	record := NewLog(int64(tx), commandID, args)
+	record := NewLog(uint64(tx), commandID, args)
 
 	tools.WithLock(&w.mutex, func() {
 		w.batch = append(w.batch, record)
@@ -130,7 +130,7 @@ func (w *WAL) push(
 	return record.Result()
 }
 
-func (w *WAL) tryRecoverWALSegments(stream chan<- []LogData) {
+func (w *WAL) tryRecoverWALSegments(stream chan<- []*LogData) {
 	logs, err := w.fsReader.ReadLogs()
 	if err != nil {
 		w.logger.Error().Err(err).Msg("failed to recover WAL segments")
