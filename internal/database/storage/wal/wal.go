@@ -18,7 +18,7 @@ type fsWriter interface {
 }
 
 type fsReader interface {
-	ReadLogs() ([]*LogData, error)
+	ReadLogs(ctx context.Context) ([]*LogData, error)
 }
 
 type WAL struct {
@@ -26,6 +26,8 @@ type WAL struct {
 	fsReader     fsReader
 	flushTimeout time.Duration
 	maxBatchSize int
+
+	stream chan<- []*LogData
 
 	mutex   sync.Mutex
 	batch   []Log
@@ -45,20 +47,17 @@ func NewWAL(
 	maxBatchSize int,
 	logger *zerolog.Logger,
 ) *WAL {
-	wal := &WAL{
+	return &WAL{
 		fsWriter:     fsWriter,
 		fsReader:     fsReader,
 		flushTimeout: flushTimeout,
 		maxBatchSize: maxBatchSize,
+		stream:       stream,
 		batches:      make(chan []Log, 1),
 		closeCh:      make(chan struct{}),
 		closeDoneCh:  make(chan struct{}),
 		logger:       logger,
 	}
-
-	wal.tryRecoverWALSegments(stream)
-
-	return wal
 }
 
 func (w *WAL) Start() {
@@ -130,11 +129,17 @@ func (w *WAL) push(
 	return record.Result()
 }
 
-func (w *WAL) tryRecoverWALSegments(stream chan<- []*LogData) {
-	logs, err := w.fsReader.ReadLogs()
+func (w *WAL) TryRecoverWALSegments(ctx context.Context) (lastLSN uint64, err error) {
+	logs, err := w.fsReader.ReadLogs(ctx)
 	if err != nil {
-		w.logger.Error().Err(err).Msg("failed to recover WAL segments")
-	} else {
-		stream <- logs
+		return 0, err
 	}
+
+	if len(logs) == 0 {
+		return 0, nil
+	}
+
+	w.stream <- logs
+
+	return logs[len(logs)-1].LSN, nil
 }

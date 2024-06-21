@@ -79,6 +79,12 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 		return nil
 	})
 
+	if i.wal != nil {
+		if err := strg.LoadWAL(ctx); err != nil {
+			return err
+		}
+	}
+
 	group.Go(func() error {
 		return i.server.HandleQueries(groupCtx, func(ctx context.Context, query []byte) []byte {
 			response := db.HandleQuery(ctx, string(query))

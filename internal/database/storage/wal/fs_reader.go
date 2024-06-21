@@ -2,6 +2,7 @@ package wal
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -24,7 +25,7 @@ func NewFSReader(directory string, logger *zerolog.Logger) *FSReader {
 	}
 }
 
-func (r *FSReader) ReadLogs() ([]*LogData, error) {
+func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
 	files, err := os.ReadDir(r.directory)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan WAL directory: %w", err)
@@ -32,12 +33,18 @@ func (r *FSReader) ReadLogs() ([]*LogData, error) {
 
 	var logs []*LogData
 	for _, file := range files {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		if file.IsDir() {
 			continue
 		}
 
 		filename := fmt.Sprintf("%s/%s", r.directory, file.Name())
-		segmentedLogs, err := r.readSegment(filename)
+		segmentedLogs, err := r.readSegment(ctx, filename)
 		if err != nil {
 			return nil, fmt.Errorf("failed to recove WAL segment: %w", err)
 		}
@@ -52,7 +59,7 @@ func (r *FSReader) ReadLogs() ([]*LogData, error) {
 	return logs, nil
 }
 
-func (r *FSReader) readSegment(filename string) ([]*LogData, error) {
+func (r *FSReader) readSegment(ctx context.Context, filename string) ([]*LogData, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
@@ -63,6 +70,12 @@ func (r *FSReader) readSegment(filename string) ([]*LogData, error) {
 	sizeBatchBytes := make([]byte, 4)
 
 	for buffer.Len() > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		_, err = buffer.Read(sizeBatchBytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read next batch size from WAL segment: %w", err)

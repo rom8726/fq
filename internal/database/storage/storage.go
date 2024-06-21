@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -18,6 +19,7 @@ type Engine interface {
 }
 
 type WAL interface {
+	TryRecoverWALSegments(ctx context.Context) (lastLSN uint64, err error)
 	Start()
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
@@ -28,6 +30,8 @@ type Storage struct {
 	engine Engine
 	wal    WAL
 	logger *zerolog.Logger
+
+	tx atomic.Uint64
 }
 
 func NewStorage(
@@ -50,6 +54,21 @@ func NewStorage(
 	}, nil
 }
 
+func (s *Storage) LoadWAL(ctx context.Context) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	lastLSN, err := s.wal.TryRecoverWALSegments(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.tx.Store(lastLSN)
+
+	return nil
+}
+
 func (s *Storage) Start(context.Context) {
 	if s.wal != nil {
 		s.wal.Start()
@@ -64,9 +83,10 @@ func (s *Storage) Shutdown() {
 
 func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
 	txCtx := database.TxContext{
+		Tx:       database.Tx(s.tx.Add(1)),
 		CurrTime: database.TxTime(time.Now().Unix()),
 		FromWAL:  false,
-	} // TODO: implement!
+	}
 
 	if s.wal != nil {
 		future := s.wal.Incr(ctx, txCtx, key)
@@ -86,9 +106,10 @@ func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueT
 
 func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) {
 	txCtx := database.TxContext{
+		Tx:       database.Tx(s.tx.Add(1)),
 		CurrTime: database.TxTime(time.Now().Unix()),
 		FromWAL:  false,
-	} // TODO: implement!
+	}
 
 	if s.wal != nil {
 		future := s.wal.Del(ctx, txCtx, key)
