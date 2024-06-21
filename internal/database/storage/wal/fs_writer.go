@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -82,7 +81,9 @@ func (w *FSWriter) writeLogs(logs []*LogData) error {
 
 	sizeData := uint32ToBytes(uint32(len(data)))
 
-	var buff bytes.Buffer
+	buff := bytesBufferPool.Get()
+	defer bytesBufferPool.Put(buff)
+
 	buff.Grow(len(data) + len(sizeData))
 	buff.Write(sizeData)
 	buff.Write(data)
