@@ -10,6 +10,7 @@ type TCPClient struct {
 	connection     net.Conn
 	maxMessageSize int
 	idleTimeout    time.Duration
+	bufferPool     *bytesPool
 }
 
 func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration) (*TCPClient, error) {
@@ -22,6 +23,7 @@ func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration)
 		connection:     connection,
 		maxMessageSize: maxMessageSize,
 		idleTimeout:    idleTimeout,
+		bufferPool:     newBytesPool(maxMessageSize),
 	}, nil
 }
 
@@ -34,11 +36,16 @@ func (c *TCPClient) Send(request []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	response := make([]byte, c.maxMessageSize)
+	response := c.bufferPool.Get()
+	defer c.bufferPool.Put(response)
+
 	count, err := c.connection.Read(response)
 	if err != nil {
 		return nil, err
 	}
 
-	return response[:count], nil
+	result := make([]byte, count)
+	copy(result, response[:count])
+
+	return result, nil
 }

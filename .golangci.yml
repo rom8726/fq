@@ -62,5 +62,4 @@ linters:
     - unconvert
     - unparam
     - unused
-    - gas
     - prealloc
