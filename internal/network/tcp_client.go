@@ -28,6 +28,10 @@ func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration)
 }
 
 func (c *TCPClient) Send(request []byte) ([]byte, error) {
+	if len(request) > c.maxMessageSize {
+		return nil, fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
+	}
+
 	if err := c.connection.SetDeadline(time.Now().Add(c.idleTimeout)); err != nil {
 		return nil, err
 	}
