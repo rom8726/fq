@@ -28,16 +28,23 @@ type storageLayer interface {
 }
 
 type Database struct {
-	computeLayer computeLayer
-	storageLayer storageLayer
-	logger       *zerolog.Logger
+	computeLayer   computeLayer
+	storageLayer   storageLayer
+	logger         *zerolog.Logger
+	maxMessageSize int
 }
 
-func NewDatabase(computeLayer computeLayer, storageLayer storageLayer, logger *zerolog.Logger) *Database {
+func NewDatabase(
+	computeLayer computeLayer,
+	storageLayer storageLayer,
+	logger *zerolog.Logger,
+	maxMessageSize int,
+) *Database {
 	return &Database{
-		computeLayer: computeLayer,
-		storageLayer: storageLayer,
-		logger:       logger,
+		computeLayer:   computeLayer,
+		storageLayer:   storageLayer,
+		logger:         logger,
+		maxMessageSize: maxMessageSize,
 	}
 }
 
@@ -60,6 +67,8 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		return d.handleGetQuery(ctx, query)
 	case compute.DelCommandID:
 		return d.handleDelQuery(ctx, query)
+	case compute.MsgSizeCommandID:
+		return d.handleMsgSizeQuery()
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -112,6 +121,10 @@ func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) stri
 	return makeBoolMsg(value)
 }
 
+func (d *Database) handleMsgSizeQuery() string {
+	return makeValueMsg(ValueType(d.maxMessageSize))
+}
+
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
 	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 64)
 	if err != nil {
@@ -134,7 +147,7 @@ func makeErrorMsg(err error) string {
 }
 
 func makeValueMsg(v ValueType) string {
-	return "ok|" + strconv.FormatUint(uint64(v), 16)
+	return "ok|" + strconv.FormatUint(uint64(v), 10)
 }
 
 func makeBoolMsg(v bool) string {

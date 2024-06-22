@@ -59,6 +59,11 @@ func (c *TCPClient) Close() error {
 	return c.connection.Close()
 }
 
+func (c *TCPClient) SetMaxMessageSizeUnsafe(size int) {
+	c.maxMessageSize = size
+	c.bufferPool = newBytesPool(size)
+}
+
 func (c *TCPClient) deadline(ctx context.Context) time.Time {
 	stdDeadline := time.Now().Add(c.idleTimeout)
 	deadline, ok := ctx.Deadline()

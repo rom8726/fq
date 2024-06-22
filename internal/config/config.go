@@ -8,6 +8,8 @@ import (
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"gopkg.in/yaml.v3"
+
+	"fq/internal/tools"
 )
 
 const (
@@ -27,6 +29,10 @@ type NetworkConfig struct {
 	MaxConnections int           `yaml:"max_connections"`
 	MaxMessageSize string        `yaml:"max_message_size"`
 	IdleTimeout    time.Duration `yaml:"idle_timeout"`
+}
+
+func (cfg NetworkConfig) ParseMaxMessageSize() (int, error) {
+	return tools.ParseSize(cfg.MaxMessageSize)
 }
 
 type LoggingConfig struct {

@@ -44,7 +44,7 @@ func parseResponse(resp []byte) (responseStruct, error) {
 	data := string(resp[idx+1:])
 	switch status {
 	case statusOK:
-		v, err := strconv.ParseUint(data, 16, 64)
+		v, err := strconv.ParseUint(data, 10, 64)
 		if err != nil {
 			return responseStruct{}, ErrCorruptedResponse
 		}

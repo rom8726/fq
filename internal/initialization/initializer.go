@@ -16,11 +16,12 @@ import (
 )
 
 type Initializer struct {
-	wal    storage.WAL
-	engine storage.Engine
-	server *network.TCPServer
-	logger *zerolog.Logger
-	stream chan []*walPkg.LogData
+	wal            storage.WAL
+	engine         storage.Engine
+	server         *network.TCPServer
+	logger         *zerolog.Logger
+	stream         chan []*walPkg.LogData
+	maxMessageSize int
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
@@ -46,12 +47,18 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		return nil, fmt.Errorf("failed to initialize network: %w", err)
 	}
 
+	maxMessageSize, err := cfg.Network.ParseMaxMessageSize()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse max message size: %w", err)
+	}
+
 	initializer := &Initializer{
-		wal:    wal,
-		engine: dbEngine,
-		server: tcpServer,
-		logger: logger,
-		stream: stream,
+		wal:            wal,
+		engine:         dbEngine,
+		server:         tcpServer,
+		logger:         logger,
+		stream:         stream,
+		maxMessageSize: maxMessageSize,
 	}
 
 	return initializer, nil
@@ -69,7 +76,7 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 
 	defer strg.Shutdown()
 
-	db := database.NewDatabase(computeLayer, strg, i.logger)
+	db := database.NewDatabase(computeLayer, strg, i.logger, i.maxMessageSize)
 
 	group, groupCtx := errgroup.WithContext(ctx)
 

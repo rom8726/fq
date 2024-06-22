@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/logrusorgru/aurora/v4"
 	"github.com/rs/zerolog"
 
 	"fq/internal/network"
@@ -68,7 +70,7 @@ func main() {
 				logger.Fatal().Err(err).Msg("failed to send query")
 			}
 
-			fmt.Println(string(response) + "\t\t\t\tElapsed: " + elapsed.String())
+			fmt.Printf("%s\t\t\t\tElapsed: %s\n", parseResp(response), elapsed.String())
 		}()
 	}
 }
@@ -81,4 +83,15 @@ func consoleLogger() *zerolog.Logger {
 		Logger()
 
 	return &logger
+}
+
+func parseResp(response []byte) aurora.Value {
+	idx := bytes.IndexByte(response, '|')
+	status := string(response[:idx])
+	data := string(response[idx+1:])
+	if status == "ok" {
+		return aurora.Green("[fq] > " + data)
+	}
+
+	return aurora.Red("[fq] > " + data)
 }
