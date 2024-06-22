@@ -14,12 +14,17 @@ import (
 	"fq/internal/database/storage/wal"
 )
 
+const (
+	isExpiredDelta = database.TxTime(60)
+)
+
 var (
 	ErrInvalidArgument           = errors.New("invalid argument")
 	ErrInvalidHashTablePartition = errors.New("hash table partition is invalid")
 )
 
 type hashTable interface {
+	Clean()
 	Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
@@ -31,9 +36,11 @@ type Engine struct {
 }
 
 func NewEngine(
-	tableBuilder func(sz int) hashTable,
+	tableBuilder func(sz, cleanPauseThreshold int, cleanPause time.Duration) hashTable,
 	partitionsNumber int,
 	initPartitionSize int,
+	cleanPause time.Duration,
+	cleanPauseThreshold int,
 	logger *zerolog.Logger,
 	stream <-chan []*wal.LogData,
 ) (*Engine, error) {
@@ -51,7 +58,7 @@ func NewEngine(
 
 	partitions := make([]hashTable, partitionsNumber)
 	for i := 0; i < partitionsNumber; i++ {
-		if partition := tableBuilder(initPartitionSize); partition != nil {
+		if partition := tableBuilder(initPartitionSize, cleanPauseThreshold, cleanPause); partition != nil {
 			partitions[i] = partition
 		} else {
 			return nil, ErrInvalidHashTablePartition
@@ -72,6 +79,12 @@ func NewEngine(
 	}
 
 	return engine, nil
+}
+
+func (e *Engine) Clean() {
+	for _, partition := range e.partitions {
+		partition.Clean()
+	}
 }
 
 func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
@@ -183,8 +196,15 @@ func parseWALBatchKeyAndCtx(key, batchSizeStr, currTimeStr string) (database.Bat
 	return batchKey, txCtx
 }
 
-func isExpired(currTime, batchSize database.TxTime) bool {
-	return database.TxTime(time.Now().Unix()) > endOfBatch(currTime, batchSize)
+func isExpired(lastTxTime, batchSize database.TxTime) bool {
+	return database.TxTime(time.Now().Unix()) > endOfBatch(lastTxTime, batchSize)
+}
+
+func isExpiredWithDelta(lastTxTime, batchSize database.TxTime) (expired, expiredWithDelta bool) {
+	now := database.TxTime(time.Now().Unix())
+	endBatch := endOfBatch(lastTxTime, batchSize)
+
+	return now > endBatch, now > (endBatch + isExpiredDelta)
 }
 
 func startOfBatch(currTime, batchSize database.TxTime) database.TxTime {

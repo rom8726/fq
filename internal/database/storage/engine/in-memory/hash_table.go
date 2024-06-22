@@ -2,12 +2,13 @@ package inmemory
 
 import (
 	"sync"
+	"time"
 
 	"fq/internal/database"
 )
 
-var HashTableBuilder = func(sz int) hashTable {
-	return NewHashTable(sz)
+var HashTableBuilder = func(sz, cleanPauseThreshold int, cleanPause time.Duration) hashTable {
+	return NewHashTable(sz, cleanPauseThreshold, cleanPause)
 }
 
 type hashTableKey struct {
@@ -18,11 +19,40 @@ type hashTableKey struct {
 type HashTable struct {
 	mu   sync.RWMutex
 	data map[hashTableKey]*FqElem
+
+	cleanPauseThreshold int
+	cleanPause          time.Duration
 }
 
-func NewHashTable(sz int) *HashTable {
+func NewHashTable(sz, cleanPauseThreshold int, cleanPause time.Duration) *HashTable {
 	return &HashTable{
-		data: make(map[hashTableKey]*FqElem, sz),
+		data:                make(map[hashTableKey]*FqElem, sz),
+		cleanPauseThreshold: cleanPauseThreshold,
+		cleanPause:          cleanPause,
+	}
+}
+
+func (s *HashTable) Clean() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cnt := 0
+
+	for k, v := range s.data {
+		cnt++
+
+		_, expiredWithDelta := isExpiredWithDelta(v.lastTxAt, v.batchSize)
+		if expiredWithDelta {
+			delete(s.data, k)
+		}
+
+		if cnt >= s.cleanPauseThreshold {
+			cnt = 0
+
+			s.mu.Unlock()
+			time.Sleep(s.cleanPause)
+			s.mu.Lock()
+		}
 	}
 }
 

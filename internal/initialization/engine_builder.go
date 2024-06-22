@@ -2,6 +2,7 @@ package initialization
 
 import (
 	"errors"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -20,8 +21,10 @@ var supportedEngineTypes = map[string]struct{}{
 }
 
 const (
-	defaultPartitionsNumber = 10
-	defaultPartitionSize    = 1000
+	defaultPartitionsNumber        = 10
+	defaultPartitionSize           = 1000
+	defaultPartitionCleanPause     = time.Millisecond * 5
+	defaultPartitionCleanThreshold = 10000
 )
 
 func CreateEngine(
@@ -36,5 +39,13 @@ func CreateEngine(
 		}
 	}
 
-	return inMemory.NewEngine(inMemory.HashTableBuilder, defaultPartitionsNumber, defaultPartitionSize, logger, stream)
+	return inMemory.NewEngine(
+		inMemory.HashTableBuilder,
+		defaultPartitionsNumber,
+		defaultPartitionSize,
+		defaultPartitionCleanPause,
+		defaultPartitionCleanThreshold,
+		logger,
+		stream,
+	)
 }

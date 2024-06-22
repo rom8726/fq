@@ -21,6 +21,7 @@ type Initializer struct {
 	server         *network.TCPServer
 	logger         *zerolog.Logger
 	stream         chan []*walPkg.LogData
+	cfg            config.Config
 	maxMessageSize int
 }
 
@@ -58,6 +59,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		server:         tcpServer,
 		logger:         logger,
 		stream:         stream,
+		cfg:            cfg,
 		maxMessageSize: maxMessageSize,
 	}
 
@@ -69,7 +71,7 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 
 	computeLayer := i.createComputeLayer()
 
-	strg, err := i.createStorageLayer(ctx)
+	strg, err := i.createStorageLayer(ctx, i.cfg)
 	if err != nil {
 		return err
 	}
@@ -110,12 +112,12 @@ func (i *Initializer) createComputeLayer() *compute.Compute {
 	return compute.NewCompute(queryParser, queryAnalyzer, i.logger)
 }
 
-func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, error) {
+func (i *Initializer) createStorageLayer(_ context.Context, cfg config.Config) (*storage.Storage, error) {
 	// if i.slave != nil {
 	// i.slave.StartSynchronization(ctx) // TODO:
 	// }
 
-	strg, err := storage.NewStorage(i.engine, i.wal, i.logger)
+	strg, err := storage.NewStorage(i.engine, i.wal, i.logger, cfg.Engine.CleanInterval)
 	if err != nil {
 		i.logger.Error().Err(err).Msg("failed to initialize storage layer")
 

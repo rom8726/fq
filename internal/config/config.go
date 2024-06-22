@@ -41,7 +41,8 @@ type LoggingConfig struct {
 }
 
 type EngineConfig struct {
-	Type string `yaml:"type"`
+	Type          string        `yaml:"type"`
+	CleanInterval time.Duration `yaml:"clean_interval"`
 }
 
 type WALConfig struct {
@@ -87,7 +88,14 @@ func Init() (Config, error) {
 }
 
 func validate(cfg *Config) error {
-	err := validation.ValidateStruct(cfg.Network,
+	err := validation.ValidateStruct(cfg.Engine,
+		validation.Field(&cfg.Engine.CleanInterval, validation.Required),
+	)
+	if err != nil {
+		return fmt.Errorf("validate engine section: %w", err)
+	}
+
+	err = validation.ValidateStruct(cfg.Network,
 		validation.Field(&cfg.Network.Address, validation.Required),
 	)
 	if err != nil {
