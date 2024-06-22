@@ -27,7 +27,7 @@ func New(address string, idleTimeout time.Duration) (*Client, error) {
 }
 
 func (c *Client) Close() error {
-	return nil
+	return c.client.Close()
 }
 
 func (c *Client) Incr(ctx context.Context, key string, capping uint32) (uint64, error) {
