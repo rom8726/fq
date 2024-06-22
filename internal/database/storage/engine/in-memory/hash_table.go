@@ -54,8 +54,8 @@ func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {
 }
 
 func (s *HashTable) Del(key database.BatchKey) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
 	_, found := s.data[htKey]
