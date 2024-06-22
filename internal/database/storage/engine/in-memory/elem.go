@@ -17,7 +17,7 @@ type FqElem struct {
 	dumpLastTxAt database.TxTime
 
 	batchSize database.TxTime
-	mu        sync.Mutex
+	mu        sync.RWMutex
 }
 
 func NewFqElem(batchSize uint32) *FqElem {
@@ -62,8 +62,8 @@ func (e *FqElem) Value() database.ValueType {
 	now := time.Now().Unix()
 	batchStartsAt := startOfBatch(database.TxTime(now), e.batchSize)
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	if e.lastTxAt < batchStartsAt {
 		return 0
@@ -73,8 +73,8 @@ func (e *FqElem) Value() database.ValueType {
 }
 
 func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxTime) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	if e.ver <= dumpTx {
 		return e.value, e.lastTxAt
