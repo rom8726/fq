@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -27,12 +28,12 @@ func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration)
 	}, nil
 }
 
-func (c *TCPClient) Send(request []byte) ([]byte, error) {
+func (c *TCPClient) Send(ctx context.Context, request []byte) ([]byte, error) {
 	if len(request) > c.maxMessageSize {
 		return nil, fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
 	}
 
-	if err := c.connection.SetDeadline(time.Now().Add(c.idleTimeout)); err != nil {
+	if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
 		return nil, err
 	}
 
@@ -52,4 +53,22 @@ func (c *TCPClient) Send(request []byte) ([]byte, error) {
 	copy(result, response[:count])
 
 	return result, nil
+}
+
+func (c *TCPClient) Close() error {
+	return c.connection.Close()
+}
+
+func (c *TCPClient) deadline(ctx context.Context) time.Time {
+	stdDeadline := time.Now().Add(c.idleTimeout)
+	deadline, ok := ctx.Deadline()
+	if ok {
+		if stdDeadline.Before(deadline) {
+			deadline = stdDeadline
+		}
+	} else {
+		deadline = stdDeadline
+	}
+
+	return deadline
 }

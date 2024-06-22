@@ -2,11 +2,12 @@ package network
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"net"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestTCPClient(t *testing.T) {
@@ -45,7 +46,7 @@ func TestTCPClient(t *testing.T) {
 	client, err := NewTCPClient("127.0.0.1:10001", 2048, time.Minute)
 	require.NoError(t, err)
 
-	buffer, err := client.Send([]byte(request))
+	buffer, err := client.Send(context.Background(), []byte(request))
 	require.NoError(t, err)
 	require.True(t, reflect.DeepEqual([]byte(response), buffer))
 }
@@ -86,6 +87,6 @@ func TestTCPIdleClientConnection(t *testing.T) {
 	client, err := NewTCPClient("127.0.0.1:10002", 2048, time.Millisecond*50)
 	require.NoError(t, err)
 
-	_, err = client.Send([]byte(request))
+	_, err = client.Send(context.Background(), []byte(request))
 	require.Error(t, err)
 }

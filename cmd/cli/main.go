@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -52,18 +53,23 @@ func main() {
 			continue
 		}
 
-		start := time.Now()
-		response, err := client.Send([]byte(request))
-		elapsed := time.Since(start)
-		if err != nil {
-			if errors.Is(err, syscall.EPIPE) {
-				logger.Fatal().Err(err).Msg("connection was closed")
+		func() {
+			start := time.Now()
+			ctx, cancel := context.WithDeadline(context.Background(), start.Add(time.Minute))
+			defer cancel()
+
+			response, err := client.Send(ctx, []byte(request))
+			elapsed := time.Since(start)
+			if err != nil {
+				if errors.Is(err, syscall.EPIPE) {
+					logger.Fatal().Err(err).Msg("connection was closed")
+				}
+
+				logger.Fatal().Err(err).Msg("failed to send query")
 			}
 
-			logger.Fatal().Err(err).Msg("failed to send query")
-		}
-
-		fmt.Println(string(response) + "\t\t\t\tElapsed: " + elapsed.String())
+			fmt.Println(string(response) + "\t\t\t\tElapsed: " + elapsed.String())
+		}()
 	}
 }
 

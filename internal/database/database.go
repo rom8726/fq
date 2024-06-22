@@ -130,13 +130,20 @@ func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
 }
 
 func makeErrorMsg(err error) string {
-	return "[error] " + err.Error()
+	return "err|" + err.Error()
 }
 
 func makeValueMsg(v ValueType) string {
-	return "[ok] " + strconv.FormatUint(uint64(v), 10)
+	return "ok|" + strconv.FormatUint(uint64(v), 16)
 }
 
 func makeBoolMsg(v bool) string {
-	return "[ok] " + strconv.FormatBool(v)
+	var str string
+	if v {
+		str = "1"
+	} else {
+		str = "0"
+	}
+
+	return "ok|" + str
 }
