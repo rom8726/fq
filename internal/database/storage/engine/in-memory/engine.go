@@ -20,7 +20,7 @@ var (
 )
 
 type hashTable interface {
-	Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType
+	Incr(txCtx database.TxContext, key database.BatchKey) (database.ValueType, *FqElem)
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
 }

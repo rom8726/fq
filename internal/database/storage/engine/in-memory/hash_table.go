@@ -26,7 +26,7 @@ func NewHashTable(sz int) *HashTable {
 	}
 }
 
-func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
+func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) (database.ValueType, *FqElem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -35,9 +35,11 @@ func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) databa
 	if !ok {
 		v = NewFqElem(key.BatchSize)
 		s.data[htKey] = v
+
+		return v.Incr(txCtx), v
 	}
 
-	return v.Incr(txCtx)
+	return v.Incr(txCtx), nil
 }
 
 func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {

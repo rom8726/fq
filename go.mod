@@ -13,7 +13,9 @@ require (
 )
 
 require (
+	github.com/ancientlore/go-avltree/v2 v2.1.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/erriapo/redblacktree v0.0.0-20150327192606-ddaf11eb219f // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
