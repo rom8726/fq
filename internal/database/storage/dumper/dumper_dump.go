@@ -61,6 +61,12 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 		return fmt.Errorf("rename dump file: %w", err)
 	}
 
+	if d.wal != nil {
+		if err := d.wal.RemovePastSegments(ctx, uint64(dumpTx)); err != nil {
+			return fmt.Errorf("remove past WAL segments: %w", err)
+		}
+	}
+
 	return nil
 }
 

@@ -22,11 +22,11 @@ type Engine interface {
 }
 
 type WAL interface {
-	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 	Start()
+	Shutdown()
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
-	Shutdown()
+	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
 type Dumper interface {
