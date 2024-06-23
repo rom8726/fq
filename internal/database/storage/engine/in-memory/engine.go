@@ -1,6 +1,7 @@
 package inmemory
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -14,6 +15,10 @@ import (
 	"fq/internal/database/storage/wal"
 )
 
+const (
+	expireDelta = database.TxTime(60)
+)
+
 var (
 	ErrInvalidArgument           = errors.New("invalid argument")
 	ErrInvalidHashTablePartition = errors.New("hash table partition is invalid")
@@ -23,6 +28,7 @@ type hashTable interface {
 	Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
+	Clean(ctx context.Context)
 }
 
 type Engine struct {
@@ -128,6 +134,12 @@ func (e *Engine) Del(txCtx database.TxContext, key database.BatchKey) bool {
 	return res
 }
 
+func (e *Engine) Clean(ctx context.Context) {
+	for _, partition := range e.partitions {
+		partition.Clean(ctx)
+	}
+}
+
 func (e *Engine) partitionIdx(key string) int {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(key))
@@ -184,6 +196,10 @@ func parseWALBatchKeyAndCtx(key, batchSizeStr, currTimeStr string) (database.Bat
 
 func isExpired(currTime, batchSize database.TxTime) bool {
 	return database.TxTime(time.Now().Unix()) > endOfBatch(currTime, batchSize)
+}
+
+func isExpiredWithDelta(currTime, batchSize database.TxTime) bool {
+	return database.TxTime(time.Now().Unix()) > (endOfBatch(currTime, batchSize) + expireDelta)
 }
 
 func startOfBatch(currTime, batchSize database.TxTime) database.TxTime {

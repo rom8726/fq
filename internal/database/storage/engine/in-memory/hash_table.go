@@ -1,6 +1,7 @@
 package inmemory
 
 import (
+	"context"
 	"sync"
 
 	"fq/internal/database"
@@ -42,6 +43,22 @@ func (s *HashTable) Del(key database.BatchKey) bool {
 	_, ok := s.m.LoadAndDelete(htKey)
 
 	return ok
+}
+
+func (s *HashTable) Clean(ctx context.Context) {
+	s.m.Range(func(k, v interface{}) bool {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			elem := v.(*FqElem)
+			if isExpiredWithDelta(elem.lastTxAt, elem.batchSize) {
+				s.m.Delete(k)
+			}
+
+			return true
+		}
+	})
 }
 
 func (s *HashTable) getOrInitElem(key hashTableKey) *FqElem {

@@ -16,6 +16,7 @@ type Engine interface {
 	Incr(database.TxContext, database.BatchKey) database.ValueType
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
+	Clean(ctx context.Context)
 }
 
 type WAL interface {
@@ -27,9 +28,10 @@ type WAL interface {
 }
 
 type Storage struct {
-	engine Engine
-	wal    WAL
-	logger *zerolog.Logger
+	engine        Engine
+	wal           WAL
+	logger        *zerolog.Logger
+	cleanInterval time.Duration
 
 	tx atomic.Uint64
 }
@@ -38,6 +40,7 @@ func NewStorage(
 	engine Engine,
 	wal WAL,
 	logger *zerolog.Logger,
+	cleanInterval time.Duration,
 ) (*Storage, error) {
 	if engine == nil {
 		return nil, errors.New("engine is invalid")
@@ -48,9 +51,10 @@ func NewStorage(
 	}
 
 	return &Storage{
-		engine: engine,
-		wal:    wal,
-		logger: logger,
+		engine:        engine,
+		wal:           wal,
+		logger:        logger,
+		cleanInterval: cleanInterval,
 	}, nil
 }
 
@@ -69,10 +73,12 @@ func (s *Storage) LoadWAL(ctx context.Context) error {
 	return nil
 }
 
-func (s *Storage) Start(context.Context) {
+func (s *Storage) Start(ctx context.Context) {
 	if s.wal != nil {
 		s.wal.Start()
 	}
+
+	go s.gcLoop(ctx)
 }
 
 func (s *Storage) Shutdown() {
@@ -119,4 +125,18 @@ func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) 
 	}
 
 	return s.engine.Del(txCtx, key), nil
+}
+
+func (s *Storage) gcLoop(ctx context.Context) {
+	t := time.NewTicker(s.cleanInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.engine.Clean(ctx)
+		}
+	}
 }
