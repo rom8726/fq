@@ -11,6 +11,10 @@ import (
 )
 
 const (
+	loggerTimestampFormat = "2006-01-02 15:04:05"
+)
+
+const (
 	DebugLevel = "debug"
 	InfoLevel  = "info"
 	WarnLevel  = "warn"
@@ -40,7 +44,8 @@ func CreateLogger(cfg config.LoggingConfig) (*zerolog.Logger, error) {
 	//if cfg.Output != "stdout" {
 	//}
 
-	logger := zerolog.New(os.Stdout).With().Timestamp().Caller().Logger().Level(level)
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: loggerTimestampFormat}
+	logger := zerolog.New(consoleWriter).With().Timestamp().Logger().Level(level)
 
 	return &logger, nil
 }
