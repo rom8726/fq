@@ -117,7 +117,13 @@ func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, err
 	// i.slave.StartSynchronization(ctx) // TODO:
 	// }
 
-	strg, err := storage.NewStorage(i.engine, i.wal, i.logger, i.cfg.Engine.CleanInterval)
+	strg, err := storage.NewStorage(
+		i.engine,
+		i.wal,
+		i.logger,
+		i.cfg.Engine.CleanInterval,
+		i.cfg.Engine.DumpInterval,
+	)
 	if err != nil {
 		i.logger.Error().Err(err).Msg("failed to initialize storage layer")
 

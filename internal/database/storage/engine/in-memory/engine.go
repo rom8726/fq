@@ -29,6 +29,7 @@ type hashTable interface {
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
 	Clean(ctx context.Context)
+	Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem)
 }
 
 type Engine struct {
@@ -138,6 +139,22 @@ func (e *Engine) Clean(ctx context.Context) {
 	for _, partition := range e.partitions {
 		partition.Clean(ctx)
 	}
+}
+
+func (e *Engine) Dump(ctx context.Context, dumpTx database.Tx) (resC <-chan database.DumpElem, errsC <-chan error) {
+	ch := make(chan database.DumpElem, 1)
+	errC := make(chan error, 1)
+
+	go func() {
+		defer close(ch)
+		defer close(errC)
+
+		for _, partition := range e.partitions {
+			partition.Dump(ctx, dumpTx, ch)
+		}
+	}()
+
+	return ch, errC
 }
 
 func (e *Engine) partitionIdx(key string) int {

@@ -88,20 +88,24 @@ func TestElem_DumpValue(t *testing.T) {
 
 	e := NewFqElem(60)
 	e.Incr(database.TxContext{Tx: 1000, DumpTx: database.NoTx, CurrTime: now})
-	v, lastTime := e.DumpValue(1000)
+	v, lastTime, tx := e.DumpValue(1000)
 	require.Equal(t, database.ValueType(1), v)
 	require.Equal(t, now, lastTime)
+	require.Equal(t, database.Tx(1000), tx)
 
-	v, lastTime = e.DumpValue(999)
+	v, lastTime, tx = e.DumpValue(999)
 	require.Equal(t, database.ValueType(0), v)
 	require.Equal(t, database.TxTime(0), lastTime)
+	require.Equal(t, database.Tx(0), tx)
 
 	e.Incr(database.TxContext{Tx: 1001, DumpTx: database.Tx(1001), CurrTime: now})
-	v, lastTime = e.DumpValue(1000)
+	v, lastTime, tx = e.DumpValue(1000)
 	require.Equal(t, database.ErrorValue, v)
 	require.Equal(t, database.TxTime(0), lastTime)
+	require.Equal(t, database.Tx(0), tx)
 
-	v, lastTime = e.DumpValue(1001)
+	v, lastTime, tx = e.DumpValue(1001)
 	require.Equal(t, database.ValueType(2), v)
 	require.Equal(t, now, lastTime)
+	require.Equal(t, database.Tx(1001), tx)
 }

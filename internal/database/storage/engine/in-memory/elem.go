@@ -72,17 +72,17 @@ func (e *FqElem) Value() database.ValueType {
 	return e.value
 }
 
-func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxTime) {
+func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxTime, database.Tx) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	if e.ver <= dumpTx {
-		return e.value, e.lastTxAt
+		return e.value, e.lastTxAt, e.ver
 	}
 
 	if e.dumpVer <= dumpTx {
-		return e.dumpValue, e.dumpLastTxAt
+		return e.dumpValue, e.dumpLastTxAt, e.dumpVer
 	}
 
-	return database.ErrorValue, 0
+	return database.ErrorValue, 0, 0
 }
