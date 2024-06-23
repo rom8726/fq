@@ -25,7 +25,7 @@ func (s *Storage) dumpLoop(ctx context.Context) {
 }
 
 func (s *Storage) dump(ctx context.Context) error {
-	dumpTx := database.Tx(time.Now().Unix())
+	dumpTx := database.Tx(s.tx.Load())
 	s.dumpTx.Store(uint64(dumpTx))
 
 	s.logger.Info().Any("dump_tx", dumpTx).Msg("Start of dump creation")
