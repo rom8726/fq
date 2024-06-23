@@ -17,10 +17,11 @@ const (
 )
 
 type Config struct {
-	Engine  *EngineConfig  `yaml:"engine"`
-	WAL     *WALConfig     `yaml:"wal"`
-	Network *NetworkConfig `yaml:"network"`
-	Logging *LoggingConfig `yaml:"logging"`
+	Engine  EngineConfig  `yaml:"engine"`
+	WAL     *WALConfig    `yaml:"wal"`
+	Network NetworkConfig `yaml:"network"`
+	Logging LoggingConfig `yaml:"logging"`
+	Dump    DumpConfig    `yaml:"dump"`
 }
 
 //nolint:tagliatelle // it's ok
@@ -50,6 +51,11 @@ type WALConfig struct {
 	FlushingBatchTimeout time.Duration `yaml:"flushing_batch_timeout"`
 	MaxSegmentSize       string        `yaml:"max_segment_size"`
 	DataDirectory        string        `yaml:"data_directory"`
+}
+
+type DumpConfig struct {
+	Interval  time.Duration `yaml:"interval"`
+	Directory string        `yaml:"directory"`
 }
 
 func Init() (Config, error) {
@@ -88,14 +94,22 @@ func Init() (Config, error) {
 }
 
 func validate(cfg *Config) error {
-	err := validation.ValidateStruct(cfg.Engine,
+	err := validation.ValidateStruct(&cfg.Engine,
 		validation.Field(&cfg.Engine.CleanInterval, validation.Required),
 	)
 	if err != nil {
 		return fmt.Errorf("validate engine section: %w", err)
 	}
 
-	err = validation.ValidateStruct(cfg.Network,
+	err = validation.ValidateStruct(&cfg.Dump,
+		validation.Field(&cfg.Dump.Interval, validation.Required),
+		validation.Field(&cfg.Dump.Directory, validation.Required),
+	)
+	if err != nil {
+		return fmt.Errorf("validate dump section: %w", err)
+	}
+
+	err = validation.ValidateStruct(&cfg.Network,
 		validation.Field(&cfg.Network.Address, validation.Required),
 	)
 	if err != nil {

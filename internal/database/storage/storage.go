@@ -16,31 +16,42 @@ type Engine interface {
 	Incr(database.TxContext, database.BatchKey) database.ValueType
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
-	Clean(ctx context.Context)
+	Clean(context.Context)
+	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
+	RestoreDumpElem(context.Context, database.DumpElem) error
 }
 
 type WAL interface {
-	TryRecoverWALSegments(ctx context.Context) (lastLSN uint64, err error)
+	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 	Start()
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Shutdown()
 }
 
+type Dumper interface {
+	Dump(ctx context.Context, dumpTx database.Tx) error
+}
+
 type Storage struct {
 	engine        Engine
 	wal           WAL
+	dumper        Dumper
 	logger        *zerolog.Logger
 	cleanInterval time.Duration
+	dumpInterval  time.Duration
 
-	tx atomic.Uint64
+	tx     atomic.Uint64
+	dumpTx atomic.Uint64
 }
 
 func NewStorage(
 	engine Engine,
 	wal WAL,
+	dumper Dumper,
 	logger *zerolog.Logger,
 	cleanInterval time.Duration,
+	dumpInterval time.Duration,
 ) (*Storage, error) {
 	if engine == nil {
 		return nil, errors.New("engine is invalid")
@@ -53,19 +64,25 @@ func NewStorage(
 	return &Storage{
 		engine:        engine,
 		wal:           wal,
+		dumper:        dumper,
 		logger:        logger,
 		cleanInterval: cleanInterval,
+		dumpInterval:  dumpInterval,
 	}, nil
 }
 
-func (s *Storage) LoadWAL(ctx context.Context) error {
+func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
 	if s.wal == nil {
 		return nil
 	}
 
-	lastLSN, err := s.wal.TryRecoverWALSegments(ctx)
+	lastLSN, err := s.wal.TryRecoverWALSegments(ctx, uint64(dumpLastTx))
 	if err != nil {
 		return err
+	}
+
+	if uint64(dumpLastTx) > lastLSN {
+		lastLSN = uint64(dumpLastTx)
 	}
 
 	s.tx.Store(lastLSN)
@@ -79,6 +96,7 @@ func (s *Storage) Start(ctx context.Context) {
 	}
 
 	go s.gcLoop(ctx)
+	go s.dumpLoop(ctx)
 }
 
 func (s *Storage) Shutdown() {
@@ -88,11 +106,7 @@ func (s *Storage) Shutdown() {
 }
 
 func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
-	txCtx := database.TxContext{
-		Tx:       database.Tx(s.tx.Add(1)),
-		CurrTime: database.TxTime(time.Now().Unix()),
-		FromWAL:  false,
-	}
+	txCtx := s.makeTxContext()
 
 	if s.wal != nil {
 		future := s.wal.Incr(ctx, txCtx, key)
@@ -111,11 +125,7 @@ func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueT
 }
 
 func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) {
-	txCtx := database.TxContext{
-		Tx:       database.Tx(s.tx.Add(1)),
-		CurrTime: database.TxTime(time.Now().Unix()),
-		FromWAL:  false,
-	}
+	txCtx := s.makeTxContext()
 
 	if s.wal != nil {
 		future := s.wal.Del(ctx, txCtx, key)
@@ -125,6 +135,15 @@ func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) 
 	}
 
 	return s.engine.Del(txCtx, key), nil
+}
+
+func (s *Storage) makeTxContext() database.TxContext {
+	return database.TxContext{
+		Tx:       database.Tx(s.tx.Add(1)),
+		DumpTx:   database.Tx(s.dumpTx.Load()),
+		CurrTime: database.TxTime(time.Now().Unix()),
+		FromWAL:  false,
+	}
 }
 
 func (s *Storage) gcLoop(ctx context.Context) {

@@ -24,3 +24,11 @@ type BatchKey struct {
 	BatchSizeStr string
 	Key          string
 }
+
+type DumpElem struct {
+	Key       string
+	BatchSize uint32
+	Value     ValueType
+	TxAt      TxTime
+	Tx        Tx
+}

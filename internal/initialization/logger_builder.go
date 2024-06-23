@@ -27,24 +27,18 @@ var supportedLoggingLevels = map[string]zerolog.Level{
 // const defaultEncoding = "json"
 const defaultLevel = zerolog.InfoLevel
 
-// const defaultOutputPath = "output.log"
-
-func CreateLogger(cfg *config.LoggingConfig) (*zerolog.Logger, error) {
+func CreateLogger(cfg config.LoggingConfig) (*zerolog.Logger, error) {
 	level := defaultLevel
-	// output := defaultOutputPath
 
-	if cfg != nil {
-		if cfg.Level != "" {
-			var found bool
-			if level, found = supportedLoggingLevels[cfg.Level]; !found {
-				return nil, errors.New("logging level is incorrect")
-			}
+	if cfg.Level != "" {
+		var found bool
+		if level, found = supportedLoggingLevels[cfg.Level]; !found {
+			return nil, errors.New("logging level is incorrect")
 		}
-
-		// if cfg.Output != "" {
-		//	output = cfg.Output
-		// }
 	}
+
+	//if cfg.Output != "stdout" {
+	//}
 
 	logger := zerolog.New(os.Stdout).With().Timestamp().Caller().Logger().Level(level)
 
