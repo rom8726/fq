@@ -18,19 +18,25 @@ type Engine interface {
 	Del(database.TxContext, database.BatchKey) bool
 	Clean(context.Context)
 	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
+	RestoreDumpElem(context.Context, database.DumpElem) error
 }
 
 type WAL interface {
-	TryRecoverWALSegments(ctx context.Context) (lastLSN uint64, err error)
+	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 	Start()
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Shutdown()
 }
 
+type Dumper interface {
+	Dump(ctx context.Context, dumpTx database.Tx) error
+}
+
 type Storage struct {
 	engine        Engine
 	wal           WAL
+	dumper        Dumper
 	logger        *zerolog.Logger
 	cleanInterval time.Duration
 	dumpInterval  time.Duration
@@ -42,6 +48,7 @@ type Storage struct {
 func NewStorage(
 	engine Engine,
 	wal WAL,
+	dumper Dumper,
 	logger *zerolog.Logger,
 	cleanInterval time.Duration,
 	dumpInterval time.Duration,
@@ -57,20 +64,25 @@ func NewStorage(
 	return &Storage{
 		engine:        engine,
 		wal:           wal,
+		dumper:        dumper,
 		logger:        logger,
 		cleanInterval: cleanInterval,
 		dumpInterval:  dumpInterval,
 	}, nil
 }
 
-func (s *Storage) LoadWAL(ctx context.Context) error {
+func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
 	if s.wal == nil {
 		return nil
 	}
 
-	lastLSN, err := s.wal.TryRecoverWALSegments(ctx)
+	lastLSN, err := s.wal.TryRecoverWALSegments(ctx, uint64(dumpLastTx))
 	if err != nil {
 		return err
+	}
+
+	if uint64(dumpLastTx) > lastLSN {
+		lastLSN = uint64(dumpLastTx)
 	}
 
 	s.tx.Store(lastLSN)

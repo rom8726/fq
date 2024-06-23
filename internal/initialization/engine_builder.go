@@ -24,7 +24,7 @@ const (
 )
 
 func CreateEngine(
-	cfg *config.EngineConfig,
+	cfg config.EngineConfig,
 	logger *zerolog.Logger,
 	stream <-chan []*wal.LogData,
 ) (storage.Engine, error) {

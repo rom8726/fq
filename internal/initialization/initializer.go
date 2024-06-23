@@ -11,6 +11,7 @@ import (
 	"fq/internal/database"
 	"fq/internal/database/compute"
 	"fq/internal/database/storage"
+	"fq/internal/database/storage/dumper"
 	walPkg "fq/internal/database/storage/wal"
 	"fq/internal/network"
 )
@@ -18,6 +19,7 @@ import (
 type Initializer struct {
 	wal            storage.WAL
 	engine         storage.Engine
+	dumper         *dumper.Dumper
 	server         *network.TCPServer
 	logger         *zerolog.Logger
 	stream         chan []*walPkg.LogData
@@ -56,6 +58,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 	initializer := &Initializer{
 		wal:            wal,
 		engine:         dbEngine,
+		dumper:         dumper.New(dbEngine, cfg.Dump.Directory),
 		server:         tcpServer,
 		logger:         logger,
 		stream:         stream,
@@ -88,8 +91,13 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 		return nil
 	})
 
+	lastTx, err := i.dumper.Restore(ctx)
+	if err != nil {
+		return fmt.Errorf("restore dump failed: %w", err)
+	}
+
 	if i.wal != nil {
-		if err := strg.LoadWAL(ctx); err != nil {
+		if err := strg.LoadWAL(ctx, lastTx); err != nil {
 			return err
 		}
 	}
@@ -120,9 +128,10 @@ func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, err
 	strg, err := storage.NewStorage(
 		i.engine,
 		i.wal,
+		i.dumper,
 		i.logger,
 		i.cfg.Engine.CleanInterval,
-		i.cfg.Engine.DumpInterval,
+		i.cfg.Dump.Interval,
 	)
 	if err != nil {
 		i.logger.Error().Err(err).Msg("failed to initialize storage layer")

@@ -129,7 +129,7 @@ func (w *WAL) push(
 	return record.Result()
 }
 
-func (w *WAL) TryRecoverWALSegments(ctx context.Context) (lastLSN uint64, err error) {
+func (w *WAL) TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error) {
 	logs, err := w.fsReader.ReadLogs(ctx)
 	if err != nil {
 		return 0, err
@@ -139,7 +139,20 @@ func (w *WAL) TryRecoverWALSegments(ctx context.Context) (lastLSN uint64, err er
 		return 0, nil
 	}
 
-	w.stream <- logs
+	logIdx := len(logs) // end of slice
+	for i := range logs {
+		if logs[i].LSN > dumpLastLSN {
+			logIdx = i
 
-	return logs[len(logs)-1].LSN, nil
+			break
+		}
+	}
+
+	if logIdx < len(logs) {
+		w.stream <- logs[logIdx:]
+
+		return logs[len(logs)-1].LSN, nil
+	}
+
+	return dumpLastLSN, nil
 }

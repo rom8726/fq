@@ -30,6 +30,7 @@ type hashTable interface {
 	Del(key database.BatchKey) bool
 	Clean(ctx context.Context)
 	Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem)
+	RestoreDumpElem(elem database.DumpElem)
 }
 
 type Engine struct {
@@ -157,6 +158,18 @@ func (e *Engine) Dump(ctx context.Context, dumpTx database.Tx) (resC <-chan data
 	return ch, errC
 }
 
+func (e *Engine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
+	if isExpired(elem.TxAt, database.TxTime(elem.BatchSize)) {
+		return nil
+	}
+
+	idx := e.partitionIdx(elem.Key)
+	partition := e.partitions[idx]
+	partition.RestoreDumpElem(elem)
+
+	return nil
+}
+
 func (e *Engine) partitionIdx(key string) int {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(key))
@@ -177,16 +190,16 @@ func (e *Engine) applyLogs(logs []*wal.LogData) {
 }
 
 func (e *Engine) applyIncrFromLog(log *wal.LogData) {
-	batchKey, txCtx := parseWALBatchKeyAndCtx(log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	batchKey, txCtx := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
 	e.Incr(txCtx, batchKey)
 }
 
 func (e *Engine) applyDelFromLog(log *wal.LogData) {
-	batchKey, txCtx := parseWALBatchKeyAndCtx(log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	batchKey, txCtx := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
 	e.Del(txCtx, batchKey)
 }
 
-func parseWALBatchKeyAndCtx(key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext) {
+func parseWALBatchKeyAndCtx(lsn uint64, key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext) {
 	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 32)
 	if err != nil {
 		panic(fmt.Errorf("WAL log: parse batch size: %w", err))
@@ -204,6 +217,7 @@ func parseWALBatchKeyAndCtx(key, batchSizeStr, currTimeStr string) (database.Bat
 	}
 
 	txCtx := database.TxContext{
+		Tx:       database.Tx(lsn),
 		CurrTime: database.TxTime(currTime),
 		FromWAL:  true,
 	}

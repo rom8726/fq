@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"fq/internal/database"
@@ -30,18 +29,5 @@ func (s *Storage) dump(ctx context.Context) error {
 
 	s.logger.Info().Any("dump_tx", dumpTx).Msg("Start of dump creation")
 
-	minTx := database.Tx(math.MaxUint64)
-	minTxTime := database.TxTime(time.Now().Unix())
-
-	elemsC, errC := s.engine.Dump(ctx, dumpTx)
-	for elem := range elemsC {
-		if elem.Tx < minTx {
-			minTx = elem.Tx
-		}
-		if elem.TxAt < minTxTime {
-			minTxTime = elem.TxAt
-		}
-	}
-
-	return <-errC
+	return s.dumper.Dump(ctx, dumpTx)
 }
