@@ -1,0 +1,19 @@
+network:
+  address: ":1945"
+  max_connections: 1000
+  max_message_size: 4096
+  idle_timeout: 10m
+wal:
+  flushing_batch_length: 4096
+  flushing_batch_timeout: 20ms
+  max_segment_size: 4096
+  data_directory: /app/data/wal/
+engine:
+  type: in_memory
+  clean_interval: 10m
+dump:
+  interval: 15m
+  directory: /app/data/
+logging:
+  level: info
+  output: stdout
