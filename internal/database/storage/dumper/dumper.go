@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	dumpBatchSize       = 100
+	dumpBatchSize       = 1000
 	currentDumpFileName = "current.dump"
 )
 
