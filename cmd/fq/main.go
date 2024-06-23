@@ -17,6 +17,8 @@ const (
 	loggerTimestampFormat = "2006-01-02 15:04:05"
 )
 
+var Commit = ""
+
 func main() {
 	console := consoleLogger()
 	if err := run(console); err != nil {
