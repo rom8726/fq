@@ -44,7 +44,7 @@ func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
 		}
 
 		filename := fmt.Sprintf("%s/%s", r.directory, file.Name())
-		segmentedLogs, err := r.readSegment(ctx, filename)
+		segmentedLogs, err := r.ReadSegment(ctx, filename)
 		if err != nil {
 			return nil, fmt.Errorf("failed to recove WAL segment: %w", err)
 		}
@@ -59,7 +59,7 @@ func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
 	return logs, nil
 }
 
-func (r *FSReader) readSegment(ctx context.Context, filename string) ([]*LogData, error) {
+func (r *FSReader) ReadSegment(ctx context.Context, filename string) ([]*LogData, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)

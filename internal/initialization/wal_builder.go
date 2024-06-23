@@ -7,7 +7,6 @@ import (
 	"github.com/rs/zerolog"
 
 	"fq/internal/config"
-	"fq/internal/database/storage"
 	"fq/internal/database/storage/wal"
 	"fq/internal/tools"
 )
@@ -21,7 +20,7 @@ func CreateWAL(
 	cfg *config.WALConfig,
 	logger *zerolog.Logger,
 	stream chan<- []*wal.LogData,
-) (storage.WAL, error) {
+) (*wal.WAL, error) {
 	flushingBatchSize := defaultFlushingBatchSize
 	flushingBatchTimeout := defaultFlushingBatchTimeout
 	maxSegmentSize := defaultMaxSegmentSize
@@ -52,7 +51,15 @@ func CreateWAL(
 		fsReader := wal.NewFSReader(dataDirectory, logger)
 		fsWriter := wal.NewFSWriter(dataDirectory, maxSegmentSize, logger)
 
-		return wal.NewWAL(fsWriter, fsReader, stream, flushingBatchTimeout, flushingBatchSize, logger), nil
+		return wal.NewWAL(
+			fsWriter,
+			fsReader,
+			stream,
+			flushingBatchTimeout,
+			flushingBatchSize,
+			dataDirectory,
+			logger,
+		), nil
 	}
 
 	return nil, nil

@@ -17,7 +17,7 @@ import (
 )
 
 type Initializer struct {
-	wal            storage.WAL
+	wal            *walPkg.WAL
 	engine         storage.Engine
 	dumper         *dumper.Dumper
 	server         *network.TCPServer
@@ -58,7 +58,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 	initializer := &Initializer{
 		wal:            wal,
 		engine:         dbEngine,
-		dumper:         dumper.New(dbEngine, cfg.Dump.Directory),
+		dumper:         dumper.New(dbEngine, wal, cfg.Dump.Directory),
 		server:         tcpServer,
 		logger:         logger,
 		stream:         stream,
