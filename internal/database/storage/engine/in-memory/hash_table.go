@@ -6,8 +6,8 @@ import (
 	"fq/internal/database"
 )
 
-var HashTableBuilder = func(sz int) hashTable {
-	return NewHashTable(sz)
+var HashTableBuilder = func() hashTable {
+	return NewHashTable()
 }
 
 type hashTableKey struct {
@@ -16,54 +16,39 @@ type hashTableKey struct {
 }
 
 type HashTable struct {
-	mu   sync.RWMutex
-	data map[hashTableKey]*FqElem
+	m sync.Map
 }
 
-func NewHashTable(sz int) *HashTable {
-	return &HashTable{
-		data: make(map[hashTableKey]*FqElem, sz),
-	}
+func NewHashTable() *HashTable {
+	return &HashTable{}
 }
 
 func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
-	v, ok := s.data[htKey]
-	if !ok {
-		v = NewFqElem(key.BatchSize)
-		s.data[htKey] = v
-	}
+	v := s.getOrInitElem(htKey)
 
 	return v.Incr(txCtx)
 }
 
 func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
-	value, found := s.data[htKey]
-	if found {
-		return value.Value(), true
-	}
+	v := s.getOrInitElem(htKey)
 
-	return 0, false
+	return v.Value(), false
 }
 
 func (s *HashTable) Del(key database.BatchKey) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
-	_, found := s.data[htKey]
-	if found {
-		delete(s.data, htKey)
+	_, ok := s.m.LoadAndDelete(htKey)
 
-		return true
+	return ok
+}
+
+func (s *HashTable) getOrInitElem(key hashTableKey) *FqElem {
+	v, ok := s.m.Load(key)
+	if !ok {
+		v, _ = s.m.LoadOrStore(key, NewFqElem(key.batchSize))
 	}
 
-	return false
+	return v.(*FqElem)
 }

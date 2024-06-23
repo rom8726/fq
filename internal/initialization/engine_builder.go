@@ -21,7 +21,6 @@ var supportedEngineTypes = map[string]struct{}{
 
 const (
 	defaultPartitionsNumber = 10
-	defaultPartitionSize    = 1000
 )
 
 func CreateEngine(
@@ -36,5 +35,5 @@ func CreateEngine(
 		}
 	}
 
-	return inMemory.NewEngine(inMemory.HashTableBuilder, defaultPartitionsNumber, defaultPartitionSize, logger, stream)
+	return inMemory.NewEngine(inMemory.HashTableBuilder, defaultPartitionsNumber, logger, stream)
 }

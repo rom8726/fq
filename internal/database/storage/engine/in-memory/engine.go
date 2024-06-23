@@ -31,9 +31,8 @@ type Engine struct {
 }
 
 func NewEngine(
-	tableBuilder func(sz int) hashTable,
+	tableBuilder func() hashTable,
 	partitionsNumber int,
-	initPartitionSize int,
 	logger *zerolog.Logger,
 	stream <-chan []*wal.LogData,
 ) (*Engine, error) {
@@ -51,7 +50,7 @@ func NewEngine(
 
 	partitions := make([]hashTable, partitionsNumber)
 	for i := 0; i < partitionsNumber; i++ {
-		if partition := tableBuilder(initPartitionSize); partition != nil {
+		if partition := tableBuilder(); partition != nil {
 			partitions[i] = partition
 		} else {
 			return nil, ErrInvalidHashTablePartition
