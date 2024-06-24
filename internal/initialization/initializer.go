@@ -125,6 +125,8 @@ func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, err
 	// i.slave.StartSynchronization(ctx) // TODO:
 	// }
 
+	walSyncCommit := i.cfg.WAL != nil && i.cfg.WAL.SyncCommit == config.WALSyncCommitOn
+
 	strg, err := storage.NewStorage(
 		i.engine,
 		i.wal,
@@ -132,6 +134,7 @@ func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, err
 		i.logger,
 		i.cfg.Engine.CleanInterval,
 		i.cfg.Dump.Interval,
+		walSyncCommit,
 	)
 	if err != nil {
 		i.logger.Error().Err(err).Msg("failed to initialize storage layer")

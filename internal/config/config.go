@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	WALSyncCommitOn  = "on"
+	WALSyncCommitOff = "off"
+
 	configDefaultFilePath = "config.yml"
 )
 
@@ -50,6 +53,7 @@ type WALConfig struct {
 	FlushingBatchTimeout time.Duration `yaml:"flushing_batch_timeout"`
 	MaxSegmentSize       string        `yaml:"max_segment_size"`
 	DataDirectory        string        `yaml:"data_directory"`
+	SyncCommit           string        `yaml:"sync_commit"`
 }
 
 type DumpConfig struct {
@@ -125,6 +129,7 @@ func validate(cfg *Config) error {
 			validation.Field(&cfg.WAL.FlushingBatchTimeout, validation.Required),
 			validation.Field(&cfg.WAL.MaxSegmentSize, validation.Required),
 			validation.Field(&cfg.WAL.DataDirectory, validation.Required),
+			validation.Field(&cfg.WAL.SyncCommit, validation.Required, validation.In(WALSyncCommitOn, WALSyncCommitOff)),
 		)
 		if err != nil {
 			return fmt.Errorf("validate wal section: %w", err)

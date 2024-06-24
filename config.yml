@@ -4,6 +4,7 @@ network:
   max_message_size: 4096
   idle_timeout: 10m
 wal:
+  sync_commit: on
   flushing_batch_length: 4096
   flushing_batch_timeout: 20ms
   max_segment_size: 4096

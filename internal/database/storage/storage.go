@@ -40,6 +40,7 @@ type Storage struct {
 	logger        *zerolog.Logger
 	cleanInterval time.Duration
 	dumpInterval  time.Duration
+	syncCommit    bool
 
 	tx     atomic.Uint64
 	dumpTx atomic.Uint64
@@ -52,6 +53,7 @@ func NewStorage(
 	logger *zerolog.Logger,
 	cleanInterval time.Duration,
 	dumpInterval time.Duration,
+	syncCommit bool,
 ) (*Storage, error) {
 	if engine == nil {
 		return nil, errors.New("engine is invalid")
@@ -68,6 +70,7 @@ func NewStorage(
 		logger:        logger,
 		cleanInterval: cleanInterval,
 		dumpInterval:  dumpInterval,
+		syncCommit:    syncCommit,
 	}, nil
 }
 
@@ -110,8 +113,10 @@ func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.Val
 
 	if s.wal != nil {
 		future := s.wal.Incr(ctx, txCtx, key)
-		if err := future.Get(); err != nil {
-			return 0, err
+		if s.syncCommit {
+			if err := future.Get(); err != nil {
+				return 0, err
+			}
 		}
 	}
 
@@ -129,8 +134,10 @@ func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) 
 
 	if s.wal != nil {
 		future := s.wal.Del(ctx, txCtx, key)
-		if err := future.Get(); err != nil {
-			return false, err
+		if s.syncCommit {
+			if err := future.Get(); err != nil {
+				return false, err
+			}
 		}
 	}
 
