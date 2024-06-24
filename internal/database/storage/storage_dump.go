@@ -27,7 +27,11 @@ func (s *Storage) dump(ctx context.Context) error {
 	dumpTx := database.Tx(s.tx.Load())
 	s.dumpTx.Store(uint64(dumpTx))
 
+	start := time.Now()
 	s.logger.Info().Any("dump_tx", dumpTx).Msg("Start of dump creation")
+	err := s.dumper.Dump(ctx, dumpTx)
+	elapsed := time.Since(start)
+	s.logger.Info().Str("elapsed", elapsed.String()).Msg("Dump creation finished")
 
-	return s.dumper.Dump(ctx, dumpTx)
+	return err
 }
