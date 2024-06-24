@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/logrusorgru/aurora/v4"
+	"github.com/peterh/liner"
 	"github.com/rs/zerolog"
 
 	"fq/internal/network"
@@ -34,16 +34,23 @@ func main() {
 		logger.Fatal().Err(err).Msg("failed to parse max message size")
 	}
 
-	reader := bufio.NewReader(os.Stdin)
 	client, err := network.NewTCPClient(*address, maxMessageSize, *idleTimeout)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to connect with server")
 	}
 
+	line := liner.NewLiner()
+	defer line.Close()
+
+	line.SetCtrlCAborts(true)
+
 	for {
-		fmt.Print("[fq] > ")
-		request, err := reader.ReadString('\n')
+		request, err := line.Prompt("[fq]> ")
 		if err != nil {
+			if errors.Is(err, liner.ErrPromptAborted) {
+				break
+			}
+
 			if errors.Is(err, syscall.EPIPE) {
 				logger.Fatal().Err(err).Msg("connection was closed")
 			}
@@ -51,13 +58,15 @@ func main() {
 			logger.Fatal().Err(err).Msg("failed to read user query")
 		}
 
-		if request == "\n" {
+		if request == "" {
 			continue
 		}
 
-		if request == "q\n" || request == "quit\n" || request == "exit\n" {
+		if request == "q" || request == "quit" || request == "exit" {
 			return
 		}
+
+		line.AppendHistory(request)
 
 		func() {
 			start := time.Now()
@@ -94,8 +103,8 @@ func parseResp(response []byte) aurora.Value {
 	status := string(response[:idx])
 	data := string(response[idx+1:])
 	if status == "ok" {
-		return aurora.Green("[fq] > " + data)
+		return aurora.Green("[fq]> " + data)
 	}
 
-	return aurora.Red("[fq] > " + data)
+	return aurora.Red("[fq]> " + data)
 }
