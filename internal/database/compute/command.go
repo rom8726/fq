@@ -8,6 +8,7 @@ const (
 	GetCommandID
 	DelCommandID
 	MsgSizeCommandID
+	MDelCommandID
 )
 
 var (
@@ -16,6 +17,7 @@ var (
 	GetCommand     = "GET"
 	DelCommand     = "DEL"
 	MsgSizeCommand = "MSGSIZE"
+	MDelCommand    = "MDEL"
 )
 
 var commandNamesToID = map[string]CommandID{
@@ -24,6 +26,7 @@ var commandNamesToID = map[string]CommandID{
 	GetCommand:     GetCommandID,
 	DelCommand:     DelCommandID,
 	MsgSizeCommand: MsgSizeCommandID,
+	MDelCommand:    MDelCommandID,
 }
 
 func (c CommandID) Int() int {

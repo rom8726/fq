@@ -13,6 +13,7 @@ The database supports the following commands:
  - **INCR** < key > < capping >
  - **GET** < key > < capping >
  - **DEL** < key > < capping >
+ - **MDEL** < key > < capping > < key > < capping > < key > < capping > ...
 
 < key > - is some string key for which you want to be able to increment the counter for a time interval of size < capping >.
 
