@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/rs/zerolog"
 
@@ -15,6 +16,7 @@ var (
 	errInternalConfiguration = errors.New("internal configuration error")
 	errBatchSizeNotNumber    = errors.New("batch is not a number")
 	errInvalidBatchSize      = errors.New("invalid batch size")
+	errInvalidArgumentsCount = errors.New("invalid arguments count")
 )
 
 type computeLayer interface {
@@ -25,6 +27,7 @@ type storageLayer interface {
 	Incr(ctx context.Context, key BatchKey) (ValueType, error)
 	Get(ctx context.Context, key BatchKey) (ValueType, error)
 	Del(ctx context.Context, key BatchKey) (bool, error)
+	MDel(ctx context.Context, keys []BatchKey) ([]bool, error)
 }
 
 type Database struct {
@@ -69,6 +72,8 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		return d.handleDelQuery(ctx, query)
 	case compute.MsgSizeCommandID:
 		return d.handleMsgSizeQuery()
+	case compute.MDelCommandID:
+		return d.handleMDelQuery(ctx, query)
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -121,6 +126,21 @@ func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) stri
 	return makeBoolMsg(value)
 }
 
+func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query) string {
+	arguments := query.Arguments()
+	keys, err := makeBatchKeys(arguments)
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	values, err := d.storageLayer.MDel(ctx, keys)
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	return makeBoolsMsg(values)
+}
+
 func (d *Database) handleMsgSizeQuery() string {
 	return makeValueMsg(ValueType(d.maxMessageSize))
 }
@@ -142,6 +162,25 @@ func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
 	}, nil
 }
 
+func makeBatchKeys(args []string) ([]BatchKey, error) {
+	if len(args)%2 != 0 {
+		return nil, errInvalidArgumentsCount
+	}
+
+	res := make([]BatchKey, 0, len(args)/2)
+
+	for i := 0; i < len(args); i += 2 {
+		key, err := makeBatchKey(args[i], args[i+1])
+		if err != nil {
+			return nil, err
+		}
+
+		res = append(res, key)
+	}
+
+	return res, nil
+}
+
 func makeErrorMsg(err error) string {
 	return "err|" + err.Error()
 }
@@ -159,4 +198,26 @@ func makeBoolMsg(v bool) string {
 	}
 
 	return "ok|" + str
+}
+
+func makeBoolsMsg(arr []bool) string {
+	var buff strings.Builder
+	buff.Grow(len(arr)*2 + 3)
+
+	buff.WriteString("ok")
+	buff.WriteByte('|')
+
+	for i, v := range arr {
+		if v {
+			buff.WriteString("1")
+		} else {
+			buff.WriteString("0")
+		}
+
+		if i < len(arr)-1 {
+			buff.WriteString(";")
+		}
+	}
+
+	return buff.String()
 }

@@ -16,6 +16,7 @@ type Engine interface {
 	Incr(database.TxContext, database.BatchKey) database.ValueType
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
+	MDel(database.TxContext, []database.BatchKey) []bool
 	Clean(context.Context)
 	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
 	RestoreDumpElem(context.Context, database.DumpElem) error
@@ -26,6 +27,7 @@ type WAL interface {
 	Shutdown()
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
+	MDel(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) tools.FutureError
 	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
@@ -142,6 +144,21 @@ func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) 
 	}
 
 	return s.engine.Del(txCtx, key), nil
+}
+
+func (s *Storage) MDel(ctx context.Context, keys []database.BatchKey) ([]bool, error) {
+	txCtx := s.makeTxContext()
+
+	if s.wal != nil {
+		future := s.wal.MDel(ctx, txCtx, keys)
+		if s.syncCommit {
+			if err := future.Get(); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return s.engine.MDel(txCtx, keys), nil
 }
 
 func (s *Storage) makeTxContext() database.TxContext {

@@ -100,6 +100,17 @@ func (w *WAL) Del(ctx context.Context, txCtx database.TxContext, key database.Ba
 	return w.push(ctx, txCtx.Tx, compute.DelCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
 }
 
+func (w *WAL) MDel(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+	arr := make([]string, 0, len(keys)*2+1)
+	arr = append(arr, currTimeStr)
+	for _, key := range keys {
+		arr = append(arr, key.Key, key.BatchSizeStr)
+	}
+
+	return w.push(ctx, txCtx.Tx, compute.MDelCommandID, arr)
+}
+
 func (w *WAL) flushBatch() {
 	var batch []Log
 	tools.WithLock(&w.mutex, func() {

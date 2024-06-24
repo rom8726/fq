@@ -36,6 +36,10 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"DEL", "key"},
 			err:    compute.ErrInvalidArguments,
 		},
+		"invalid number arguments for mdel query": {
+			tokens: []string{"MDEL", "key1", "600", "key2"},
+			err:    compute.ErrInvalidArguments,
+		},
 		"invalid number arguments for message size query": {
 			tokens: []string{"MSGSIZE", "key"},
 			err:    compute.ErrInvalidArguments,
@@ -51,6 +55,10 @@ func TestAnalyzeQuery(t *testing.T) {
 		"valid del query": {
 			tokens: []string{"DEL", "key", "60"},
 			query:  compute.NewQuery(compute.DelCommandID, []string{"key", "60"}),
+		},
+		"valid mdel query": {
+			tokens: []string{"MDEL", "key1", "60", "key2", "60"},
+			query:  compute.NewQuery(compute.MDelCommandID, []string{"key1", "60", "key2", "60"}),
 		},
 		"valid message size query": {
 			tokens: []string{"MSGSIZE"},

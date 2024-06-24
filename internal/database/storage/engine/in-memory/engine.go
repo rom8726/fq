@@ -136,6 +136,16 @@ func (e *Engine) Del(txCtx database.TxContext, key database.BatchKey) bool {
 	return res
 }
 
+func (e *Engine) MDel(txCtx database.TxContext, keys []database.BatchKey) []bool {
+	res := make([]bool, len(keys))
+	for i, k := range keys {
+		v := e.Del(txCtx, k)
+		res[i] = v
+	}
+
+	return res
+}
+
 func (e *Engine) Clean(ctx context.Context) {
 	for _, partition := range e.partitions {
 		partition.Clean(ctx)
@@ -185,6 +195,8 @@ func (e *Engine) applyLogs(logs []*wal.LogData) {
 			e.applyIncrFromLog(log)
 		case compute.DelCommandID:
 			e.applyDelFromLog(log)
+		case compute.MDelCommandID:
+			e.applyMDelFromLog(log)
 		}
 	}
 }
@@ -197,6 +209,19 @@ func (e *Engine) applyIncrFromLog(log *wal.LogData) {
 func (e *Engine) applyDelFromLog(log *wal.LogData) {
 	batchKey, txCtx := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
 	e.Del(txCtx, batchKey)
+}
+
+func (e *Engine) applyMDelFromLog(log *wal.LogData) {
+	var txCtx database.TxContext
+	currTimeStr := log.Arguments[0]
+	batchKeys := make([]database.BatchKey, 0, (len(log.Arguments)-1)/2)
+	for i := 1; i < len(log.Arguments); i += 2 {
+		var batchKey database.BatchKey
+		batchKey, txCtx = parseWALBatchKeyAndCtx(log.LSN, log.Arguments[i], log.Arguments[i+1], currTimeStr)
+		batchKeys = append(batchKeys, batchKey)
+	}
+
+	e.MDel(txCtx, batchKeys)
 }
 
 func parseWALBatchKeyAndCtx(lsn uint64, key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext) {

@@ -13,6 +13,7 @@ const (
 	getQueryArgumentsNumber     = 2
 	delQueryArgumentsNumber     = 2
 	msgSizeQueryArgumentsNumber = 0
+	mdelQueryArgumentsNumber    = -2
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -20,6 +21,7 @@ var queryArgumentsNumber = map[CommandID]int{
 	GetCommandID:     getQueryArgumentsNumber,
 	DelCommandID:     delQueryArgumentsNumber,
 	MsgSizeCommandID: msgSizeQueryArgumentsNumber,
+	MDelCommandID:    mdelQueryArgumentsNumber,
 }
 
 var (
@@ -51,8 +53,17 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 
 	query := NewQuery(commandID, tokens[1:])
 	argumentsNumber := queryArgumentsNumber[commandID]
-	if len(query.Arguments()) != argumentsNumber {
-		return Query{}, ErrInvalidArguments
+	switch {
+	case argumentsNumber >= 0:
+		if len(query.Arguments()) != argumentsNumber {
+			return Query{}, ErrInvalidArguments
+		}
+	case argumentsNumber == -2:
+		if len(query.Arguments())%2 != 0 {
+			return Query{}, ErrInvalidArguments
+		}
+	default:
+		panic(errors.New("unknown arguments count setting"))
 	}
 
 	if a.logger.GetLevel() == zerolog.DebugLevel {
