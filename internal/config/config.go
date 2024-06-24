@@ -95,6 +95,7 @@ func Init() (Config, error) {
 
 func validate(cfg *Config) error {
 	err := validation.ValidateStruct(&cfg.Engine,
+		validation.Field(&cfg.Engine.Type, validation.Required, validation.In("in_memory")),
 		validation.Field(&cfg.Engine.CleanInterval, validation.Required),
 	)
 	if err != nil {
@@ -111,9 +112,33 @@ func validate(cfg *Config) error {
 
 	err = validation.ValidateStruct(&cfg.Network,
 		validation.Field(&cfg.Network.Address, validation.Required),
+		validation.Field(&cfg.Network.MaxConnections, validation.Required),
+		validation.Field(&cfg.Network.MaxMessageSize, validation.Required),
+		validation.Field(&cfg.Network.IdleTimeout, validation.Required),
 	)
 	if err != nil {
 		return fmt.Errorf("validate network section: %w", err)
+	}
+
+	if cfg.WAL != nil {
+		err = validation.ValidateStruct(cfg.WAL,
+			validation.Field(&cfg.WAL.FlushingBatchLength, validation.Required),
+			validation.Field(&cfg.WAL.FlushingBatchTimeout, validation.Required),
+			validation.Field(&cfg.WAL.MaxSegmentSize, validation.Required),
+			validation.Field(&cfg.WAL.DataDirectory, validation.Required),
+		)
+		if err != nil {
+			return fmt.Errorf("validate wal section: %w", err)
+		}
+	}
+
+	err = validation.ValidateStruct(&cfg.Logging,
+		validation.Field(&cfg.Logging.Level, validation.Required,
+			validation.In("debug", "info", "warn", "error")),
+		validation.Field(&cfg.Logging.Output, validation.Required),
+	)
+	if err != nil {
+		return fmt.Errorf("validate logging section: %w", err)
 	}
 
 	return nil
