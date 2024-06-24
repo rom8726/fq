@@ -55,6 +55,10 @@ func main() {
 			continue
 		}
 
+		if request == "q\n" || request == "quit\n" || request == "exit\n" {
+			return
+		}
+
 		func() {
 			start := time.Now()
 			ctx, cancel := context.WithDeadline(context.Background(), start.Add(time.Minute))
