@@ -37,8 +37,7 @@ func (cfg NetworkConfig) ParseMaxMessageSize() (int, error) {
 }
 
 type LoggingConfig struct {
-	Level  string `yaml:"level"`
-	Output string `yaml:"output"`
+	Level string `yaml:"level"`
 }
 
 type EngineConfig struct {
@@ -135,7 +134,6 @@ func validate(cfg *Config) error {
 	err = validation.ValidateStruct(&cfg.Logging,
 		validation.Field(&cfg.Logging.Level, validation.Required,
 			validation.In("debug", "info", "warn", "error")),
-		validation.Field(&cfg.Logging.Output, validation.Required),
 	)
 	if err != nil {
 		return fmt.Errorf("validate logging section: %w", err)

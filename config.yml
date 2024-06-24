@@ -16,4 +16,3 @@ dump:
   directory: /app/data/
 logging:
   level: info
-  output: stdout
