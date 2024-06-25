@@ -72,6 +72,8 @@ func (s *TCPServer) HandleQueries(ctx context.Context, handler TCPHandler) error
 				continue
 			}
 
+			s.logger.Info().Msg("accepted connection")
+
 			wg.Add(1)
 			go func(connection net.Conn) {
 				s.semaphore.Acquire()
@@ -130,6 +132,8 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 	}
+
+	s.logger.Warn().Msg("close connection")
 
 	if err := connection.Close(); err != nil {
 		s.logger.Warn().Err(err).Msg("failed to close connection")
