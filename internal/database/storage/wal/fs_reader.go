@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/rs/zerolog"
@@ -43,7 +44,7 @@ func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
 			continue
 		}
 
-		filename := fmt.Sprintf("%s/%s", r.directory, file.Name())
+		filename := filepath.Join(r.directory, file.Name())
 		segmentedLogs, err := r.ReadSegment(ctx, filename)
 		if err != nil {
 			return nil, fmt.Errorf("failed to recove WAL segment: %w", err)
