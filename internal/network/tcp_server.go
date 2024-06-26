@@ -116,7 +116,7 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 
-		count, err := connection.Read(request)
+		count, err := s.connRead(ctx, connection, request)
 		if err != nil {
 			if err != io.EOF {
 				s.logger.Warn().Err(err).Msg("failed to read")
@@ -137,5 +137,30 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 
 	if err := connection.Close(); err != nil {
 		s.logger.Warn().Err(err).Msg("failed to close connection")
+	}
+}
+
+func (s *TCPServer) connRead(ctx context.Context, conn net.Conn, buff []byte) (int, error) {
+	type readResult struct {
+		n   int
+		err error
+	}
+
+	result := make(chan readResult)
+
+	go func() {
+		defer close(result)
+
+		n, err := conn.Read(buff)
+		result <- readResult{n: n, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = conn.SetReadDeadline(time.Now())
+
+		return 0, ctx.Err()
+	case res := <-result:
+		return res.n, nil
 	}
 }
