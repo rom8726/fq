@@ -75,7 +75,6 @@ func (s *Slave) saveWALSegment(segmentName string, segmentData []byte) error {
 	return segment.Sync()
 }
 
-//nolint:gocritic,revive // in progress
 func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte) error {
 	logs, err := s.walReader.ReadSegmentData(ctx, segmentData)
 	if err != nil {
