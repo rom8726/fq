@@ -57,6 +57,9 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 		return fmt.Errorf("close dump file: %w", err)
 	}
 
+	d.readDumpMu.Lock()
+	defer d.readDumpMu.Unlock()
+
 	if err := os.Rename(filePath, d.currentDumpFilePath()); err != nil {
 		return fmt.Errorf("rename dump file: %w", err)
 	}

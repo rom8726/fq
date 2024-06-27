@@ -3,6 +3,7 @@ package dumper
 import (
 	"context"
 	"path/filepath"
+	"sync"
 
 	"fq/internal/database"
 )
@@ -25,13 +26,18 @@ type Dumper struct {
 	engine Engine
 	wal    WAL
 	dir    string
+
+	sessions   map[string]readSession
+	sessMu     sync.Mutex
+	readDumpMu sync.RWMutex
 }
 
 func New(engine Engine, wal WAL, dir string) *Dumper {
 	return &Dumper{
-		engine: engine,
-		wal:    wal,
-		dir:    dir,
+		engine:   engine,
+		wal:      wal,
+		dir:      dir,
+		sessions: make(map[string]readSession),
 	}
 }
 
