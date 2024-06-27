@@ -66,6 +66,10 @@ func (r *FSReader) ReadSegment(ctx context.Context, filename string) ([]*LogData
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
+	return r.ReadSegmentData(ctx, data)
+}
+
+func (r *FSReader) ReadSegmentData(ctx context.Context, data []byte) ([]*LogData, error) {
 	var logs []*LogData
 	buffer := bytes.NewBuffer(data)
 	sizeBatchBytes := make([]byte, 4)
@@ -77,7 +81,7 @@ func (r *FSReader) ReadSegment(ctx context.Context, filename string) ([]*LogData
 		default:
 		}
 
-		_, err = buffer.Read(sizeBatchBytes)
+		_, err := buffer.Read(sizeBatchBytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read next batch size from WAL segment: %w", err)
 		}

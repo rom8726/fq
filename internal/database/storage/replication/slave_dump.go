@@ -27,6 +27,11 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 		s.readDump = !response.EndOfDump
 		s.dumpStream <- response.SegmentData
 
+		if len(response.SegmentData) > 0 {
+			lastElem := response.SegmentData[len(response.SegmentData)-1]
+			s.dumpLastSegmentNumber = uint64(lastElem.Tx)
+		}
+
 		return nil
 	}
 

@@ -16,8 +16,13 @@ type TCPClient interface {
 	Send(context.Context, []byte) ([]byte, error)
 }
 
+type WALReader interface {
+	ReadSegmentData(ctx context.Context, data []byte) ([]*wal.LogData, error)
+}
+
 type Slave struct {
 	client                TCPClient
+	walReader             WALReader
 	walStream             chan<- []*wal.LogData
 	dumpStream            chan<- []database.DumpElem
 	syncInterval          time.Duration
@@ -36,12 +41,17 @@ type Slave struct {
 
 func NewSlave(
 	client TCPClient,
+	walReader WALReader,
 	walStream chan<- []*wal.LogData,
 	dumpStream chan<- []database.DumpElem,
 	walDirectory string,
 	syncInterval time.Duration,
 	logger *zerolog.Logger,
 ) (*Slave, error) {
+	if walReader == nil {
+		return nil, errors.New("walReader is invalid")
+	}
+
 	if client == nil {
 		return nil, errors.New("client is invalid")
 	}
@@ -57,6 +67,7 @@ func NewSlave(
 
 	return &Slave{
 		client:          client,
+		walReader:       walReader,
 		walStream:       walStream,
 		dumpStream:      dumpStream,
 		syncInterval:    syncInterval,

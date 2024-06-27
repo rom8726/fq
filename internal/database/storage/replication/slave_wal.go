@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
@@ -26,7 +27,7 @@ func (s *Slave) synchronizeWAL(ctx context.Context) error {
 	}
 
 	if response.Succeed {
-		err = s.handleResponse(response)
+		err = s.handleResponse(ctx, response)
 		if err != nil {
 			return fmt.Errorf("handle wal response: %w", err)
 		}
@@ -37,7 +38,7 @@ func (s *Slave) synchronizeWAL(ctx context.Context) error {
 	return fmt.Errorf("failed to apply replication data: master error")
 }
 
-func (s *Slave) handleResponse(response WALResponse) error {
+func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error {
 	if response.SegmentName == "" {
 		s.logger.Debug().Msg("no changes from replication")
 
@@ -50,7 +51,7 @@ func (s *Slave) handleResponse(response WALResponse) error {
 		return fmt.Errorf("save wal segment: %w", err)
 	}
 
-	if err := s.applyDataToEngine(response.SegmentData); err != nil {
+	if err := s.applyDataToEngine(ctx, response.SegmentData); err != nil {
 		return fmt.Errorf("apply data to engine segment: %w", err)
 	}
 
@@ -75,15 +76,34 @@ func (s *Slave) saveWALSegment(segmentName string, segmentData []byte) error {
 }
 
 //nolint:gocritic,revive // in progress
-func (s *Slave) applyDataToEngine(segmentData []byte) error {
-	// var logs []wal.LogData
-	//buffer := bytes.NewBuffer(segmentData)
-	//decoder := gob.NewDecoder(buffer)
-	//if err := decoder.Decode(&logs); err != nil {
-	//	return fmt.Errorf("failed to decode data: %w", err)
-	//}
-	//
-	//s.walStream <- logs
+func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte) error {
+	logs, err := s.walReader.ReadSegmentData(ctx, segmentData)
+	if err != nil {
+		return err
+	}
+
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].LSN < logs[j].LSN
+	})
+
+	idx := len(logs)
+	for i, log := range logs {
+		if log.LSN <= s.dumpLastSegmentNumber {
+			continue
+		} else {
+			idx = i
+
+			break
+		}
+	}
+
+	if idx == len(logs) {
+		s.logger.Debug().Msg("skip replicated segment")
+
+		return nil
+	}
+
+	s.walStream <- logs[idx:]
 
 	return nil
 }

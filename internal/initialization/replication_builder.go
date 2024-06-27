@@ -69,5 +69,7 @@ func CreateReplica(
 		return nil, err
 	}
 
-	return replication.NewSlave(client, walStream, dumpStream, walDirectory, syncInterval, logger)
+	fsReader := wal.NewFSReader(walDirectory, logger)
+
+	return replication.NewSlave(client, fsReader, walStream, dumpStream, walDirectory, syncInterval, logger)
 }
