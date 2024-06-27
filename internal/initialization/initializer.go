@@ -25,25 +25,27 @@ type Initializer struct {
 	logger         *zerolog.Logger
 	slave          *replication.Slave
 	master         *replication.Master
-	stream         chan []*walPkg.LogData
+	walStream      chan []*walPkg.LogData
+	dumpStream     chan []database.DumpElem
 	cfg            config.Config
 	maxMessageSize int
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
-	stream := make(chan []*walPkg.LogData, 1)
+	walStream := make(chan []*walPkg.LogData, 1)
+	dumpStream := make(chan []database.DumpElem, 1)
 
 	logger, err := CreateLogger(cfg.Logging)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
-	wal, err := CreateWAL(cfg.WAL, logger, stream)
+	wal, err := CreateWAL(cfg.WAL, logger, walStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize wal: %w", err)
 	}
 
-	dbEngine, err := CreateEngine(cfg.Engine, logger, stream)
+	dbEngine, err := CreateEngine(cfg.Engine, logger, walStream, dumpStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
 	}
@@ -60,7 +62,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 
 	dumpSrv := dumper.New(dbEngine, wal, cfg.Dump.Directory)
 
-	replica, err := CreateReplica(cfg.Replication, cfg.WAL, logger, dumpSrv, stream)
+	replica, err := CreateReplica(cfg.Replication, cfg.WAL, logger, dumpSrv, walStream, dumpStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize replication: %w", err)
 	}
@@ -71,7 +73,8 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		dumper:         dumpSrv,
 		server:         tcpServer,
 		logger:         logger,
-		stream:         stream,
+		walStream:      walStream,
+		dumpStream:     dumpStream,
 		cfg:            cfg,
 		maxMessageSize: maxMessageSize,
 	}
@@ -82,7 +85,8 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 }
 
 func (i *Initializer) StartDatabase(ctx context.Context) error {
-	defer close(i.stream)
+	defer close(i.walStream)
+	defer close(i.dumpStream)
 
 	computeLayer := i.createComputeLayer()
 

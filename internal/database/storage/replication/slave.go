@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
+	"fq/internal/database"
 	"fq/internal/database/storage/wal"
 )
 
@@ -17,7 +18,8 @@ type TCPClient interface {
 
 type Slave struct {
 	client                TCPClient
-	stream                chan<- []*wal.LogData
+	walStream             chan<- []*wal.LogData
+	dumpStream            chan<- []database.DumpElem
 	syncInterval          time.Duration
 	walDirectory          string
 	lastSegmentName       string
@@ -35,6 +37,7 @@ type Slave struct {
 func NewSlave(
 	client TCPClient,
 	walStream chan<- []*wal.LogData,
+	dumpStream chan<- []database.DumpElem,
 	walDirectory string,
 	syncInterval time.Duration,
 	logger *zerolog.Logger,
@@ -54,7 +57,8 @@ func NewSlave(
 
 	return &Slave{
 		client:          client,
-		stream:          walStream,
+		walStream:       walStream,
+		dumpStream:      dumpStream,
 		syncInterval:    syncInterval,
 		walDirectory:    walDirectory,
 		lastSegmentName: segmentName,
@@ -88,7 +92,9 @@ func (s *Slave) Start(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				default:
-					s.synchronizeDump()
+					if err := s.synchronizeDump(ctx); err != nil {
+						s.logger.Error().Err(err).Msg("failed to synchronize dump")
+					}
 				}
 			} else {
 				select {
@@ -97,7 +103,9 @@ func (s *Slave) Start(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case <-time.After(s.syncInterval):
-					s.synchronizeWAL()
+					if err := s.synchronizeWAL(ctx); err != nil {
+						s.logger.Error().Err(err).Msg("failed to synchronize wal")
+					}
 				}
 			}
 		}

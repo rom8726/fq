@@ -5,29 +5,30 @@ import (
 	"fmt"
 )
 
-func (s *Slave) synchronizeDump() {
+func (s *Slave) synchronizeDump(ctx context.Context) error {
 	request := NewDumpRequest(s.sessionUUID, s.dumpLastSegmentNumber)
 
 	requestData, err := Encode(&request)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("failed to encode replication request")
+		return fmt.Errorf("encode request: %w", err)
 	}
 
-	responseData, err := s.client.Send(context.TODO(), requestData)
+	responseData, err := s.client.Send(ctx, requestData)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("failed to send replication request")
+		return fmt.Errorf("send request: %w", err)
 	}
 
 	var response DumpResponse
 	if err = Decode(&response, responseData); err != nil {
-		s.logger.Error().Err(err).Msg("failed to decode replication response")
+		return fmt.Errorf("decode response: %w", err)
 	}
 
 	if response.Succeed {
 		s.readDump = !response.EndOfDump
+		s.dumpStream <- response.SegmentData
 
-		fmt.Println(response)
-	} else {
-		s.logger.Error().Err(err).Msg("failed to apply replication data: master error")
+		return nil
 	}
+
+	return fmt.Errorf("failed to apply replication data: master error")
 }

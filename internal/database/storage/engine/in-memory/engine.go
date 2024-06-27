@@ -42,7 +42,8 @@ func NewEngine(
 	tableBuilder func() hashTable,
 	partitionsNumber int,
 	logger *zerolog.Logger,
-	stream <-chan []*wal.LogData,
+	walStream <-chan []*wal.LogData,
+	dumpStream <-chan []database.DumpElem,
 ) (*Engine, error) {
 	if tableBuilder == nil {
 		return nil, ErrInvalidArgument
@@ -70,10 +71,18 @@ func NewEngine(
 		logger:     logger,
 	}
 
-	if stream != nil {
+	if walStream != nil {
 		go func() {
-			for logs := range stream {
+			for logs := range walStream {
 				engine.applyLogs(logs)
+			}
+		}()
+	}
+
+	if dumpStream != nil {
+		go func() {
+			for dumpElems := range dumpStream {
+				engine.applyDump(dumpElems)
 			}
 		}()
 	}
@@ -222,6 +231,14 @@ func (e *Engine) applyMDelFromLog(log *wal.LogData) {
 	}
 
 	e.MDel(txCtx, batchKeys)
+}
+
+func (e *Engine) applyDump(dumpElems []database.DumpElem) {
+	for _, elem := range dumpElems {
+		if err := e.RestoreDumpElem(context.TODO(), elem); err != nil {
+			e.logger.Error().Err(err).Msg("failed to restore dump event")
+		}
+	}
 }
 
 func parseWALBatchKeyAndCtx(lsn uint64, key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext) {

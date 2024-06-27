@@ -7,6 +7,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"fq/internal/config"
+	"fq/internal/database"
 	"fq/internal/database/storage/dumper"
 	"fq/internal/database/storage/replication"
 	"fq/internal/database/storage/wal"
@@ -22,7 +23,8 @@ func CreateReplica(
 	walCfg *config.WALConfig,
 	logger *zerolog.Logger,
 	dumperSrv *dumper.Dumper,
-	stream chan<- []*wal.LogData,
+	walStream chan<- []*wal.LogData,
+	dumpStream chan<- []database.DumpElem,
 ) (interface{}, error) {
 	replicaType := defaultReplicationType
 	masterAddress := defaultReplicationMasterAddress
@@ -67,5 +69,5 @@ func CreateReplica(
 		return nil, err
 	}
 
-	return replication.NewSlave(client, stream, walDirectory, syncInterval, logger)
+	return replication.NewSlave(client, walStream, dumpStream, walDirectory, syncInterval, logger)
 }
