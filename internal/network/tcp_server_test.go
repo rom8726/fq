@@ -28,9 +28,9 @@ func TestTCPServer(t *testing.T) {
 	require.NoError(t, err)
 
 	go func() {
-		require.NoError(t, server.HandleQueries(ctx, func(ctx context.Context, buffer []byte) []byte {
+		require.NoError(t, server.HandleQueries(ctx, func(ctx context.Context, buffer []byte) ([]byte, error) {
 			require.True(t, reflect.DeepEqual([]byte(request), buffer))
-			return []byte(response)
+			return []byte(response), nil
 		}))
 	}()
 

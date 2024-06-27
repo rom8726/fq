@@ -14,7 +14,7 @@ import (
 
 func TestDumper_GetNextData(t *testing.T) {
 	logger := zerolog.Nop()
-	engine, err := inMemory.NewEngine(inMemory.HashTableBuilder, 1, &logger, nil)
+	engine, err := inMemory.NewEngine(inMemory.HashTableBuilder, 1, &logger, nil, nil)
 	require.NoError(t, err)
 
 	now := time.Now().Unix()
