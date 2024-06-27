@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
+	github.com/google/uuid v1.6.0
 	github.com/logrusorgru/aurora/v4 v4.0.0
 	github.com/peterh/liner v1.2.2
 	github.com/rs/zerolog v1.33.0

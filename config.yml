@@ -15,5 +15,9 @@ engine:
 dump:
   interval: 15m
   directory: /app/data/
+replication:
+  replica_type: master
+  master_address: ":1946"
+  sync_interval: 1s
 logging:
   level: info

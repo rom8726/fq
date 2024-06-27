@@ -20,11 +20,12 @@ const (
 )
 
 type Config struct {
-	Engine  EngineConfig  `yaml:"engine"`
-	WAL     *WALConfig    `yaml:"wal"`
-	Network NetworkConfig `yaml:"network"`
-	Logging LoggingConfig `yaml:"logging"`
-	Dump    DumpConfig    `yaml:"dump"`
+	Engine      EngineConfig      `yaml:"engine"`
+	WAL         *WALConfig        `yaml:"wal"`
+	Network     NetworkConfig     `yaml:"network"`
+	Logging     LoggingConfig     `yaml:"logging"`
+	Dump        DumpConfig        `yaml:"dump"`
+	Replication ReplicationConfig `yaml:"replication"`
 }
 
 //nolint:tagliatelle // it's ok
@@ -59,6 +60,12 @@ type WALConfig struct {
 type DumpConfig struct {
 	Interval  time.Duration `yaml:"interval"`
 	Directory string        `yaml:"directory"`
+}
+
+type ReplicationConfig struct {
+	ReplicaType   string        `yaml:"replica_type"`
+	MasterAddress string        `yaml:"master_address"`
+	SyncInterval  time.Duration `yaml:"sync_interval"`
 }
 
 func Init() (Config, error) {
