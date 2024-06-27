@@ -3,12 +3,13 @@ package replication
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/rs/zerolog"
 )
 
 type TCPServer interface {
-	Start(context.Context, func(context.Context, []byte) []byte) error
+	Start(context.Context, func(context.Context, []byte) ([]byte, error)) error
 }
 
 type Master struct {
@@ -45,22 +46,20 @@ func (m *Master) IsMaster() bool {
 }
 
 func (m *Master) Start(ctx context.Context) error {
-	return m.server.Start(ctx, func(ctx context.Context, requestData []byte) []byte {
+	return m.server.Start(ctx, func(ctx context.Context, requestData []byte) ([]byte, error) {
 		if ctx.Err() != nil {
-			return nil
+			return nil, ctx.Err()
 		}
 
 		var request Request
 		if err := Decode(&request, requestData); err != nil {
-			m.logger.Error().Err(err).Msg("failed to decode replication request")
-
-			return nil
+			return nil, fmt.Errorf("failed to decode replication request: %w", err)
 		}
 
 		if request.DumpRequest.SessionUUID != "" {
-			return m.processDump(request.DumpRequest)
+			return m.processDump(request.DumpRequest), nil
 		}
 
-		return m.processWAL(request.WALRequest)
+		return m.processWAL(request.WALRequest), nil
 	})
 }

@@ -14,7 +14,7 @@ import (
 	"fq/internal/tools"
 )
 
-type TCPHandler = func(context.Context, []byte) []byte
+type TCPHandler = func(context.Context, []byte) ([]byte, error)
 
 type TCPServer struct {
 	address     string
@@ -102,7 +102,7 @@ func (s *TCPServer) HandleQueries(ctx context.Context, handler TCPHandler) error
 	return nil
 }
 
-func (s *TCPServer) Start(ctx context.Context, handler func(context.Context, []byte) []byte) error {
+func (s *TCPServer) Start(ctx context.Context, handler func(context.Context, []byte) ([]byte, error)) error {
 	return s.HandleQueries(ctx, handler)
 }
 
@@ -125,7 +125,13 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 
-		response := handler(ctx, request[:count])
+		response, err := handler(ctx, request[:count])
+		if err != nil {
+			s.logger.Error().Err(err).Msg("handler failed")
+
+			break
+		}
+
 		if _, err := connection.Write(response); err != nil {
 			s.logger.Warn().Err(err).Msg("failed to write")
 

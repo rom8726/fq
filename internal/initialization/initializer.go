@@ -125,10 +125,10 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 	}
 
 	group.Go(func() error {
-		return i.server.HandleQueries(groupCtx, func(ctx context.Context, query []byte) []byte {
+		return i.server.HandleQueries(groupCtx, func(ctx context.Context, query []byte) ([]byte, error) {
 			response := db.HandleQuery(ctx, string(query))
 
-			return []byte(response)
+			return []byte(response), nil
 		})
 	})
 
