@@ -3,6 +3,8 @@ package replication
 import (
 	"context"
 	"fmt"
+
+	"fq/internal/database"
 )
 
 func (s *Slave) synchronizeDump(ctx context.Context) error {
@@ -28,12 +30,22 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 		s.dumpStream <- response.SegmentData
 
 		if len(response.SegmentData) > 0 {
-			lastElem := response.SegmentData[len(response.SegmentData)-1]
-			s.dumpLastSegmentNumber = uint64(lastElem.Tx)
+			s.dumpLastSegmentNumber = maxLSN(response.SegmentData)
 		}
 
 		return nil
 	}
 
 	return fmt.Errorf("failed to apply replication data: master error")
+}
+
+func maxLSN(elems []database.DumpElem) uint64 {
+	res := uint64(0)
+	for _, e := range elems {
+		if uint64(e.Tx) > res {
+			res = uint64(e.Tx)
+		}
+	}
+
+	return res
 }
