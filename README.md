@@ -4,6 +4,9 @@ Frequency-capping database
 > **WARNING**
 > Not for production use!
 
+> **WARNING**
+> Replication in progress!
+
 This is a small database for the frequency-capping functionality.
 This is an experimental database, you should not use it in production.
 
