@@ -35,10 +35,17 @@ type Dumper interface {
 	Dump(ctx context.Context, dumpTx database.Tx) error
 }
 
+type Replica interface {
+	Start(context.Context)
+	IsMaster() bool
+	Shutdown()
+}
+
 type Storage struct {
 	engine        Engine
 	wal           WAL
 	dumper        Dumper
+	replica       Replica
 	logger        *zerolog.Logger
 	cleanInterval time.Duration
 	dumpInterval  time.Duration
@@ -52,6 +59,7 @@ func NewStorage(
 	engine Engine,
 	wal WAL,
 	dumper Dumper,
+	replica Replica,
 	logger *zerolog.Logger,
 	cleanInterval time.Duration,
 	dumpInterval time.Duration,
@@ -69,6 +77,7 @@ func NewStorage(
 		engine:        engine,
 		wal:           wal,
 		dumper:        dumper,
+		replica:       replica,
 		logger:        logger,
 		cleanInterval: cleanInterval,
 		dumpInterval:  dumpInterval,
@@ -97,7 +106,15 @@ func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
 
 func (s *Storage) Start(ctx context.Context) {
 	if s.wal != nil {
-		s.wal.Start()
+		if s.replica != nil {
+			if s.replica.IsMaster() {
+				s.wal.Start()
+			}
+
+			s.replica.Start(ctx)
+		} else {
+			s.wal.Start()
+		}
 	}
 
 	go s.gcLoop(ctx)
@@ -106,7 +123,14 @@ func (s *Storage) Start(ctx context.Context) {
 
 func (s *Storage) Shutdown() {
 	if s.wal != nil {
-		s.wal.Shutdown()
+		if s.replica != nil {
+			s.replica.Shutdown()
+			if s.replica.IsMaster() {
+				s.wal.Shutdown()
+			}
+		} else {
+			s.wal.Shutdown()
+		}
 	}
 }
 

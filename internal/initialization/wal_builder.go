@@ -14,7 +14,7 @@ import (
 const defaultFlushingBatchSize = 100
 const defaultFlushingBatchTimeout = time.Millisecond * 10
 const defaultMaxSegmentSize = 10 << 20
-const defaultWALDataDirectory = "./data/picodb/wal"
+const defaultWALDataDirectory = "/app/data/wal"
 
 func CreateWAL(
 	cfg *config.WALConfig,

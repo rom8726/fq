@@ -12,6 +12,7 @@ import (
 	"fq/internal/database/compute"
 	"fq/internal/database/storage"
 	"fq/internal/database/storage/dumper"
+	"fq/internal/database/storage/replication"
 	walPkg "fq/internal/database/storage/wal"
 	"fq/internal/network"
 )
@@ -22,25 +23,29 @@ type Initializer struct {
 	dumper         *dumper.Dumper
 	server         *network.TCPServer
 	logger         *zerolog.Logger
-	stream         chan []*walPkg.LogData
+	slave          *replication.Slave
+	master         *replication.Master
+	walStream      chan []*walPkg.LogData
+	dumpStream     chan []database.DumpElem
 	cfg            config.Config
 	maxMessageSize int
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
-	stream := make(chan []*walPkg.LogData, 1)
+	walStream := make(chan []*walPkg.LogData, 1)
+	dumpStream := make(chan []database.DumpElem, 1)
 
 	logger, err := CreateLogger(cfg.Logging)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
-	wal, err := CreateWAL(cfg.WAL, logger, stream)
+	wal, err := CreateWAL(cfg.WAL, logger, walStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize wal: %w", err)
 	}
 
-	dbEngine, err := CreateEngine(cfg.Engine, logger, stream)
+	dbEngine, err := CreateEngine(cfg.Engine, logger, walStream, dumpStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
 	}
@@ -55,22 +60,33 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		return nil, fmt.Errorf("failed to parse max message size: %w", err)
 	}
 
+	dumpSrv := dumper.New(dbEngine, wal, cfg.Dump.Directory)
+
+	replica, err := CreateReplica(cfg.Replication, cfg.WAL, logger, dumpSrv, walStream, dumpStream)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize replication: %w", err)
+	}
+
 	initializer := &Initializer{
 		wal:            wal,
 		engine:         dbEngine,
-		dumper:         dumper.New(dbEngine, wal, cfg.Dump.Directory),
+		dumper:         dumpSrv,
 		server:         tcpServer,
 		logger:         logger,
-		stream:         stream,
+		walStream:      walStream,
+		dumpStream:     dumpStream,
 		cfg:            cfg,
 		maxMessageSize: maxMessageSize,
 	}
+
+	initializer.initializeReplication(replica)
 
 	return initializer, nil
 }
 
 func (i *Initializer) StartDatabase(ctx context.Context) error {
-	defer close(i.stream)
+	defer close(i.walStream)
+	defer close(i.dumpStream)
 
 	computeLayer := i.createComputeLayer()
 
@@ -102,11 +118,17 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 		}
 	}
 
+	if i.master != nil {
+		group.Go(func() error {
+			return i.master.Start(groupCtx)
+		})
+	}
+
 	group.Go(func() error {
-		return i.server.HandleQueries(groupCtx, func(ctx context.Context, query []byte) []byte {
+		return i.server.HandleQueries(groupCtx, func(ctx context.Context, query []byte) ([]byte, error) {
 			response := db.HandleQuery(ctx, string(query))
 
-			return []byte(response)
+			return []byte(response), nil
 		})
 	})
 
@@ -131,6 +153,7 @@ func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, err
 		i.engine,
 		i.wal,
 		i.dumper,
+		i.storageReplicaSlave(),
 		i.logger,
 		i.cfg.Engine.CleanInterval,
 		i.cfg.Dump.Interval,
@@ -143,4 +166,33 @@ func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, err
 	}
 
 	return strg, nil
+}
+
+func (i *Initializer) initializeReplication(replica interface{}) {
+	if replica == nil {
+		return
+	}
+
+	if i.wal == nil {
+		i.logger.Error().Msg("wal is required for replication")
+
+		return
+	}
+
+	switch v := replica.(type) {
+	case *replication.Slave:
+		i.slave = v
+	case *replication.Master:
+		i.master = v
+	default:
+		i.logger.Error().Msg("incorrect replication type")
+	}
+}
+
+func (i *Initializer) storageReplicaSlave() storage.Replica {
+	if i.slave == nil {
+		return nil
+	}
+
+	return i.slave
 }
