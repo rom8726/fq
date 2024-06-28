@@ -89,11 +89,11 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte) error
 	for i, log := range logs {
 		if log.LSN <= s.dumpLastSegmentNumber {
 			continue
-		} else {
-			idx = i
-
-			break
 		}
+
+		idx = i
+
+		break
 	}
 
 	if idx == len(logs) {
