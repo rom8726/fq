@@ -10,6 +10,10 @@ Frequency-capping database
 This is a small database for the frequency-capping functionality.
 This is an experimental database, you should not use it in production.
 
+## Why?
+
+To learn databases implementation.
+
 ## Commands
 
 The database supports the following commands:
