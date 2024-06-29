@@ -5,12 +5,12 @@ COPY . .
 
 RUN go mod download
 RUN go build --ldflags "-w -s -extldflags -static -X 'main.Commit=$(git rev-parse HEAD)'" -o ./bin/fq ./cmd/fq/
-RUN go build --ldflags "-w -s -extldflags -static -X 'main.Commit=$(git rev-parse HEAD)'" -o ./bin/cli ./cmd/cli/
+RUN go build --ldflags "-w -s -extldflags -static -X 'main.Commit=$(git rev-parse HEAD)'" -o ./bin/fqc ./cmd/cli/
 
 FROM alpine:latest
 WORKDIR /app
 COPY --from=build /go/src/github.com/rom8726/fq/bin/fq ./fq
-COPY --from=build /go/src/github.com/rom8726/fq/bin/cli ./cli
+COPY --from=build /go/src/github.com/rom8726/fq/bin/fqc ./fqc
 COPY --from=build /go/src/github.com/rom8726/fq/config.yml ./config.yml
 RUN mkdir -p /app/data/wal
 RUN chown nobody: /app -R
