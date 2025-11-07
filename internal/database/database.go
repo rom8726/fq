@@ -37,6 +37,7 @@ type storageLayer interface {
 	Get(ctx context.Context, key BatchKey) (ValueType, error)
 	Del(ctx context.Context, key BatchKey) (bool, error)
 	MDel(ctx context.Context, keys []BatchKey) ([]bool, error)
+	Watch(ctx context.Context, key BatchKey) (ValueType, error)
 }
 
 type Database struct {
@@ -88,6 +89,8 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		return d.handleMsgSizeQuery()
 	case compute.MDelCommandID:
 		return d.handleMDelQuery(ctx, query)
+	case compute.WatchCommandID:
+		return d.handleWatchQuery(ctx, query)
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -157,6 +160,21 @@ func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query) str
 
 func (d *Database) handleMsgSizeQuery() string {
 	return makeValueMsg(ValueType(d.maxMessageSize))
+}
+
+func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) string {
+	arguments := query.Arguments()
+	key, err := makeBatchKey(arguments[0], arguments[1])
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	value, err := d.storageLayer.Watch(ctx, key)
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	return makeValueMsg(value)
 }
 
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,7 +71,15 @@ func main() {
 
 		func() {
 			start := time.Now()
-			ctx, cancel := context.WithDeadline(context.Background(), start.Add(time.Minute))
+
+			// For WATCH command, use longer timeout (30 seconds)
+			timeout := time.Minute
+			if isWatchCommand(request) {
+				timeout = 30 * time.Second
+				fmt.Println("Watching for changes... (press Ctrl+C to cancel)")
+			}
+
+			ctx, cancel := context.WithDeadline(context.Background(), start.Add(timeout))
 			defer cancel()
 
 			response, err := client.Send(ctx, []byte(request))
@@ -78,6 +87,11 @@ func main() {
 			if err != nil {
 				if errors.Is(err, syscall.EPIPE) {
 					logger.Fatal().Err(err).Msg("connection was closed")
+				}
+
+				if errors.Is(err, context.DeadlineExceeded) && isWatchCommand(request) {
+					fmt.Println("Watch timeout: no changes detected")
+					return
 				}
 
 				logger.Fatal().Err(err).Msg("failed to send query")
@@ -107,4 +121,9 @@ func parseResp(response []byte) aurora.Value {
 	}
 
 	return aurora.Red("[fq]> " + data)
+}
+
+func isWatchCommand(request string) bool {
+	upperRequest := strings.ToUpper(strings.TrimSpace(request))
+	return strings.HasPrefix(upperRequest, "WATCH ")
 }

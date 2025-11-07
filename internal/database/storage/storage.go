@@ -204,6 +204,35 @@ func (s *Storage) MDel(ctx context.Context, keys []database.BatchKey) ([]bool, e
 	return s.engine.MDel(txCtx, keys), nil
 }
 
+func (s *Storage) Watch(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
+	// Get initial value
+	lastValue, err := s.Get(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+
+	// Poll for changes every 100ms
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-ticker.C:
+			currentValue, err := s.Get(ctx, key)
+			if err != nil {
+				return 0, err
+			}
+
+			// If value changed, return it
+			if currentValue != lastValue {
+				return currentValue, nil
+			}
+		}
+	}
+}
+
 func (s *Storage) makeTxContext() database.TxContext {
 	return database.TxContext{
 		Tx:       database.Tx(s.tx.Add(1)),

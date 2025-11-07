@@ -15,6 +15,7 @@ const (
 	delQueryArgumentsNumber     = 2
 	msgSizeQueryArgumentsNumber = 0
 	mdelQueryArgumentsNumber    = -2
+	watchQueryArgumentsNumber   = 2
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -23,6 +24,7 @@ var queryArgumentsNumber = map[CommandID]int{
 	DelCommandID:     delQueryArgumentsNumber,
 	MsgSizeCommandID: msgSizeQueryArgumentsNumber,
 	MDelCommandID:    mdelQueryArgumentsNumber,
+	WatchCommandID:   watchQueryArgumentsNumber,
 }
 
 var (
