@@ -85,9 +85,6 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 }
 
 func (i *Initializer) StartDatabase(ctx context.Context) error {
-	defer close(i.walStream)
-	defer close(i.dumpStream)
-
 	computeLayer := i.createComputeLayer()
 
 	strg, err := i.createStorageLayer(ctx)
@@ -95,7 +92,13 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 		return err
 	}
 
-	defer strg.Shutdown()
+	// Shutdown storage (which includes slave) before closing channels
+	defer func() {
+		strg.Shutdown()
+		// Close channels after slave is stopped
+		close(i.walStream)
+		close(i.dumpStream)
+	}()
 
 	db := database.NewDatabase(computeLayer, strg, i.logger, i.maxMessageSize)
 
@@ -142,11 +145,7 @@ func (i *Initializer) createComputeLayer() *compute.Compute {
 	return compute.NewCompute(queryParser, queryAnalyzer, i.logger)
 }
 
-func (i *Initializer) createStorageLayer(context.Context) (*storage.Storage, error) {
-	// if i.slave != nil {
-	// i.slave.StartSynchronization(ctx) // TODO:
-	// }
-
+func (i *Initializer) createStorageLayer(ctx context.Context) (*storage.Storage, error) {
 	walSyncCommit := i.cfg.WAL != nil && i.cfg.WAL.SyncCommit == config.WALSyncCommitOn
 
 	strg, err := storage.NewStorage(

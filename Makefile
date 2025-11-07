@@ -1,4 +1,37 @@
 WAL_ROOT = $(PWD)/internal/database/storage/wal
+BIN_DIR = $(PWD)/bin
+
+.PHONY: build
+build: build-fq build-cli
+
+.PHONY: build-fq
+build-fq:
+	@echo "-> Building fq server binary..."
+	@mkdir -p $(BIN_DIR)
+	@go build -o $(BIN_DIR)/fq ./cmd/fq
+	@echo "-> Binary built: $(BIN_DIR)/fq"
+
+.PHONY: build-cli
+build-cli:
+	@echo "-> Building fq CLI client binary..."
+	@mkdir -p $(BIN_DIR)
+	@go build -o $(BIN_DIR)/fq-cli ./cmd/cli
+	@echo "-> Binary built: $(BIN_DIR)/fq-cli"
+
+.PHONY: run-server
+run-server:
+	@echo "-> Running fq server (master)..."
+	@go run ./cmd/fq
+
+.PHONY: run-slave
+run-slave:
+	@echo "-> Running fq server (slave replica)..."
+	@go run ./cmd/fq config-slave.yml
+
+.PHONY: run-cli
+run-cli:
+	@echo "-> Running fq CLI client..."
+	@go run ./cmd/cli -address :1945
 
 .PHONY: lint
 lint:

@@ -13,9 +13,21 @@ import (
 )
 
 func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
+	// Lock write access during dump creation
+	d.readDumpMu.Lock()
+	defer d.readDumpMu.Unlock()
+
+	// Invalidate all active sessions before creating new dump
+	d.invalidateAllSessions()
+
 	filename := fmt.Sprintf("dump_%d.dump", time.Now().UnixNano())
 	filePath := filepath.Join(d.dir, filename)
-	defer func() { _ = os.Remove(filePath) }()
+	shouldRemove := true
+	defer func() {
+		if shouldRemove {
+			_ = os.Remove(filePath)
+		}
+	}()
 
 	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
@@ -57,12 +69,13 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 		return fmt.Errorf("close dump file: %w", err)
 	}
 
-	d.readDumpMu.Lock()
-	defer d.readDumpMu.Unlock()
-
 	if err := os.Rename(filePath, d.currentDumpFilePath()); err != nil {
 		return fmt.Errorf("rename dump file: %w", err)
 	}
+
+	// Increment dump version after successful rename
+	d.dumpVersion++
+	shouldRemove = false // File successfully renamed, don't remove
 
 	if d.wal != nil {
 		if err := d.wal.RemovePastSegments(ctx, uint64(dumpTx)); err != nil {

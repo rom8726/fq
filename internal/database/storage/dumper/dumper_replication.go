@@ -3,22 +3,53 @@ package dumper
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"fq/internal/database"
 )
 
 type readSession struct {
-	buff   *bytes.Buffer
-	closed bool
+	buff        *bytes.Buffer
+	closed      bool
+	dumpVersion uint64    // dump version when session was created
+	lastAccess  time.Time // last access time to the session
 }
 
 func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, error) {
+	// Check session limit
+	d.sessMu.Lock()
+	if d.activeSessions >= d.maxSessions {
+		// Check if session already exists
+		if _, exists := d.sessions[sessionUUID]; !exists {
+			d.sessMu.Unlock()
+			return nil, false, fmt.Errorf("maximum number of dump sessions (%d) reached", d.maxSessions)
+		}
+	}
+	d.sessMu.Unlock()
+
 	buff, err := d.getSessionBuff(sessionUUID)
 	if err != nil {
 		return nil, false, err
 	}
+
+	// Check that session wasn't invalidated due to new dump
+	d.sessMu.Lock()
+	sess, ok := d.sessions[sessionUUID]
+	if ok && sess.dumpVersion != d.dumpVersion {
+		d.sessMu.Unlock()
+		d.CloseReadSession(sessionUUID)
+		return nil, false, database.ErrDumpReadSessionClosed
+	}
+
+	// Update last access time
+	if ok {
+		sess.lastAccess = time.Now()
+		d.sessions[sessionUUID] = sess
+	}
+	d.sessMu.Unlock()
 
 	if buff.Len() == 0 {
 		d.CloseReadSession(sessionUUID)
@@ -52,6 +83,12 @@ func (d *Dumper) CloseReadSession(sessionUUID string) {
 
 	sess.buff = nil
 	sess.closed = true
+	d.sessions[sessionUUID] = sess
+
+	// Decrement active sessions counter
+	if d.activeSessions > 0 {
+		d.activeSessions--
+	}
 }
 
 func (d *Dumper) getSessionBuff(sessionUUID string) (*bytes.Buffer, error) {
@@ -60,16 +97,36 @@ func (d *Dumper) getSessionBuff(sessionUUID string) (*bytes.Buffer, error) {
 
 	sess, ok := d.sessions[sessionUUID]
 	if !ok {
+		// Use RLock for reading file to avoid blocking other readers
 		d.readDumpMu.RLock()
-		defer d.readDumpMu.RUnlock()
+		currentVersion := d.dumpVersion
+		dumpPath := d.currentDumpFilePath()
+		d.readDumpMu.RUnlock()
 
-		data, err := os.ReadFile(d.currentDumpFilePath())
+		data, err := os.ReadFile(dumpPath)
 		if err != nil {
+			// If dump file doesn't exist, it's normal for first startup
+			// Return empty buffer to indicate no dump available
+			if errors.Is(err, os.ErrNotExist) {
+				sess = readSession{
+					buff:        bytes.NewBuffer(nil),
+					dumpVersion: currentVersion,
+					lastAccess:  time.Now(),
+				}
+				d.sessions[sessionUUID] = sess
+				d.activeSessions++
+				return sess.buff, nil
+			}
 			return nil, fmt.Errorf("failed to open dump file: %w", err)
 		}
 
-		sess = readSession{buff: bytes.NewBuffer(data)}
+		sess = readSession{
+			buff:        bytes.NewBuffer(data),
+			dumpVersion: currentVersion,
+			lastAccess:  time.Now(),
+		}
 		d.sessions[sessionUUID] = sess
+		d.activeSessions++
 	}
 
 	if sess.closed {

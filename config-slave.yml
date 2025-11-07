@@ -1,23 +1,24 @@
 network:
-  address: ":1945"
+  address: ":1947"
   max_connections: 1000
   max_message_size: 4096
   idle_timeout: 10m
 wal:
-  sync_commit: on
+  sync_commit: off
   flushing_batch_length: 4096
   flushing_batch_timeout: 20ms
   max_segment_size: 4096
-  data_directory: ./app/data/wal/
+  data_directory: ./app/data-slave/wal/
 engine:
   type: in_memory
   clean_interval: 10m
 dump:
   interval: 15m
-  directory: ./app/data/
+  directory: ./app/data-slave/
 replication:
-  replica_type: master
+  replica_type: slave
   master_address: ":1946"
   sync_interval: 1s
 logging:
   level: info
+

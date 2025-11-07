@@ -122,15 +122,20 @@ func (s *Storage) Start(ctx context.Context) {
 }
 
 func (s *Storage) Shutdown() {
+	// Shutdown replica first (slave needs to stop before channels are closed)
+	if s.replica != nil {
+		s.replica.Shutdown()
+	}
+
 	if s.wal != nil {
-		if s.replica != nil {
-			s.replica.Shutdown()
-			if s.replica.IsMaster() {
-				s.wal.Shutdown()
-			}
-		} else {
+		if s.replica == nil || s.replica.IsMaster() {
 			s.wal.Shutdown()
 		}
+	}
+
+	// Shutdown dumper if it has shutdown method
+	if dumperWithShutdown, ok := s.dumper.(interface{ Shutdown() }); ok {
+		dumperWithShutdown.Shutdown()
 	}
 }
 

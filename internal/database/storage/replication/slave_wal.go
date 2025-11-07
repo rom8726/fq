@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
+
+	"fq/internal/database/storage/wal"
 )
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
@@ -18,7 +21,24 @@ func (s *Slave) synchronizeWAL(ctx context.Context) error {
 
 	responseData, err := s.client.Send(ctx, requestData)
 	if err != nil {
-		return fmt.Errorf("send wal request: %w", err)
+		// Check if it's a network error requiring reconnection
+		if s.isNetworkError(err) {
+			s.logger.Warn().
+				Err(err).
+				Str("last_segment_name", s.lastSegmentName).
+				Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
+				Msg("network error detected during WAL sync, attempting reconnection")
+			if reconnectErr := s.reconnect(ctx); reconnectErr != nil {
+				return fmt.Errorf("reconnection failed: %w", reconnectErr)
+			}
+			// Retry after reconnection
+			responseData, err = s.client.Send(ctx, requestData)
+			if err != nil {
+				return fmt.Errorf("send wal request after reconnection: %w", err)
+			}
+		} else {
+			return fmt.Errorf("send wal request: %w", err)
+		}
 	}
 
 	var response WALResponse
@@ -40,7 +60,9 @@ func (s *Slave) synchronizeWAL(ctx context.Context) error {
 
 func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error {
 	if response.SegmentName == "" {
-		s.logger.Debug().Msg("no changes from replication")
+		s.logger.Debug().
+			Str("last_segment_name", s.lastSegmentName).
+			Msg("no new WAL segments from replication")
 
 		return nil
 	}
@@ -51,7 +73,7 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 		return fmt.Errorf("save wal segment: %w", err)
 	}
 
-	if err := s.applyDataToEngine(ctx, response.SegmentData); err != nil {
+	if err := s.applyDataToEngine(ctx, response.SegmentData, response.SegmentName); err != nil {
 		return fmt.Errorf("apply data to engine segment: %w", err)
 	}
 
@@ -75,7 +97,29 @@ func (s *Slave) saveWALSegment(segmentName string, segmentData []byte) error {
 	return segment.Sync()
 }
 
-func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte) error {
+// sendToWALStream safely sends data to walStream with closed channel handling
+func (s *Slave) sendToWALStream(logs []*wal.LogData) error {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error().Interface("panic", r).Msg("panic sending to walStream (channel closed)")
+		}
+	}()
+
+	select {
+	case s.walStream <- logs:
+		return nil
+	default:
+		// Channel is full, try to send with timeout
+		select {
+		case s.walStream <- logs:
+			return nil
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("timeout sending to walStream")
+		}
+	}
+}
+
+func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segmentName string) error {
 	logs, err := s.walReader.ReadSegmentData(ctx, segmentData)
 	if err != nil {
 		return err
@@ -97,12 +141,19 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte) error
 	}
 
 	if idx == len(logs) {
-		s.logger.Debug().Msg("skip replicated segment")
+		s.logger.Debug().
+			Str("segment_name", segmentName).
+			Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
+			Int("total_logs", len(logs)).
+			Msg("skipping replicated segment, all logs already in dump")
 
 		return nil
 	}
 
-	s.walStream <- logs[idx:]
+	// Safe channel send with closed channel check
+	if err := s.sendToWALStream(logs[idx:]); err != nil {
+		return fmt.Errorf("failed to send WAL data to stream: %w", err)
+	}
 
 	return nil
 }

@@ -51,8 +51,17 @@ func (m *Master) Start(ctx context.Context) error {
 			return nil, ctx.Err()
 		}
 
+		// Check if request data is empty or too short
+		if len(requestData) == 0 {
+			return nil, fmt.Errorf("empty replication request")
+		}
+
 		var request Request
 		if err := Decode(&request, requestData); err != nil {
+			m.logger.Warn().
+				Err(err).
+				Int("request_size", len(requestData)).
+				Msg("failed to decode replication request, connection may be closing")
 			return nil, fmt.Errorf("failed to decode replication request: %w", err)
 		}
 

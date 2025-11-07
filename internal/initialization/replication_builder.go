@@ -64,12 +64,10 @@ func CreateReplica(
 		return replication.NewMaster(server, walDirectory, dumperSrv, logger)
 	}
 
-	client, err := network.NewTCPClient(masterAddress, maxMessageSize, idleTimeout)
-	if err != nil {
-		return nil, err
-	}
+	// Create client factory for reconnection support
+	clientFactory := replication.NewTCPClientFactory(masterAddress, maxMessageSize, idleTimeout)
 
 	fsReader := wal.NewFSReader(walDirectory, logger)
 
-	return replication.NewSlave(client, fsReader, walStream, dumpStream, walDirectory, syncInterval, logger)
+	return replication.NewSlaveWithFactory(clientFactory, fsReader, walStream, dumpStream, walDirectory, syncInterval, logger)
 }
