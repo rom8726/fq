@@ -163,10 +163,14 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 		return nil
 	}
 
-	sort.Slice(logs, func(i, j int) bool {
-		return logs[i].LSN < logs[j].LSN
-	})
+	// Sort logs by LSN if needed (usually they are already sorted)
+	if len(logs) > 1 {
+		sort.Slice(logs, func(i, j int) bool {
+			return logs[i].LSN < logs[j].LSN
+		})
+	}
 
+	// Find first log to apply
 	idx := len(logs)
 	for i, log := range logs {
 		// Skip logs that are already in dump or already applied
@@ -175,7 +179,6 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 		}
 
 		idx = i
-
 		break
 	}
 
@@ -192,6 +195,7 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 		return nil
 	}
 
+	// Reuse existing slice, no need to allocate new one
 	logsToApply := logs[idx:]
 	lastLSN := logsToApply[len(logsToApply)-1].LSN
 

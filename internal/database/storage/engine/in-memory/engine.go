@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"strconv"
 	"time"
 
@@ -191,10 +190,13 @@ func (e *Engine) RestoreDumpElem(_ context.Context, elem database.DumpElem) erro
 }
 
 func (e *Engine) partitionIdx(key string) int {
-	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(key))
-
-	return int(hash.Sum32()) % len(e.partitions)
+	// Fast hash function for partition selection
+	// Using simple multiplicative hash for better performance
+	hash := uint32(0)
+	for i := 0; i < len(key); i++ {
+		hash = hash*31 + uint32(key[i])
+	}
+	return int(hash) % len(e.partitions)
 }
 
 //nolint:gocritic
@@ -258,7 +260,9 @@ func (e *Engine) applyMDelFromLog(log *wal.LogData) {
 
 	var txCtx database.TxContext
 	currTimeStr := log.Arguments[0]
-	batchKeys := make([]database.BatchKey, 0, (len(log.Arguments)-1)/2)
+	// Pre-allocate with exact capacity
+	expectedKeys := (len(log.Arguments) - 1) / 2
+	batchKeys := make([]database.BatchKey, 0, expectedKeys)
 	for i := 1; i < len(log.Arguments); i += 2 {
 		batchKey, parsedTxCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[i], log.Arguments[i+1], currTimeStr)
 		if err != nil {

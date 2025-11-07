@@ -51,9 +51,10 @@ func (w *FSWriter) WriteBatch(batch []Log) {
 		}
 	}
 
-	logs := make([]*LogData, 0, len(batch))
-	for _, log := range batch {
-		logs = append(logs, log.data)
+	// Pre-allocate slice with exact capacity to avoid reallocations
+	logs := make([]*LogData, len(batch))
+	for i, log := range batch {
+		logs[i] = log.data
 	}
 
 	if err := w.writeLogs(logs); err != nil {
