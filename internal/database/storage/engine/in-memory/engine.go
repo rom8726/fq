@@ -22,6 +22,7 @@ const (
 var (
 	ErrInvalidArgument           = errors.New("invalid argument")
 	ErrInvalidHashTablePartition = errors.New("hash table partition is invalid")
+	ErrInvalidWALData            = errors.New("invalid WAL log data")
 )
 
 type hashTable interface {
@@ -211,45 +212,86 @@ func (e *Engine) applyLogs(logs []*wal.LogData) {
 }
 
 func (e *Engine) applyIncrFromLog(log *wal.LogData) {
-	batchKey, txCtx := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	if len(log.Arguments) < 3 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Msg("invalid WAL log: insufficient arguments for INCR")
+		return
+	}
+
+	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Msg("failed to parse WAL log for INCR")
+		return
+	}
+
 	e.Incr(txCtx, batchKey)
 }
 
 func (e *Engine) applyDelFromLog(log *wal.LogData) {
-	batchKey, txCtx := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	if len(log.Arguments) < 3 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Msg("invalid WAL log: insufficient arguments for DEL")
+		return
+	}
+
+	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Msg("failed to parse WAL log for DEL")
+		return
+	}
+
 	e.Del(txCtx, batchKey)
 }
 
 func (e *Engine) applyMDelFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 1 || (len(log.Arguments)-1)%2 != 0 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Msg("invalid WAL log: insufficient or invalid arguments for MDEL")
+		return
+	}
+
 	var txCtx database.TxContext
 	currTimeStr := log.Arguments[0]
 	batchKeys := make([]database.BatchKey, 0, (len(log.Arguments)-1)/2)
 	for i := 1; i < len(log.Arguments); i += 2 {
-		var batchKey database.BatchKey
-		batchKey, txCtx = parseWALBatchKeyAndCtx(log.LSN, log.Arguments[i], log.Arguments[i+1], currTimeStr)
+		batchKey, parsedTxCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[i], log.Arguments[i+1], currTimeStr)
+		if err != nil {
+			e.logger.Error().Err(err).Uint64("lsn", log.LSN).Int("arg_index", i).Msg("failed to parse WAL log argument for MDEL")
+			continue
+		}
+		txCtx = parsedTxCtx
 		batchKeys = append(batchKeys, batchKey)
 	}
 
-	e.MDel(txCtx, batchKeys)
+	if len(batchKeys) > 0 {
+		e.MDel(txCtx, batchKeys)
+	}
 }
 
 func (e *Engine) applyDump(dumpElems []database.DumpElem) {
+	ctx := context.Background()
 	for _, elem := range dumpElems {
-		if err := e.RestoreDumpElem(context.TODO(), elem); err != nil {
+		if err := e.RestoreDumpElem(ctx, elem); err != nil {
 			e.logger.Error().Err(err).Msg("failed to restore dump event")
 		}
 	}
 }
 
-func parseWALBatchKeyAndCtx(lsn uint64, key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext) {
+func parseWALBatchKeyAndCtx(lsn uint64, key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext, error) {
 	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 32)
 	if err != nil {
-		panic(fmt.Errorf("WAL log: parse batch size: %w", err))
+		return database.BatchKey{}, database.TxContext{}, fmt.Errorf("WAL log: parse batch size: %w", err)
 	}
 
 	currTime, err := strconv.ParseInt(currTimeStr, 16, 64)
 	if err != nil {
-		panic(fmt.Errorf("WAL log: parse curr time: %w", err))
+		return database.BatchKey{}, database.TxContext{}, fmt.Errorf("WAL log: parse curr time: %w", err)
 	}
 
 	batchKey := database.BatchKey{
@@ -264,7 +306,7 @@ func parseWALBatchKeyAndCtx(lsn uint64, key, batchSizeStr, currTimeStr string) (
 		FromWAL:  true,
 	}
 
-	return batchKey, txCtx
+	return batchKey, txCtx, nil
 }
 
 func isExpired(currTime, batchSize database.TxTime) bool {

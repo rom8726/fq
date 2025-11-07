@@ -122,20 +122,34 @@ func (s *Storage) Start(ctx context.Context) {
 }
 
 func (s *Storage) Shutdown() {
-	// Shutdown replica first (slave needs to stop before channels are closed)
-	if s.replica != nil {
-		s.replica.Shutdown()
-	}
+	shutdownTimeout := 30 * time.Second
+	shutdownDone := make(chan struct{})
 
-	if s.wal != nil {
-		if s.replica == nil || s.replica.IsMaster() {
-			s.wal.Shutdown()
+	go func() {
+		defer close(shutdownDone)
+
+		// Shutdown replica first (slave needs to stop before channels are closed)
+		if s.replica != nil {
+			s.replica.Shutdown()
 		}
-	}
 
-	// Shutdown dumper if it has shutdown method
-	if dumperWithShutdown, ok := s.dumper.(interface{ Shutdown() }); ok {
-		dumperWithShutdown.Shutdown()
+		if s.wal != nil {
+			if s.replica == nil || s.replica.IsMaster() {
+				s.wal.Shutdown()
+			}
+		}
+
+		// Shutdown dumper if it has shutdown method
+		if dumperWithShutdown, ok := s.dumper.(interface{ Shutdown() }); ok {
+			dumperWithShutdown.Shutdown()
+		}
+	}()
+
+	select {
+	case <-shutdownDone:
+		s.logger.Info().Msg("storage shutdown completed")
+	case <-time.After(shutdownTimeout):
+		s.logger.Warn().Msg("storage shutdown timeout exceeded")
 	}
 }
 

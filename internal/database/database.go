@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -12,11 +13,19 @@ import (
 	"fq/internal/database/compute"
 )
 
+const (
+	maxKeyLength = 1024
+	maxBatchSize = math.MaxUint32
+	minBatchSize = 1
+)
+
 var (
 	errInternalConfiguration = errors.New("internal configuration error")
 	errBatchSizeNotNumber    = errors.New("batch is not a number")
 	errInvalidBatchSize      = errors.New("invalid batch size")
 	errInvalidArgumentsCount = errors.New("invalid arguments count")
+	errKeyTooLong            = errors.New("key length exceeds maximum")
+	errKeyEmpty              = errors.New("key cannot be empty")
 )
 
 type computeLayer interface {
@@ -56,6 +65,11 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		d.logger.Debug().
 			Str("query", queryStr).
 			Msg("handling query")
+	}
+
+	// Validate message size
+	if len(queryStr) > d.maxMessageSize {
+		return makeErrorMsg(fmt.Errorf("message size %d exceeds maximum %d", len(queryStr), d.maxMessageSize))
 	}
 
 	query, err := d.computeLayer.HandleQuery(ctx, queryStr)
@@ -146,13 +160,22 @@ func (d *Database) handleMsgSizeQuery() string {
 }
 
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
+	// Validate key
+	if len(key) == 0 {
+		return BatchKey{}, errKeyEmpty
+	}
+	if len(key) > maxKeyLength {
+		return BatchKey{}, errKeyTooLong
+	}
+
+	// Validate batch size
 	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 64)
 	if err != nil {
 		return BatchKey{}, errBatchSizeNotNumber
 	}
 
-	if batchSize > math.MaxUint32 {
-		return BatchKey{}, errInvalidBatchSize
+	if batchSize < minBatchSize || batchSize > maxBatchSize {
+		return BatchKey{}, fmt.Errorf("%w: %d (must be between %d and %d)", errInvalidBatchSize, batchSize, minBatchSize, maxBatchSize)
 	}
 
 	return BatchKey{

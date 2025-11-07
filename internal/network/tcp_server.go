@@ -125,6 +125,15 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 
+		// Validate message size
+		if count > s.messageSize {
+			s.logger.Warn().
+				Int("received_size", count).
+				Int("max_size", s.messageSize).
+				Msg("message size exceeds maximum, closing connection")
+			break
+		}
+
 		response, err := handler(ctx, request[:count])
 		if err != nil {
 			s.logger.Error().Err(err).Msg("handler failed")

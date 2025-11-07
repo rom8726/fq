@@ -85,7 +85,20 @@ func (w *WAL) Start() {
 
 func (w *WAL) Shutdown() {
 	close(w.closeCh)
-	<-w.closeDoneCh
+
+	// Wait for shutdown with timeout
+	shutdownDone := make(chan struct{})
+	go func() {
+		<-w.closeDoneCh
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-shutdownDone:
+		// Shutdown completed
+	case <-time.After(30 * time.Second):
+		w.logger.Warn().Msg("WAL shutdown timeout exceeded")
+	}
 }
 
 func (w *WAL) Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError {

@@ -146,6 +146,11 @@ func (s *Slave) sendToWALStream(logs []*wal.LogData) error {
 }
 
 func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segmentName string) error {
+	if len(segmentData) == 0 {
+		s.logger.Warn().Str("segment_name", segmentName).Msg("received empty segment data, skipping")
+		return nil
+	}
+
 	logs, err := s.walReader.ReadSegmentData(ctx, segmentData)
 	if err != nil {
 		return err

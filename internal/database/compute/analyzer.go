@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -63,7 +64,7 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 			return Query{}, ErrInvalidArguments
 		}
 	default:
-		panic(errors.New("unknown arguments count setting"))
+		return Query{}, fmt.Errorf("unknown arguments count setting: %d for command %d", argumentsNumber, commandID)
 	}
 
 	if a.logger.GetLevel() == zerolog.DebugLevel {

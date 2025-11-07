@@ -88,7 +88,7 @@ func (r *FSReader) ReadSegmentData(ctx context.Context, data []byte) ([]*LogData
 
 		batchSize := bytesToUint32(sizeBatchBytes)
 		if batchSize > batchMaxSize {
-			panic(fmt.Errorf("max batch size in WAL segment: %d", batchSize))
+			return nil, fmt.Errorf("max batch size in WAL segment exceeded: %d (max: %d)", batchSize, batchMaxSize)
 		}
 
 		batchData := make([]byte, batchSize)
