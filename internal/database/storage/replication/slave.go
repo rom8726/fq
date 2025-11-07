@@ -37,7 +37,9 @@ type Slave struct {
 	syncInterval          time.Duration
 	walDirectory          string
 	lastSegmentName       string
+	lastSegmentSize       int64 // Track size of last segment to detect updates
 	dumpLastSegmentNumber uint64
+	lastAppliedLSN        uint64 // Track last applied LSN to avoid duplicate application
 
 	closeCh     chan struct{}
 	closeDoneCh chan struct{}

@@ -11,9 +11,9 @@ wal:
   data_directory: ./app/data/wal/
 engine:
   type: in_memory
-  clean_interval: 10m
+  clean_interval: 5m
 dump:
-  interval: 15m
+  interval: 1m
   directory: ./app/data/
 replication:
   replica_type: master

@@ -62,22 +62,48 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 	if response.SegmentName == "" {
 		s.logger.Debug().
 			Str("last_segment_name", s.lastSegmentName).
+			Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
 			Msg("no new WAL segments from replication")
 
 		return nil
 	}
 
 	filename := response.SegmentName
+	isSameSegment := filename == s.lastSegmentName
+	segmentSize := int64(len(response.SegmentData))
 
+	// If it's the same segment, check if it has new data
+	if isSameSegment && segmentSize <= s.lastSegmentSize {
+		s.logger.Debug().
+			Str("segment_name", filename).
+			Int64("segment_size", segmentSize).
+			Int64("last_segment_size", s.lastSegmentSize).
+			Msg("segment has no new data, skipping")
+		return nil
+	}
+
+	s.logger.Info().
+		Str("segment_name", filename).
+		Int64("segment_size", segmentSize).
+		Str("last_segment_name", s.lastSegmentName).
+		Int64("last_segment_size", s.lastSegmentSize).
+		Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
+		Bool("is_same_segment", isSameSegment).
+		Msg("received WAL segment from master")
+
+	// Save segment (overwrite if same segment with new data)
 	if err := s.saveWALSegment(filename, response.SegmentData); err != nil {
 		return fmt.Errorf("save wal segment: %w", err)
 	}
 
+	// Apply only new logs (filter by LSN)
 	if err := s.applyDataToEngine(ctx, response.SegmentData, response.SegmentName); err != nil {
 		return fmt.Errorf("apply data to engine segment: %w", err)
 	}
 
+	// Update last segment name and size
 	s.lastSegmentName = response.SegmentName
+	s.lastSegmentSize = segmentSize
 
 	return nil
 }
@@ -125,13 +151,21 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 		return err
 	}
 
+	if len(logs) == 0 {
+		s.logger.Debug().
+			Str("segment_name", segmentName).
+			Msg("segment contains no logs")
+		return nil
+	}
+
 	sort.Slice(logs, func(i, j int) bool {
 		return logs[i].LSN < logs[j].LSN
 	})
 
 	idx := len(logs)
 	for i, log := range logs {
-		if log.LSN <= s.dumpLastSegmentNumber {
+		// Skip logs that are already in dump or already applied
+		if log.LSN <= s.dumpLastSegmentNumber || log.LSN <= s.lastAppliedLSN {
 			continue
 		}
 
@@ -144,16 +178,35 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 		s.logger.Debug().
 			Str("segment_name", segmentName).
 			Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
+			Uint64("last_applied_lsn", s.lastAppliedLSN).
+			Uint64("first_log_lsn", logs[0].LSN).
+			Uint64("last_log_lsn", logs[len(logs)-1].LSN).
 			Int("total_logs", len(logs)).
-			Msg("skipping replicated segment, all logs already in dump")
+			Msg("skipping replicated segment, all logs already applied")
 
 		return nil
 	}
 
+	logsToApply := logs[idx:]
+	lastLSN := logsToApply[len(logsToApply)-1].LSN
+
+	s.logger.Info().
+		Str("segment_name", segmentName).
+		Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
+		Uint64("last_applied_lsn", s.lastAppliedLSN).
+		Uint64("first_log_lsn", logsToApply[0].LSN).
+		Uint64("last_log_lsn", lastLSN).
+		Int("total_logs", len(logs)).
+		Int("logs_to_apply", len(logsToApply)).
+		Msg("applying WAL logs to engine")
+
 	// Safe channel send with closed channel check
-	if err := s.sendToWALStream(logs[idx:]); err != nil {
+	if err := s.sendToWALStream(logsToApply); err != nil {
 		return fmt.Errorf("failed to send WAL data to stream: %w", err)
 	}
+
+	// Update last applied LSN
+	s.lastAppliedLSN = lastLSN
 
 	return nil
 }
