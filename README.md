@@ -14,12 +14,29 @@ To learn databases implementation.
 ## Commands
 
 The database supports the following commands:
- - **INCR** < key > < capping >
- - **GET** < key > < capping >
- - **DEL** < key > < capping >
- - **MDEL** < key > < capping > < key > < capping > < key > < capping > ...
+ - **INCR** < key > < capping > - Increment counter for a key
+ - **GET** < key > < capping > - Get current counter value for a key
+ - **DEL** < key > < capping > - Delete a key
+ - **MDEL** < key > < capping > < key > < capping > < key > < capping > ... - Delete multiple keys
+ - **WATCH** < key > < capping > - Watch for changes to a key's value (blocks until value changes or timeout)
 
 < key > - is some string key for which you want to be able to increment the counter for a time interval of size < capping >.
+
+### WATCH Command
+
+The **WATCH** command allows you to monitor a key for value changes. When executed, it:
+- Blocks and waits for the key's value to change
+- Polls the key every 100ms
+- Returns the new value as soon as it changes
+- Times out after 30 seconds if no changes are detected
+- Can be cancelled with Ctrl+C
+
+Example:
+```
+[fq]> WATCH mykey 600
+Watching for changes... (press Ctrl+C to cancel)
+[fq]> 5                    Elapsed: 1.234s
+```
 
 ## Usage
 
@@ -95,6 +112,9 @@ go run ./cmd/cli -address :1947
    1
    [fq]> INCR key 600
    2
+   [fq]> WATCH key 600
+   Watching for changes... (press Ctrl+C to cancel)
+   [fq]> 3                    Elapsed: 0.567s
    ```
 
 5. Connect CLI client to slave (in another terminal):
