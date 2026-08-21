@@ -40,12 +40,12 @@ func run(console *zerolog.Logger) error {
 	console.Info().Msg("initialize database...")
 	initializer, err := initialization.NewInitializer(cfg)
 	if err != nil {
-		console.Fatal().Err(err).Msg("init initializer")
+		return fmt.Errorf("init initializer: %w", err)
 	}
 
 	console.Info().Msg("start database...")
 	if err = initializer.StartDatabase(ctx); err != nil {
-		console.Fatal().Err(err).Msg("start database")
+		return fmt.Errorf("start database: %w", err)
 	}
 
 	return nil
