@@ -82,7 +82,7 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 		return nil
 	}
 
-	s.logger.Info().
+	s.logger.Debug().
 		Str("segment_name", filename).
 		Int64("segment_size", segmentSize).
 		Str("last_segment_name", s.lastSegmentName).
@@ -199,7 +199,7 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 	logsToApply := logs[idx:]
 	lastLSN := logsToApply[len(logsToApply)-1].LSN
 
-	s.logger.Info().
+	s.logger.Debug().
 		Str("segment_name", segmentName).
 		Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
 		Uint64("last_applied_lsn", s.lastAppliedLSN).

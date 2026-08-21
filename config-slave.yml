@@ -20,5 +20,4 @@ replication:
   master_address: ":1946"
   sync_interval: 1s
 logging:
-  level: info
-
+  level: debug
