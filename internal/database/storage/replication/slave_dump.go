@@ -45,10 +45,17 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 
 	if response.Succeed {
 		wasReadingDump := s.readDump
-		s.readDump = !response.EndOfDump
+		endOfDump := response.EndOfDump
+		var applied chan error
+		if wasReadingDump && endOfDump {
+			applied = make(chan error, 1)
+		}
 
-		// Safe channel send with closed channel check
-		if err := s.sendToDumpStream(response.SegmentData); err != nil {
+		chunk := database.DumpChunk{
+			Elems:   response.SegmentData,
+			Applied: applied,
+		}
+		if err := s.sendToDumpStream(ctx, chunk); err != nil {
 			return fmt.Errorf("failed to send dump data to stream: %w", err)
 		}
 
@@ -56,21 +63,21 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 			s.dumpLastSegmentNumber = maxLSN(response.SegmentData)
 		}
 
-		// If dump is complete (EndOfDump = true), mark it as applied
-		// The actual application happens in engine's dumpStream handler
-		if wasReadingDump && response.EndOfDump {
+		if wasReadingDump && endOfDump {
 			s.logger.Info().
 				Str("session_uuid", s.sessionUUID).
 				Uint64("last_segment_number", s.dumpLastSegmentNumber).
 				Int("last_batch_size", len(response.SegmentData)).
 				Msg("dump synchronization completed, waiting for engine to apply")
-			// Give engine some time to process the last batch
-			// In a real implementation, we'd wait for confirmation from engine
-			// For now, we mark it after a short delay to ensure last batch is processed
-			go func() {
-				time.Sleep(100 * time.Millisecond)
-				s.markDumpApplied()
-			}()
+
+			if err := s.waitForDumpChunkApplied(ctx, applied); err != nil {
+				return fmt.Errorf("wait for dump apply: %w", err)
+			}
+
+			s.readDump = false
+			s.markDumpApplied()
+		} else {
+			s.readDump = !endOfDump
 		}
 
 		return nil
@@ -90,24 +97,47 @@ func maxLSN(elems []database.DumpElem) uint64 {
 	return res
 }
 
+func (s *Slave) waitForDumpChunkApplied(ctx context.Context, applied <-chan error) error {
+	if applied == nil {
+		return nil
+	}
+
+	select {
+	case err := <-applied:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closeCh:
+		return errSlaveClosed
+	}
+}
+
 // sendToDumpStream safely sends data to dumpStream with closed channel handling
-func (s *Slave) sendToDumpStream(data []database.DumpElem) error {
+func (s *Slave) sendToDumpStream(ctx context.Context, chunk database.DumpChunk) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error().Interface("panic", r).Msg("panic sending to dumpStream (channel closed)")
+			err = fmt.Errorf("send to dumpStream: %v", r)
 		}
 	}()
 
 	select {
-	case s.dumpStream <- data:
+	case s.dumpStream <- chunk:
 		return nil
 	default:
-		// Channel is full, try to send with timeout
-		select {
-		case s.dumpStream <- data:
-			return nil
-		case <-time.After(5 * time.Second):
-			return fmt.Errorf("timeout sending to dumpStream")
-		}
+	}
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case s.dumpStream <- chunk:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closeCh:
+		return errSlaveClosed
+	case <-timer.C:
+		return fmt.Errorf("timeout sending to dumpStream")
 	}
 }

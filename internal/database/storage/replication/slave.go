@@ -28,12 +28,14 @@ type TCPClientFactory interface {
 	Create() (TCPClient, error)
 }
 
+var errSlaveClosed = errors.New("slave is shutting down")
+
 type Slave struct {
 	clientFactory         TCPClientFactory
 	client                TCPClient
 	walReader             WALReader
 	walStream             chan<- []*wal.LogData
-	dumpStream            chan<- []database.DumpElem
+	dumpStream            chan<- database.DumpChunk
 	syncInterval          time.Duration
 	walDirectory          string
 	lastSegmentName       string
@@ -46,9 +48,8 @@ type Slave struct {
 
 	readDump        bool
 	sessionUUID     string
-	dumpApplied     bool
-	dumpAppliedMu   sync.Mutex
-	dumpAppliedCond *sync.Cond
+	dumpAppliedCh   chan struct{}
+	dumpAppliedOnce sync.Once
 
 	// Retry mechanism
 	maxRetries        int
@@ -66,7 +67,7 @@ func NewSlave(
 	client TCPClient,
 	walReader WALReader,
 	walStream chan<- []*wal.LogData,
-	dumpStream chan<- []database.DumpElem,
+	dumpStream chan<- database.DumpChunk,
 	walDirectory string,
 	syncInterval time.Duration,
 	logger *zerolog.Logger,
@@ -98,16 +99,15 @@ func NewSlave(
 		lastSegmentName:   segmentName,
 		closeCh:           make(chan struct{}),
 		closeDoneCh:       make(chan struct{}),
+		dumpAppliedCh:     make(chan struct{}),
 		readDump:          true,
 		sessionUUID:       uuid.NewString(),
 		maxRetries:        10,
 		retryDelay:        time.Second,
 		maxRetryDelay:     5 * time.Minute,
 		consecutiveErrors: 0,
-		dumpApplied:       false,
 		logger:            logger,
 	}
-	slave.dumpAppliedCond = sync.NewCond(&slave.dumpAppliedMu)
 	return slave, nil
 }
 
@@ -116,7 +116,7 @@ func NewSlaveWithFactory(
 	clientFactory TCPClientFactory,
 	walReader WALReader,
 	walStream chan<- []*wal.LogData,
-	dumpStream chan<- []database.DumpElem,
+	dumpStream chan<- database.DumpChunk,
 	walDirectory string,
 	syncInterval time.Duration,
 	logger *zerolog.Logger,
@@ -154,16 +154,15 @@ func NewSlaveWithFactory(
 		lastSegmentName:   segmentName,
 		closeCh:           make(chan struct{}),
 		closeDoneCh:       make(chan struct{}),
+		dumpAppliedCh:     make(chan struct{}),
 		readDump:          true,
 		sessionUUID:       uuid.NewString(),
 		maxRetries:        10,
 		retryDelay:        time.Second,
 		maxRetryDelay:     5 * time.Minute,
 		consecutiveErrors: 0,
-		dumpApplied:       false,
 		logger:            logger,
 	}
-	slave.dumpAppliedCond = sync.NewCond(&slave.dumpAppliedMu)
 	return slave, nil
 }
 
@@ -196,8 +195,9 @@ func (s *Slave) Start(ctx context.Context) {
 					}
 				}
 			} else {
-				// Wait for dump to be fully applied before starting WAL sync
-				s.waitForDumpApplied()
+				if err := s.waitForDumpApplied(ctx); err != nil {
+					return
+				}
 
 				select {
 				case <-s.closeCh:
@@ -319,7 +319,7 @@ func (s *Slave) reconnect(ctx context.Context) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-s.closeCh:
-				return errors.New("slave is shutting down")
+				return errSlaveClosed
 			case <-time.After(reconnectDelay):
 				reconnectDelay *= 2
 				if reconnectDelay > s.maxRetryDelay {
@@ -357,24 +357,22 @@ func (s *Slave) isNetworkError(err error) bool {
 	return false
 }
 
-// waitForDumpApplied waits until dump is fully applied to the engine
-func (s *Slave) waitForDumpApplied() {
-	s.dumpAppliedMu.Lock()
-	defer s.dumpAppliedMu.Unlock()
-
-	for !s.dumpApplied {
-		s.dumpAppliedCond.Wait()
+// waitForDumpApplied waits until dump is fully applied to the engine.
+func (s *Slave) waitForDumpApplied(ctx context.Context) error {
+	select {
+	case <-s.dumpAppliedCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closeCh:
+		return errSlaveClosed
 	}
 }
 
 // markDumpApplied marks that dump has been fully applied
 func (s *Slave) markDumpApplied() {
-	s.dumpAppliedMu.Lock()
-	defer s.dumpAppliedMu.Unlock()
-
-	if !s.dumpApplied {
-		s.dumpApplied = true
-		s.dumpAppliedCond.Broadcast()
+	s.dumpAppliedOnce.Do(func() {
+		close(s.dumpAppliedCh)
 		s.logger.Info().Msg("dump fully applied, WAL synchronization can start")
-	}
+	})
 }

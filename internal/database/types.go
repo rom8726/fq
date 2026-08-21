@@ -32,3 +32,8 @@ type DumpElem struct {
 	TxAt      TxTime
 	Tx        Tx
 }
+
+type DumpChunk struct {
+	Elems   []DumpElem
+	Applied chan error
+}

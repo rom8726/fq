@@ -24,7 +24,7 @@ func CreateReplica(
 	logger *zerolog.Logger,
 	dumperSrv *dumper.Dumper,
 	walStream chan<- []*wal.LogData,
-	dumpStream chan<- []database.DumpElem,
+	dumpStream chan<- database.DumpChunk,
 ) (interface{}, error) {
 	replicaType := defaultReplicationType
 	masterAddress := defaultReplicationMasterAddress

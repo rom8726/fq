@@ -26,14 +26,14 @@ type Initializer struct {
 	slave          *replication.Slave
 	master         *replication.Master
 	walStream      chan []*walPkg.LogData
-	dumpStream     chan []database.DumpElem
+	dumpStream     chan database.DumpChunk
 	cfg            config.Config
 	maxMessageSize int
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
 	walStream := make(chan []*walPkg.LogData, 1)
-	dumpStream := make(chan []database.DumpElem, 1)
+	dumpStream := make(chan database.DumpChunk, 1)
 
 	logger, err := CreateLogger(cfg.Logging)
 	if err != nil {
