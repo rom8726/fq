@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"net"
 	"reflect"
 	"testing"
@@ -104,6 +105,59 @@ func TestTCPServerRejectsOversizedFrame(t *testing.T) {
 
 	_, err = readFrame(connection, maxMessageSize)
 	require.Error(t, err)
+}
+
+func TestReadFrameReturnsHeaderReadError(t *testing.T) {
+	t.Parallel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.Write([]byte{0x00, 0x00})
+		if err != nil {
+			errCh <- err
+
+			return
+		}
+
+		errCh <- client.Close()
+	}()
+
+	_, err := readFrame(server, 2048)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.NoError(t, <-errCh)
+}
+
+func TestReadFrameReturnsPayloadReadError(t *testing.T) {
+	t.Parallel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		header := make([]byte, frameHeaderSize)
+		binary.BigEndian.PutUint32(header, 4)
+		if err := writeAll(client, header); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if _, err := client.Write([]byte("he")); err != nil {
+			errCh <- err
+
+			return
+		}
+
+		errCh <- client.Close()
+	}()
+
+	_, err := readFrame(server, 2048)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.NoError(t, <-errCh)
 }
 
 func freeTCPAddress(t *testing.T) string {
