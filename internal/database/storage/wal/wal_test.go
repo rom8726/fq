@@ -27,6 +27,23 @@ func TestWALFlushesPendingBatchOnShutdown(t *testing.T) {
 	require.Equal(t, []int{1}, writer.BatchSizes())
 }
 
+func TestWALShutdownClosesWriterAfterFlush(t *testing.T) {
+	writer := &closeRecordingFSWriter{
+		closed: make(chan struct{}),
+	}
+	logger := zerolog.Nop()
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, "", &logger)
+	wal.Start()
+
+	future := wal.Incr(context.Background(), testTxContext(1), testBatchKey("key"))
+
+	wal.Shutdown()
+
+	requireFutureError(t, future, nil)
+	require.Equal(t, []int{1}, writer.BatchSizes())
+	requireClosed(t, writer.closed)
+}
+
 func TestWALRejectsPushAfterShutdown(t *testing.T) {
 	writer := &recordingFSWriter{}
 	logger := zerolog.Nop()
@@ -139,6 +156,21 @@ func (w *recordingFSWriter) BatchSizes() []int {
 	copy(result, w.batchSizes)
 
 	return result
+}
+
+type closeRecordingFSWriter struct {
+	recordingFSWriter
+
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func (w *closeRecordingFSWriter) Close() error {
+	w.closeOnce.Do(func() {
+		close(w.closed)
+	})
+
+	return nil
 }
 
 type blockingFSWriter struct {

@@ -2,8 +2,12 @@ package wal
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -12,12 +16,20 @@ import (
 
 var now = time.Now
 
+var errFSWriterClosed = errors.New("wal writer is closed")
+
 type FSWriter struct {
+	mutex sync.Mutex
+
 	segment   *os.File
 	directory string
 
 	segmentSize    int
 	maxSegmentSize int
+
+	segmentTimestamp int64
+	segmentSequence  int
+	closed           bool
 
 	logger *zerolog.Logger
 }
@@ -35,49 +47,73 @@ func (w *FSWriter) WriteBatch(batch []Log) {
 		return
 	}
 
-	if w.segment == nil {
-		if err := w.rotateSegment(); err != nil {
-			w.acknowledgeWrite(batch, err)
+	w.mutex.Lock()
+	err := w.writeBatch(batch)
+	w.mutex.Unlock()
 
-			return
-		}
+	w.acknowledgeWrite(batch, err)
+}
+
+func (w *FSWriter) Close() error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if w.closed {
+		return nil
 	}
 
-	if w.segmentSize > w.maxSegmentSize {
-		if err := w.rotateSegment(); err != nil {
-			w.acknowledgeWrite(batch, err)
+	w.closed = true
 
-			return
-		}
+	return w.closeSegment()
+}
+
+func (w *FSWriter) writeBatch(batch []Log) error {
+	if w.closed {
+		return errFSWriterClosed
 	}
 
-	// Pre-allocate slice with exact capacity to avoid reallocations
 	logs := make([]*LogData, len(batch))
 	for i, log := range batch {
 		logs[i] = log.data
 	}
 
-	if err := w.writeLogs(logs); err != nil {
-		w.acknowledgeWrite(batch, err)
-
-		return
-	}
-
-	err := w.segment.Sync()
-	if err != nil {
-		w.logger.Error().Err(err).Msg("failed to sync segment file")
-	}
-
-	w.acknowledgeWrite(batch, err)
-}
-
-func (w *FSWriter) writeLogs(logs []*LogData) error {
-	logDataArray := LogDataArray{Elems: logs}
-	data, err := proto.Marshal(&logDataArray)
+	data, err := encodeLogs(logs)
 	if err != nil {
 		w.logger.Warn().Err(err).Msg("failed to encode logs data")
 
 		return err
+	}
+
+	if w.segment == nil {
+		if err := w.rotateSegment(); err != nil {
+			return err
+		}
+	}
+
+	if w.shouldRotate(len(data)) {
+		if err := w.rotateSegment(); err != nil {
+			return err
+		}
+	}
+
+	if err := w.writeLogs(data); err != nil {
+		return err
+	}
+
+	if err := w.segment.Sync(); err != nil {
+		w.logger.Error().Err(err).Msg("failed to sync segment file")
+
+		return err
+	}
+
+	return nil
+}
+
+func encodeLogs(logs []*LogData) ([]byte, error) {
+	logDataArray := LogDataArray{Elems: logs}
+	data, err := proto.Marshal(&logDataArray)
+	if err != nil {
+		return nil, err
 	}
 
 	sizeData := uint32ToBytes(uint32(len(data)))
@@ -89,11 +125,28 @@ func (w *FSWriter) writeLogs(logs []*LogData) error {
 	buff.Write(sizeData)
 	buff.Write(data)
 
-	writtenBytes, err := w.segment.Write(buff.Bytes())
+	result := make([]byte, buff.Len())
+	copy(result, buff.Bytes())
+
+	return result, nil
+}
+
+func (w *FSWriter) shouldRotate(nextBatchSize int) bool {
+	return w.maxSegmentSize > 0 &&
+		w.segmentSize > 0 &&
+		w.segmentSize+nextBatchSize > w.maxSegmentSize
+}
+
+func (w *FSWriter) writeLogs(data []byte) error {
+	writtenBytes, err := w.segment.Write(data)
 	if err != nil {
 		w.logger.Warn().Err(err).Msg("failed to write logs data")
 
 		return err
+	}
+
+	if writtenBytes != len(data) {
+		return io.ErrShortWrite
 	}
 
 	w.segmentSize += writtenBytes
@@ -109,20 +162,77 @@ func (w *FSWriter) acknowledgeWrite(batch []Log, err error) {
 }
 
 func (w *FSWriter) rotateSegment() error {
-	segmentName := fmt.Sprintf("%s/wal_%d.log", w.directory, now().UnixMilli())
+	if err := os.MkdirAll(w.directory, 0o750); err != nil {
+		return fmt.Errorf("failed to create WAL directory: %w", err)
+	}
 
-	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	segment, err := os.OpenFile(segmentName, flags, 0o644)
-	if err != nil {
-		w.logger.Error().Err(err).Msg("failed to create wal segment")
-
+	if err := w.closeSegment(); err != nil {
 		return err
 	}
 
-	w.segment = segment
+	segmentName := w.nextSegmentName()
+	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND | os.O_EXCL
+
+	for {
+		segment, err := os.OpenFile(segmentName, flags, 0o644)
+		if err == nil {
+			w.segment = segment
+			w.segmentSize = 0
+
+			return nil
+		}
+
+		if !errors.Is(err, os.ErrExist) {
+			w.logger.Error().Err(err).Msg("failed to create wal segment")
+
+			return err
+		}
+
+		w.segmentSequence++
+		segmentName = w.segmentName(w.segmentTimestamp, w.segmentSequence)
+	}
+}
+
+func (w *FSWriter) closeSegment() error {
+	if w.segment == nil {
+		return nil
+	}
+
+	segment := w.segment
+	w.segment = nil
 	w.segmentSize = 0
 
-	return nil
+	syncErr := segment.Sync()
+	if syncErr != nil {
+		w.logger.Error().Err(syncErr).Msg("failed to sync WAL segment before close")
+	}
+
+	closeErr := segment.Close()
+	if closeErr != nil {
+		w.logger.Error().Err(closeErr).Msg("failed to close WAL segment")
+	}
+
+	return errors.Join(syncErr, closeErr)
+}
+
+func (w *FSWriter) nextSegmentName() string {
+	timestamp := now().UnixMilli()
+	if timestamp == w.segmentTimestamp {
+		w.segmentSequence++
+	} else {
+		w.segmentTimestamp = timestamp
+		w.segmentSequence = 0
+	}
+
+	return w.segmentName(w.segmentTimestamp, w.segmentSequence)
+}
+
+func (w *FSWriter) segmentName(timestamp int64, sequence int) string {
+	if sequence == 0 {
+		return filepath.Join(w.directory, fmt.Sprintf("wal_%d.log", timestamp))
+	}
+
+	return filepath.Join(w.directory, fmt.Sprintf("wal_%d_%d.log", timestamp, sequence))
 }
 
 func uint32ToBytes(num uint32) []byte {

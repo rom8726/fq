@@ -3,6 +3,7 @@ package wal
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,7 +16,11 @@ import (
 const testWALDirectory = "/tmp/fq_wal_test_data"
 
 func TestMain(m *testing.M) {
-	if err := os.Mkdir(testWALDirectory, os.ModePerm); err != nil {
+	if err := os.RemoveAll(testWALDirectory); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := os.MkdirAll(testWALDirectory, os.ModePerm); err != nil {
 		log.Fatal(err)
 	}
 
@@ -31,6 +36,14 @@ func TestBatchWritingToWALSegment(t *testing.T) {
 	maxSegmentSize := 100 << 10
 	logger := zerolog.Nop()
 	fsWriter := NewFSWriter(testWALDirectory, maxSegmentSize, &logger)
+	defer func() {
+		require.NoError(t, fsWriter.Close())
+	}()
+
+	originalNow := now
+	defer func() {
+		now = originalNow
+	}()
 
 	batch := []Log{
 		NewLog(1, compute.IncrCommandID, []string{"key_1", "60"}),
@@ -57,6 +70,14 @@ func TestWALSegmentsRotation(t *testing.T) {
 	maxSegmentSize := 10
 	logger := zerolog.Nop()
 	fsWriter := NewFSWriter(testWALDirectory, maxSegmentSize, &logger)
+	defer func() {
+		require.NoError(t, fsWriter.Close())
+	}()
+
+	originalNow := now
+	defer func() {
+		now = originalNow
+	}()
 
 	batch := []Log{
 		NewLog(4, compute.IncrCommandID, []string{"key_4", "60"}),
@@ -97,4 +118,128 @@ func TestWALSegmentsRotation(t *testing.T) {
 	stat, err = os.Stat(testWALDirectory + "/wal_3000.log")
 	require.NoError(t, err)
 	require.NotZero(t, stat.Size())
+}
+
+func TestWALSegmentRotatesBeforeNextBatchExceedsLimit(t *testing.T) {
+	logger := zerolog.Nop()
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+	defer func() {
+		require.NoError(t, fsWriter.Close())
+	}()
+
+	originalNow := now
+	now = func() time.Time {
+		return time.Unix(10, 0)
+	}
+	defer func() {
+		now = originalNow
+	}()
+
+	first := []Log{
+		NewLog(10, compute.IncrCommandID, []string{"key_10", "60"}),
+	}
+	fsWriter.WriteBatch(first)
+	for _, record := range first {
+		err := record.Result()
+		require.NoError(t, err.Get())
+	}
+
+	firstSegment := filepath.Join(fsWriter.directory, "wal_10000.log")
+	stat, err := os.Stat(firstSegment)
+	require.NoError(t, err)
+	require.NotZero(t, stat.Size())
+
+	fsWriter.maxSegmentSize = int(stat.Size())
+	now = func() time.Time {
+		return time.Unix(11, 0)
+	}
+
+	second := []Log{
+		NewLog(11, compute.IncrCommandID, []string{"key_11", "60"}),
+	}
+	fsWriter.WriteBatch(second)
+	for _, record := range second {
+		err := record.Result()
+		require.NoError(t, err.Get())
+	}
+
+	_, err = os.Stat(filepath.Join(fsWriter.directory, "wal_11000.log"))
+	require.NoError(t, err)
+}
+
+func TestWALSegmentNamesRemainUniqueWithinSameMillisecond(t *testing.T) {
+	logger := zerolog.Nop()
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+	defer func() {
+		require.NoError(t, fsWriter.Close())
+	}()
+
+	originalNow := now
+	now = func() time.Time {
+		return time.Unix(12, 0)
+	}
+	defer func() {
+		now = originalNow
+	}()
+
+	first := []Log{
+		NewLog(12, compute.IncrCommandID, []string{"key_12", "60"}),
+	}
+	fsWriter.WriteBatch(first)
+	for _, record := range first {
+		err := record.Result()
+		require.NoError(t, err.Get())
+	}
+
+	stat, err := os.Stat(filepath.Join(fsWriter.directory, "wal_12000.log"))
+	require.NoError(t, err)
+	require.NotZero(t, stat.Size())
+
+	fsWriter.maxSegmentSize = int(stat.Size())
+	second := []Log{
+		NewLog(13, compute.IncrCommandID, []string{"key_13", "60"}),
+	}
+	fsWriter.WriteBatch(second)
+	for _, record := range second {
+		err := record.Result()
+		require.NoError(t, err.Get())
+	}
+
+	_, err = os.Stat(filepath.Join(fsWriter.directory, "wal_12000_1.log"))
+	require.NoError(t, err)
+}
+
+func TestWALSegmentCloseIsIdempotentAndRejectsWrites(t *testing.T) {
+	logger := zerolog.Nop()
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+
+	originalNow := now
+	now = func() time.Time {
+		return time.Unix(14, 0)
+	}
+	defer func() {
+		now = originalNow
+	}()
+
+	first := []Log{
+		NewLog(14, compute.IncrCommandID, []string{"key_14", "60"}),
+	}
+	fsWriter.WriteBatch(first)
+	for _, record := range first {
+		err := record.Result()
+		require.NoError(t, err.Get())
+	}
+
+	require.NoError(t, fsWriter.Close())
+	require.NoError(t, fsWriter.Close())
+	require.Nil(t, fsWriter.segment)
+
+	second := []Log{
+		NewLog(15, compute.IncrCommandID, []string{"key_15", "60"}),
+	}
+	fsWriter.WriteBatch(second)
+	for _, record := range second {
+		err := record.Result()
+		require.ErrorIs(t, err.Get(), errFSWriterClosed)
+	}
 }

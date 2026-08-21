@@ -75,6 +75,7 @@ func NewWAL(
 func (w *WAL) Start() {
 	go func() {
 		defer close(w.closeDoneCh)
+		defer w.closeWriter()
 
 		batch := make([]Log, 0, w.maxBatchSize)
 		timer := time.NewTimer(w.flushTimeout)
@@ -128,6 +129,17 @@ func (w *WAL) Start() {
 			}
 		}
 	}()
+}
+
+func (w *WAL) closeWriter() {
+	writer, ok := w.fsWriter.(interface{ Close() error })
+	if !ok {
+		return
+	}
+
+	if err := writer.Close(); err != nil && w.logger != nil {
+		w.logger.Error().Err(err).Msg("failed to close WAL writer")
+	}
 }
 
 func (w *WAL) Shutdown() {
