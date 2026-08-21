@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
 	"reflect"
 	"testing"
@@ -20,11 +21,12 @@ func TestTCPServer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	address := freeTCPAddress(t)
 	maxMessageSize := 2048
 	maxConnectionsNumber := 10
 	idleTimeout := time.Minute
 	logger := zerolog.Nop()
-	server, err := NewTCPServer(":20001", maxConnectionsNumber, maxMessageSize, idleTimeout, &logger)
+	server, err := NewTCPServer(address, maxConnectionsNumber, maxMessageSize, idleTimeout, &logger)
 	require.NoError(t, err)
 
 	go func() {
@@ -34,14 +36,96 @@ func TestTCPServer(t *testing.T) {
 		}))
 	}()
 
-	connection, err := net.Dial("tcp", "localhost:20001")
+	connection := dialEventually(t, address)
+	defer func() { _ = connection.Close() }()
+
+	err = writeFrame(connection, []byte(request))
 	require.NoError(t, err)
 
-	_, err = connection.Write([]byte(request))
+	buffer, err := readFrame(connection, maxMessageSize)
+	require.NoError(t, err)
+	require.True(t, reflect.DeepEqual([]byte(response), buffer))
+}
+
+func TestTCPServerHandlesMultipleFrames(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	address := freeTCPAddress(t)
+	maxMessageSize := 2048
+	logger := zerolog.Nop()
+	server, err := NewTCPServer(address, 10, maxMessageSize, time.Minute, &logger)
 	require.NoError(t, err)
 
-	buffer := make([]byte, 2048)
-	count, err := connection.Read(buffer)
+	go func() {
+		require.NoError(t, server.HandleQueries(ctx, func(_ context.Context, buffer []byte) ([]byte, error) {
+			return append([]byte("echo:"), buffer...), nil
+		}))
+	}()
+
+	connection := dialEventually(t, address)
+	defer func() { _ = connection.Close() }()
+
+	for _, request := range [][]byte{[]byte("first"), []byte("second")} {
+		require.NoError(t, writeFrame(connection, request))
+
+		response, err := readFrame(connection, maxMessageSize)
+		require.NoError(t, err)
+		require.Equal(t, append([]byte("echo:"), request...), response)
+	}
+}
+
+func TestTCPServerRejectsOversizedFrame(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	address := freeTCPAddress(t)
+	maxMessageSize := 4
+	logger := zerolog.Nop()
+	server, err := NewTCPServer(address, 10, maxMessageSize, time.Minute, &logger)
 	require.NoError(t, err)
-	require.True(t, reflect.DeepEqual([]byte(response), buffer[:count]))
+
+	go func() {
+		require.NoError(t, server.HandleQueries(ctx, func(_ context.Context, buffer []byte) ([]byte, error) {
+			return buffer, nil
+		}))
+	}()
+
+	connection := dialEventually(t, address)
+	defer func() { _ = connection.Close() }()
+
+	header := make([]byte, frameHeaderSize)
+	binary.BigEndian.PutUint32(header, uint32(maxMessageSize+1))
+	require.NoError(t, writeAll(connection, header))
+
+	_, err = readFrame(connection, maxMessageSize)
+	require.Error(t, err)
+}
+
+func freeTCPAddress(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	return listener.Addr().String()
+}
+
+func dialEventually(t *testing.T, address string) net.Conn {
+	t.Helper()
+
+	var connection net.Conn
+	require.Eventually(t, func() bool {
+		var err error
+		connection, err = net.Dial("tcp", address)
+
+		return err == nil
+	}, time.Second, 10*time.Millisecond)
+
+	return connection
 }

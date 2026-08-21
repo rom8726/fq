@@ -16,7 +16,7 @@ func TestTCPClient(t *testing.T) {
 	request := "hello server"
 	response := "hello client"
 
-	listener, err := net.Listen("tcp", ":10001")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	go func() {
@@ -25,13 +25,11 @@ func TestTCPClient(t *testing.T) {
 			return
 		}
 
-		buffer := make([]byte, 2048)
-		count, err := connection.Read(buffer)
+		buffer, err := readFrame(connection, 2048)
 		require.NoError(t, err)
-		require.True(t, reflect.DeepEqual([]byte(request), buffer[:count]))
+		require.True(t, reflect.DeepEqual([]byte(request), buffer))
 
-		_, err = connection.Write([]byte(response))
-		require.NoError(t, err)
+		require.NoError(t, writeFrame(connection, []byte(response)))
 
 		defer func() {
 			err = connection.Close()
@@ -43,8 +41,9 @@ func TestTCPClient(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	client, err := NewTCPClient("127.0.0.1:10001", 2048, time.Minute)
+	client, err := NewTCPClient(listener.Addr().String(), 2048, time.Minute)
 	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
 
 	buffer, err := client.Send(context.Background(), []byte(request))
 	require.NoError(t, err)
@@ -59,7 +58,7 @@ func TestTCPIdleClientConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	listener, err := net.Listen("tcp", ":10002")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	go func() {
@@ -68,10 +67,9 @@ func TestTCPIdleClientConnection(t *testing.T) {
 			return
 		}
 
-		buffer := make([]byte, 2048)
-		count, err := connection.Read(buffer)
+		buffer, err := readFrame(connection, 2048)
 		require.NoError(t, err)
-		require.True(t, reflect.DeepEqual([]byte(request), buffer[:count]))
+		require.True(t, reflect.DeepEqual([]byte(request), buffer))
 
 		<-ctx.Done()
 		defer func() {
@@ -84,8 +82,9 @@ func TestTCPIdleClientConnection(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	client, err := NewTCPClient("127.0.0.1:10002", 2048, time.Millisecond*50)
+	client, err := NewTCPClient(listener.Addr().String(), 2048, time.Millisecond*50)
 	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
 
 	_, err = client.Send(context.Background(), []byte(request))
 	require.Error(t, err)

@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,13 @@ import (
 
 	"fq/internal/tools"
 )
+
+const (
+	frameHeaderSize     = 4
+	maxFramePayloadSize = 1<<32 - 1
+)
+
+var errFrameTooLarge = errors.New("frame exceeds maximum message size")
 
 type TCPHandler = func(context.Context, []byte) ([]byte, error)
 
@@ -37,6 +45,14 @@ func NewTCPServer(
 
 	if maxConnectionsNumber <= 0 {
 		return nil, errors.New("invalid number of max connections")
+	}
+
+	if maxMessageSize <= 0 {
+		return nil, errors.New("invalid max message size")
+	}
+
+	if uint64(maxMessageSize) > maxFramePayloadSize {
+		return nil, errors.New("max message size exceeds frame limit")
 	}
 
 	return &TCPServer{
@@ -107,7 +123,15 @@ func (s *TCPServer) Start(ctx context.Context, handler func(context.Context, []b
 }
 
 func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, handler TCPHandler) {
-	request := make([]byte, s.messageSize)
+	stopClose := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = connection.Close()
+		case <-stopClose:
+		}
+	}()
+	defer close(stopClose)
 
 	for {
 		if err := connection.SetDeadline(time.Now().Add(s.idleTimeout)); err != nil {
@@ -116,32 +140,35 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 
-		count, err := s.connRead(ctx, connection, request)
+		request, err := readFrame(connection, s.messageSize)
 		if err != nil {
-			if err != io.EOF {
+			if errors.Is(err, errFrameTooLarge) {
+				s.logger.Warn().
+					Int("max_size", s.messageSize).
+					Msg("message size exceeds maximum, closing connection")
+			} else if !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				s.logger.Warn().Err(err).Msg("failed to read")
 			}
 
 			break
 		}
 
-		// Validate message size
-		if count > s.messageSize {
-			s.logger.Warn().
-				Int("received_size", count).
-				Int("max_size", s.messageSize).
-				Msg("message size exceeds maximum, closing connection")
-			break
-		}
-
-		response, err := handler(ctx, request[:count])
+		response, err := handler(ctx, request)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("handler failed")
 
 			break
 		}
 
-		if _, err := connection.Write(response); err != nil {
+		if len(response) > s.messageSize {
+			s.logger.Error().
+				Int("response_size", len(response)).
+				Int("max_size", s.messageSize).
+				Msg("handler response exceeds maximum, closing connection")
+			break
+		}
+
+		if err := writeFrame(connection, response); err != nil {
 			s.logger.Warn().Err(err).Msg("failed to write")
 
 			break
@@ -155,27 +182,77 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 	}
 }
 
-func (s *TCPServer) connRead(ctx context.Context, conn net.Conn, buff []byte) (int, error) {
-	type readResult struct {
-		n   int
-		err error
+func readFrame(conn net.Conn, maxMessageSize int) ([]byte, error) {
+	header := make([]byte, frameHeaderSize)
+	messageSize, err := readFrameSize(conn, header, maxMessageSize)
+	if err != nil {
+		return nil, err
 	}
 
-	result := make(chan readResult)
-
-	go func() {
-		defer close(result)
-
-		n, err := conn.Read(buff)
-		result <- readResult{n: n, err: err}
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = conn.SetReadDeadline(time.Now())
-
-		return 0, ctx.Err()
-	case res := <-result:
-		return res.n, nil
+	message := make([]byte, messageSize)
+	if _, err := io.ReadFull(conn, message); err != nil {
+		return nil, err
 	}
+
+	return message, nil
+}
+
+func readFrameInto(conn net.Conn, maxMessageSize int, buffer []byte) ([]byte, error) {
+	header := make([]byte, frameHeaderSize)
+	messageSize, err := readFrameSize(conn, header, maxMessageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	message := buffer[:messageSize]
+	if _, err := io.ReadFull(conn, message); err != nil {
+		return nil, err
+	}
+
+	return message, nil
+}
+
+func readFrameSize(conn net.Conn, header []byte, maxMessageSize int) (int, error) {
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return 0, err
+	}
+
+	messageSize := binary.BigEndian.Uint32(header)
+	if messageSize > uint32(maxMessageSize) {
+		return 0, fmt.Errorf("%w: %d > %d", errFrameTooLarge, messageSize, maxMessageSize)
+	}
+
+	return int(messageSize), nil
+}
+
+func writeFrame(conn net.Conn, payload []byte) error {
+	if uint64(len(payload)) > maxFramePayloadSize {
+		return fmt.Errorf("%w: %d > %d", errFrameTooLarge, len(payload), maxFramePayloadSize)
+	}
+
+	header := make([]byte, frameHeaderSize)
+	binary.BigEndian.PutUint32(header, uint32(len(payload)))
+
+	if err := writeAll(conn, header); err != nil {
+		return err
+	}
+
+	return writeAll(conn, payload)
+}
+
+func writeAll(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if err != nil {
+			return err
+		}
+
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+
+		data = data[n:]
+	}
+
+	return nil
 }

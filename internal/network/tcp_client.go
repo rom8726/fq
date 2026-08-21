@@ -15,6 +15,14 @@ type TCPClient struct {
 }
 
 func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration) (*TCPClient, error) {
+	if maxMessageSize <= 0 {
+		return nil, fmt.Errorf("invalid max message size: %d", maxMessageSize)
+	}
+
+	if uint64(maxMessageSize) > maxFramePayloadSize {
+		return nil, fmt.Errorf("max message size exceeds frame limit: %d", maxMessageSize)
+	}
+
 	connection, err := net.Dial("tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial: %w", err)
@@ -37,20 +45,20 @@ func (c *TCPClient) Send(ctx context.Context, request []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	if _, err := c.connection.Write(request); err != nil {
+	if err := writeFrame(c.connection, request); err != nil {
 		return nil, err
 	}
 
 	response := c.bufferPool.Get()
 	defer c.bufferPool.Put(response)
 
-	count, err := c.connection.Read(response)
+	message, err := readFrameInto(c.connection, c.maxMessageSize, response)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]byte, count)
-	copy(result, response[:count])
+	result := make([]byte, len(message))
+	copy(result, message)
 
 	return result, nil
 }
