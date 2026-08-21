@@ -3,13 +3,17 @@ package replication
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"fq/internal/database/storage/wal"
 )
+
+const walDirectoryPerm = 0o750
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
 	request := NewWALRequest(s.lastSegmentName)
@@ -109,18 +113,94 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 }
 
 func (s *Slave) saveWALSegment(segmentName string, segmentData []byte) error {
-	flags := os.O_CREATE | os.O_WRONLY
-	filename := filepath.Join(s.walDirectory, segmentName)
-	segment, err := os.OpenFile(filename, flags, 0o644)
+	filename, err := s.walSegmentPath(segmentName)
 	if err != nil {
-		return fmt.Errorf("failed to create wal segment: %w", err)
+		return err
 	}
 
-	if _, err = segment.Write(segmentData); err != nil {
+	if err := os.MkdirAll(s.walDirectory, walDirectoryPerm); err != nil {
+		return fmt.Errorf("failed to create wal directory: %w", err)
+	}
+
+	tempFile, err := os.CreateTemp(s.walDirectory, "."+segmentName+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary wal segment: %w", err)
+	}
+	tempName := tempFile.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempName)
+		}
+	}()
+
+	if err := writeAll(tempFile, segmentData); err != nil {
+		_ = tempFile.Close()
+
 		return fmt.Errorf("failed to write data to segment: %w", err)
 	}
 
-	return segment.Sync()
+	if err := tempFile.Sync(); err != nil {
+		_ = tempFile.Close()
+
+		return fmt.Errorf("failed to sync temporary wal segment: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary wal segment: %w", err)
+	}
+
+	if err := os.Rename(tempName, filename); err != nil {
+		return fmt.Errorf("failed to replace wal segment: %w", err)
+	}
+	removeTemp = false
+
+	if err := syncDirectory(s.walDirectory); err != nil {
+		return fmt.Errorf("failed to sync wal directory: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Slave) walSegmentPath(segmentName string) (string, error) {
+	if segmentName == "" ||
+		strings.ContainsAny(segmentName, `/\`) ||
+		segmentName != filepath.Clean(segmentName) {
+		return "", fmt.Errorf("invalid wal segment name: %q", segmentName)
+	}
+
+	return filepath.Join(s.walDirectory, segmentName), nil
+}
+
+func writeAll(file *os.File, data []byte) error {
+	for len(data) > 0 {
+		written, err := file.Write(data)
+		if err != nil {
+			return err
+		}
+		if written == 0 {
+			return io.ErrShortWrite
+		}
+
+		data = data[written:]
+	}
+
+	return nil
+}
+
+func syncDirectory(directory string) error {
+	dir, err := os.Open(directory)
+	if err != nil {
+		return err
+	}
+
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+
+	return closeErr
 }
 
 // sendToWALStream safely sends data to walStream with closed channel handling
