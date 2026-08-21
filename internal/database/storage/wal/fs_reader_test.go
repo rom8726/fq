@@ -1,27 +1,143 @@
 package wal
 
-//func TestReadLogs(t *testing.T) {
-//	t.Parallel()
-//
-//	log := zerolog.Nop()
-//	reader := NewFSReader("test_data", &log)
-//
-//	logs, err := reader.ReadLogs()
-//	require.NoError(t, err)
-//	require.Equal(t, 9, len(logs))
-//
-//	// from tests_data/wal_1000.log
-//	require.Equal(t, LogData{LSN: 1, CommandID: 1, Arguments: []string{"key_1", "value_1"}}, logs[0])
-//	require.Equal(t, LogData{LSN: 2, CommandID: 1, Arguments: []string{"key_2", "value_2"}}, logs[1])
-//	require.Equal(t, LogData{LSN: 3, CommandID: 1, Arguments: []string{"key_3", "value_3"}}, logs[2])
-//
-//	// from tests_data/wal_2000.log
-//	require.Equal(t, LogData{LSN: 4, CommandID: 1, Arguments: []string{"key_4", "value_4"}}, logs[3])
-//	require.Equal(t, LogData{LSN: 5, CommandID: 1, Arguments: []string{"key_5", "value_5"}}, logs[4])
-//	require.Equal(t, LogData{LSN: 6, CommandID: 1, Arguments: []string{"key_6", "value_6"}}, logs[5])
-//
-//	// from tests_data/wal_3000.log
-//	require.Equal(t, LogData{LSN: 7, CommandID: 1, Arguments: []string{"key_7", "value_7"}}, logs[6])
-//	require.Equal(t, LogData{LSN: 8, CommandID: 1, Arguments: []string{"key_8", "value_8"}}, logs[7])
-//	require.Equal(t, LogData{LSN: 9, CommandID: 1, Arguments: []string{"key_9", "value_9"}}, logs[8])
-//}
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/require"
+
+	"fq/internal/database/compute"
+)
+
+func TestReadLogsTruncatesIncompletePayloadTailInLastSegment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	validBatch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	incompleteBatch := mustEncodeLogs(t, []*LogData{testLogData(2)})
+	incompleteBatch = incompleteBatch[:len(incompleteBatch)-2]
+	segmentPath := writeWALSegment(t, dir, "wal_1000.log", appendCopy(validBatch, incompleteBatch...))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(1), logs[0].LSN)
+
+	stat, err := os.Stat(segmentPath)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(validBatch)), stat.Size())
+
+	logs, err = reader.ReadSegment(context.Background(), segmentPath)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(1), logs[0].LSN)
+}
+
+func TestReadLogsTruncatesIncompleteHeaderTailInLastSegment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	validBatch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	segmentPath := writeWALSegment(t, dir, "wal_1000.log", appendCopy(validBatch, 0x00, 0x01))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(1), logs[0].LSN)
+
+	stat, err := os.Stat(segmentPath)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(validBatch)), stat.Size())
+}
+
+func TestReadLogsRejectsTruncatedNonLastSegment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	incompleteBatch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	incompleteBatch = incompleteBatch[:len(incompleteBatch)-1]
+	writeWALSegment(t, dir, "wal_1000.log", incompleteBatch)
+	writeWALSegment(t, dir, "wal_2000.log", mustEncodeLogs(t, []*LogData{testLogData(2)}))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	_, err := reader.ReadLogs(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "truncated WAL batch data")
+}
+
+func TestReadLogsRejectsCorruptedCompleteBatchInLastSegment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	validBatch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	corruptedBatch := appendCopy(uint32ToBytes(2), 0xff, 0xff)
+	writeWALSegment(t, dir, "wal_1000.log", appendCopy(validBatch, corruptedBatch...))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	_, err := reader.ReadLogs(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to unmarshal WAL batch")
+}
+
+func TestReadSegmentRejectsTruncatedTail(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	incompleteBatch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	incompleteBatch = incompleteBatch[:len(incompleteBatch)-1]
+	segmentPath := writeWALSegment(t, dir, "wal_1000.log", incompleteBatch)
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	_, err := reader.ReadSegment(context.Background(), segmentPath)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "truncated WAL batch data")
+}
+
+func testLogData(lsn uint64) *LogData {
+	return &LogData{
+		LSN:       lsn,
+		CommandId: uint32(compute.IncrCommandID),
+		Arguments: []string{"key", "60", "1"},
+	}
+}
+
+func mustEncodeLogs(t *testing.T, logs []*LogData) []byte {
+	t.Helper()
+
+	data, err := encodeLogs(logs)
+	require.NoError(t, err)
+
+	return data
+}
+
+func writeWALSegment(t *testing.T, dir, name string, data []byte) string {
+	t.Helper()
+
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	return path
+}
+
+func appendCopy(data []byte, extra ...byte) []byte {
+	result := make([]byte, 0, len(data)+len(extra))
+	result = append(result, data...)
+	result = append(result, extra...)
+
+	return result
+}

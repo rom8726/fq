@@ -3,6 +3,8 @@ package integration
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -43,6 +45,33 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	defer second.Close()
 
 	second.RequireQuery("GET durable 60", "ok|2")
+}
+
+func TestTCPDatabaseRecoversFromTruncatedWALTailAfterRestart(t *testing.T) {
+	walDir := t.TempDir()
+
+	first := startTestDatabase(t, walDir)
+	first.RequireQuery("INCR durable 60", "ok|1")
+	first.Close()
+
+	segmentPath := lastWALSegmentPath(t, walDir)
+	stat, err := os.Stat(segmentPath)
+	require.NoError(t, err)
+	validSize := stat.Size()
+
+	appendTruncatedWALBatch(t, segmentPath)
+	stat, err = os.Stat(segmentPath)
+	require.NoError(t, err)
+	require.Greater(t, stat.Size(), validSize)
+
+	second := startTestDatabase(t, walDir)
+	defer second.Close()
+
+	second.RequireQuery("GET durable 60", "ok|1")
+
+	stat, err = os.Stat(segmentPath)
+	require.NoError(t, err)
+	require.Equal(t, validSize, stat.Size())
 }
 
 type testDatabaseApp struct {
@@ -105,6 +134,30 @@ func newTestWAL(directory string, stream chan<- []*wal.LogData, logger *zerolog.
 		directory,
 		logger,
 	)
+}
+
+func lastWALSegmentPath(t *testing.T, walDir string) string {
+	t.Helper()
+
+	segmentName, err := wal.SegmentLast(walDir)
+	require.NoError(t, err)
+	require.NotEmpty(t, segmentName)
+
+	return filepath.Join(walDir, segmentName)
+}
+
+func appendTruncatedWALBatch(t *testing.T, segmentPath string) {
+	t.Helper()
+
+	file, err := os.OpenFile(segmentPath, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, file.Close())
+	}()
+
+	_, err = file.Write([]byte{0, 0, 0, 100, 1, 2})
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
 }
 
 func (a *testDatabaseApp) RequireQuery(query, expected string) {
