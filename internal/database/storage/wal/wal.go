@@ -2,8 +2,10 @@ package wal
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -22,6 +24,8 @@ type fsReader interface {
 	ReadSegment(ctx context.Context, filename string) ([]*LogData, error)
 }
 
+var errWALClosed = errors.New("wal is closed")
+
 type WAL struct {
 	fsWriter     fsWriter
 	fsReader     fsReader
@@ -31,12 +35,12 @@ type WAL struct {
 
 	stream chan<- []*LogData
 
-	mutex   sync.Mutex
-	batch   []Log
-	batches chan []Log
+	records chan Log
 
 	closeCh     chan struct{}
 	closeDoneCh chan struct{}
+	closeOnce   sync.Once
+	closed      atomic.Bool
 
 	logger *zerolog.Logger
 }
@@ -50,6 +54,10 @@ func NewWAL(
 	directory string,
 	logger *zerolog.Logger,
 ) *WAL {
+	if maxBatchSize <= 0 {
+		maxBatchSize = 1
+	}
+
 	return &WAL{
 		fsWriter:     fsWriter,
 		fsReader:     fsReader,
@@ -57,7 +65,7 @@ func NewWAL(
 		maxBatchSize: maxBatchSize,
 		directory:    directory,
 		stream:       stream,
-		batches:      make(chan []Log, 1),
+		records:      make(chan Log, maxBatchSize),
 		closeCh:      make(chan struct{}),
 		closeDoneCh:  make(chan struct{}),
 		logger:       logger,
@@ -68,23 +76,65 @@ func (w *WAL) Start() {
 	go func() {
 		defer close(w.closeDoneCh)
 
+		batch := make([]Log, 0, w.maxBatchSize)
+		timer := time.NewTimer(w.flushTimeout)
+		defer timer.Stop()
+
+		resetTimer := func() {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(w.flushTimeout)
+		}
+
+		flush := func() {
+			if len(batch) == 0 {
+				return
+			}
+
+			w.fsWriter.WriteBatch(batch)
+			batch = make([]Log, 0, w.maxBatchSize)
+		}
+
 		for {
 			select {
 			case <-w.closeCh:
-				w.flushBatch()
+				for {
+					select {
+					case record := <-w.records:
+						batch = append(batch, record)
+						if len(batch) >= w.maxBatchSize {
+							flush()
+							resetTimer()
+						}
+					default:
+						flush()
 
-				return
-			case batch := <-w.batches:
-				w.fsWriter.WriteBatch(batch)
-			case <-time.After(w.flushTimeout):
-				w.flushBatch()
+						return
+					}
+				}
+			case record := <-w.records:
+				batch = append(batch, record)
+				if len(batch) >= w.maxBatchSize {
+					flush()
+					resetTimer()
+				}
+			case <-timer.C:
+				flush()
+				resetTimer()
 			}
 		}
 	}()
 }
 
 func (w *WAL) Shutdown() {
-	close(w.closeCh)
+	w.closeOnce.Do(func() {
+		w.closed.Store(true)
+		close(w.closeCh)
+	})
 
 	// Wait for shutdown with timeout
 	shutdownDone := make(chan struct{})
@@ -124,35 +174,38 @@ func (w *WAL) MDel(ctx context.Context, txCtx database.TxContext, keys []databas
 	return w.push(ctx, txCtx.Tx, compute.MDelCommandID, arr)
 }
 
-func (w *WAL) flushBatch() {
-	var batch []Log
-	tools.WithLock(&w.mutex, func() {
-		if len(w.batch) != 0 {
-			batch = w.batch
-			w.batch = nil
-		}
-	})
-
-	if len(batch) != 0 {
-		w.fsWriter.WriteBatch(batch)
-	}
-}
-
 func (w *WAL) push(
-	_ context.Context,
+	ctx context.Context,
 	tx database.Tx,
 	commandID compute.CommandID,
 	args []string,
 ) tools.FutureError {
 	record := NewLog(uint64(tx), commandID, args)
+	future := record.Result()
 
-	tools.WithLock(&w.mutex, func() {
-		w.batch = append(w.batch, record)
-		if len(w.batch) == w.maxBatchSize {
-			w.batches <- w.batch
-			w.batch = nil
-		}
-	})
+	if err := ctx.Err(); err != nil {
+		record.SetResult(err)
+		record.ReleaseLogData()
 
-	return record.Result()
+		return future
+	}
+
+	if w.closed.Load() {
+		record.SetResult(errWALClosed)
+		record.ReleaseLogData()
+
+		return future
+	}
+
+	select {
+	case <-ctx.Done():
+		record.SetResult(ctx.Err())
+		record.ReleaseLogData()
+	case <-w.closeCh:
+		record.SetResult(errWALClosed)
+		record.ReleaseLogData()
+	case w.records <- record:
+	}
+
+	return future
 }
