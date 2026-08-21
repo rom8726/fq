@@ -21,6 +21,17 @@
 go.work
 go.work.sum
 
+# Build artifacts
+bin/
+
+# Runtime data
+app/data/
+app/data-slave/
+
+# Local Go caches
+.gocache/
+.gomodcache/
+
 # IDEs
 .vscode
 .idea

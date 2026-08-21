@@ -41,6 +41,10 @@ lint:
 test:
 	go test -v ./...
 
+.PHONY: test-race
+test-race:
+	go test -race -v ./...
+
 .PHONY: proto.image.build
 proto.image.build:
 	@echo "-> build proto image"
