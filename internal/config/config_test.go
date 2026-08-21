@@ -15,6 +15,16 @@ func TestValidateAcceptsValidConfig(t *testing.T) {
 	require.NoError(t, validate(&cfg))
 }
 
+func TestPersistenceModeDefaultsToWALAndDump(t *testing.T) {
+	cfg := validConfig()
+	cfg.Persistence = PersistenceConfig{}
+
+	require.Equal(t, PersistenceModeWALAndDump, cfg.PersistenceMode())
+	require.True(t, cfg.UsesWAL())
+	require.True(t, cfg.UsesDump())
+	require.NoError(t, validate(&cfg))
+}
+
 func TestDecodeRejectsUnknownFields(t *testing.T) {
 	data := []byte(`
 network:
@@ -89,6 +99,59 @@ func TestValidateRejectsInvalidNetworkConfig(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validConfig()
 			test.mutate(&cfg)
+
+			require.Error(t, validate(&cfg))
+		})
+	}
+}
+
+func TestValidateRejectsInvalidPersistenceConfig(t *testing.T) {
+	cfg := validConfig()
+	cfg.Persistence.Mode = "wal_only"
+
+	require.Error(t, validate(&cfg))
+}
+
+func TestValidateAllowsDumpOnlyWithoutWAL(t *testing.T) {
+	cfg := validConfig()
+	cfg.Persistence.Mode = PersistenceModeDumpOnly
+	cfg.WAL = nil
+	cfg.Replication = ReplicationConfig{}
+
+	require.False(t, cfg.UsesWAL())
+	require.True(t, cfg.UsesDump())
+	require.NoError(t, validate(&cfg))
+}
+
+func TestValidateAllowsMemoryWithoutWALAndDump(t *testing.T) {
+	cfg := validConfig()
+	cfg.Persistence.Mode = PersistenceModeMemory
+	cfg.WAL = nil
+	cfg.Dump = DumpConfig{}
+	cfg.Replication = ReplicationConfig{}
+
+	require.False(t, cfg.UsesWAL())
+	require.False(t, cfg.UsesDump())
+	require.NoError(t, validate(&cfg))
+}
+
+func TestValidateRejectsMissingWALForWALAndDump(t *testing.T) {
+	cfg := validConfig()
+	cfg.WAL = nil
+
+	require.Error(t, validate(&cfg))
+}
+
+func TestValidateRejectsReplicationWithoutWALAndDump(t *testing.T) {
+	tests := []string{
+		PersistenceModeDumpOnly,
+		PersistenceModeMemory,
+	}
+
+	for _, mode := range tests {
+		t.Run(mode, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Persistence.Mode = mode
 
 			require.Error(t, validate(&cfg))
 		})
@@ -189,6 +252,9 @@ func validConfig() Config {
 		Engine: EngineConfig{
 			Type:          "in_memory",
 			CleanInterval: time.Minute,
+		},
+		Persistence: PersistenceConfig{
+			Mode: PersistenceModeWALAndDump,
 		},
 		WAL: &WALConfig{
 			FlushingBatchLength:  100,

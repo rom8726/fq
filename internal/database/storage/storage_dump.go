@@ -2,10 +2,13 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"fq/internal/database"
 )
+
+var errDumpDisabled = errors.New("dump is disabled")
 
 func (s *Storage) dumpLoop(ctx context.Context) {
 	t := time.NewTicker(s.dumpInterval)
@@ -24,6 +27,10 @@ func (s *Storage) dumpLoop(ctx context.Context) {
 }
 
 func (s *Storage) dump(ctx context.Context) error {
+	if s.dumper == nil {
+		return errDumpDisabled
+	}
+
 	dumpTx := database.Tx(s.tx.Load())
 	s.dumpTx.Store(uint64(dumpTx))
 

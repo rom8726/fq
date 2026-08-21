@@ -142,6 +142,21 @@ Also you can use GoLang client: [fq-client-go](https://github.com/rom8726/fq-cli
 - **Periodic Dumps**: Data is periodically dumped to disk for recovery and replication
 - **In-Memory Engine**: Fast in-memory hash table for data storage
 
+#### Persistence Modes
+
+Persistence is controlled by `persistence.mode`:
+
+```yaml
+persistence:
+  mode: wal_and_dump # wal_and_dump | dump_only | memory
+```
+
+- `wal_and_dump`: write operations are stored in WAL and periodic dumps are created
+- `dump_only`: periodic dumps are created, but write operations are not stored in WAL
+- `memory`: data is kept only in memory, without WAL or dumps
+
+Current master-slave replication requires `wal_and_dump`, because it uses the initial dump plus continuous WAL segment replication.
+
 ### Replication
 
 The database supports **master-slave replication**:
@@ -162,6 +177,8 @@ The database supports **master-slave replication**:
 
 Master configuration (`config.yml`):
 ```yaml
+persistence:
+  mode: wal_and_dump
 replication:
   replica_type: master
   master_address: ":1946"  # Port for replication server
@@ -170,6 +187,8 @@ replication:
 
 Slave configuration (`config-slave.yml`):
 ```yaml
+persistence:
+  mode: wal_and_dump
 replication:
   replica_type: slave
   master_address: ":1946"  # Master replication address

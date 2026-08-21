@@ -3,6 +3,8 @@ network:
   max_connections: 1000
   max_message_size: 4096
   idle_timeout: 10m
+persistence:
+  mode: wal_and_dump
 wal:
   sync_commit: off
   flushing_batch_length: 4096

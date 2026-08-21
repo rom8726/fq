@@ -19,6 +19,10 @@ const (
 	WALSyncCommitOn  = "on"
 	WALSyncCommitOff = "off"
 
+	PersistenceModeWALAndDump = "wal_and_dump"
+	PersistenceModeDumpOnly   = "dump_only"
+	PersistenceModeMemory     = "memory"
+
 	ReplicaTypeMaster = "master"
 	ReplicaTypeSlave  = "slave"
 
@@ -27,11 +31,34 @@ const (
 
 type Config struct {
 	Engine      EngineConfig      `yaml:"engine"`
+	Persistence PersistenceConfig `yaml:"persistence"`
 	WAL         *WALConfig        `yaml:"wal"`
 	Network     NetworkConfig     `yaml:"network"`
 	Logging     LoggingConfig     `yaml:"logging"`
 	Dump        DumpConfig        `yaml:"dump"`
 	Replication ReplicationConfig `yaml:"replication"`
+}
+
+func (cfg Config) PersistenceMode() string {
+	if cfg.Persistence.Mode == "" {
+		return PersistenceModeWALAndDump
+	}
+
+	return cfg.Persistence.Mode
+}
+
+func (cfg Config) UsesWAL() bool {
+	return cfg.PersistenceMode() == PersistenceModeWALAndDump
+}
+
+func (cfg Config) UsesDump() bool {
+	mode := cfg.PersistenceMode()
+
+	return mode == PersistenceModeWALAndDump || mode == PersistenceModeDumpOnly
+}
+
+type PersistenceConfig struct {
+	Mode string `yaml:"mode"`
 }
 
 //nolint:tagliatelle // it's ok
@@ -117,7 +144,17 @@ func decode(data []byte, cfg *Config) error {
 }
 
 func validate(cfg *Config) error {
-	err := validation.ValidateStruct(&cfg.Engine,
+	err := validation.ValidateStruct(&cfg.Persistence,
+		validation.Field(
+			&cfg.Persistence.Mode,
+			validation.In("", PersistenceModeWALAndDump, PersistenceModeDumpOnly, PersistenceModeMemory),
+		),
+	)
+	if err != nil {
+		return fmt.Errorf("validate persistence section: %w", err)
+	}
+
+	err = validation.ValidateStruct(&cfg.Engine,
 		validation.Field(&cfg.Engine.Type, validation.Required, validation.In("in_memory")),
 		validation.Field(&cfg.Engine.CleanInterval, validation.Required, positiveDurationRule),
 	)
@@ -125,12 +162,14 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("validate engine section: %w", err)
 	}
 
-	err = validation.ValidateStruct(&cfg.Dump,
-		validation.Field(&cfg.Dump.Interval, validation.Required, positiveDurationRule),
-		validation.Field(&cfg.Dump.Directory, validation.Required),
-	)
-	if err != nil {
-		return fmt.Errorf("validate dump section: %w", err)
+	if cfg.UsesDump() {
+		err = validation.ValidateStruct(&cfg.Dump,
+			validation.Field(&cfg.Dump.Interval, validation.Required, positiveDurationRule),
+			validation.Field(&cfg.Dump.Directory, validation.Required),
+		)
+		if err != nil {
+			return fmt.Errorf("validate dump section: %w", err)
+		}
 	}
 
 	err = validation.ValidateStruct(&cfg.Network,
@@ -143,17 +182,15 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("validate network section: %w", err)
 	}
 
-	if cfg.WAL != nil {
-		err = validation.ValidateStruct(cfg.WAL,
-			validation.Field(&cfg.WAL.FlushingBatchLength, validation.Required, validation.Min(1)),
-			validation.Field(&cfg.WAL.FlushingBatchTimeout, validation.Required, positiveDurationRule),
-			validation.Field(&cfg.WAL.MaxSegmentSize, validation.Required, sizeRule),
-			validation.Field(&cfg.WAL.DataDirectory, validation.Required),
-			validation.Field(&cfg.WAL.SyncCommit, validation.Required, validation.In(WALSyncCommitOn, WALSyncCommitOff)),
-		)
-		if err != nil {
-			return fmt.Errorf("validate wal section: %w", err)
-		}
+	if cfg.UsesWAL() && cfg.WAL == nil {
+		return fmt.Errorf("wal section is required for persistence mode %q", cfg.PersistenceMode())
+	}
+
+	if cfg.UsesWAL() {
+		err = validateWALConfig(cfg.WAL)
+	}
+	if err != nil {
+		return err
 	}
 
 	err = validation.ValidateStruct(&cfg.Logging,
@@ -171,6 +208,29 @@ func validate(cfg *Config) error {
 	)
 	if err != nil {
 		return fmt.Errorf("validate replication section: %w", err)
+	}
+
+	if cfg.Replication.ReplicaType != "" && cfg.PersistenceMode() != PersistenceModeWALAndDump {
+		return fmt.Errorf(
+			"replication requires persistence mode %q, got %q",
+			PersistenceModeWALAndDump,
+			cfg.PersistenceMode(),
+		)
+	}
+
+	return nil
+}
+
+func validateWALConfig(cfg *WALConfig) error {
+	err := validation.ValidateStruct(cfg,
+		validation.Field(&cfg.FlushingBatchLength, validation.Required, validation.Min(1)),
+		validation.Field(&cfg.FlushingBatchTimeout, validation.Required, positiveDurationRule),
+		validation.Field(&cfg.MaxSegmentSize, validation.Required, sizeRule),
+		validation.Field(&cfg.DataDirectory, validation.Required),
+		validation.Field(&cfg.SyncCommit, validation.Required, validation.In(WALSyncCommitOn, WALSyncCommitOff)),
+	)
+	if err != nil {
+		return fmt.Errorf("validate wal section: %w", err)
 	}
 
 	return nil

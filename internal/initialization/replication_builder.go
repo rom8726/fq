@@ -14,7 +14,6 @@ import (
 	"fq/internal/network"
 )
 
-const defaultReplicationType = "master"
 const defaultReplicationMasterAddress = ":1946"
 const defaultReplicationSyncInterval = time.Second
 
@@ -26,17 +25,17 @@ func CreateReplica(
 	walStream chan<- []*wal.LogData,
 	dumpStream chan<- database.DumpChunk,
 ) (interface{}, error) {
-	replicaType := defaultReplicationType
+	if replicationCfg.ReplicaType == "" {
+		return nil, nil
+	}
+
+	replicaType := replicationCfg.ReplicaType
 	masterAddress := defaultReplicationMasterAddress
 	syncInterval := defaultReplicationSyncInterval
 	walDirectory := defaultWALDataDirectory
 
-	if replicationCfg.ReplicaType != "" {
-		if replicationCfg.ReplicaType != "master" && replicationCfg.ReplicaType != "slave" {
-			return nil, errors.New("replica type is incorrect")
-		}
-
-		replicaType = replicationCfg.ReplicaType
+	if replicationCfg.ReplicaType != config.ReplicaTypeMaster && replicationCfg.ReplicaType != config.ReplicaTypeSlave {
+		return nil, errors.New("replica type is incorrect")
 	}
 
 	if replicationCfg.MasterAddress != "" {
@@ -55,7 +54,7 @@ func CreateReplica(
 	const maxMessageSize = 16 << 20
 	idleTimeout := syncInterval * 3
 
-	if replicaType == "master" {
+	if replicaType == config.ReplicaTypeMaster {
 		server, err := network.NewTCPServer(masterAddress, maxReplicasNumber, maxMessageSize, idleTimeout, logger)
 		if err != nil {
 			return nil, err

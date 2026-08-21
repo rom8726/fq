@@ -87,6 +87,8 @@ func NewStorage(
 
 func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
 	if s.wal == nil {
+		s.tx.Store(uint64(dumpLastTx))
+
 		return nil
 	}
 
@@ -118,7 +120,9 @@ func (s *Storage) Start(ctx context.Context) {
 	}
 
 	go s.gcLoop(ctx)
-	go s.dumpLoop(ctx)
+	if s.dumper != nil {
+		go s.dumpLoop(ctx)
+	}
 }
 
 func (s *Storage) Shutdown() {

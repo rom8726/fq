@@ -40,9 +40,12 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
-	wal, err := CreateWAL(cfg.WAL, logger, walStream)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize wal: %w", err)
+	var wal *walPkg.WAL
+	if cfg.UsesWAL() {
+		wal, err = CreateWAL(cfg.WAL, logger, walStream)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize wal: %w", err)
+		}
 	}
 
 	dbEngine, err := CreateEngine(cfg.Engine, logger, walStream, dumpStream)
@@ -60,7 +63,14 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		return nil, fmt.Errorf("failed to parse max message size: %w", err)
 	}
 
-	dumpSrv := dumper.New(dbEngine, wal, cfg.Dump.Directory)
+	var dumpSrv *dumper.Dumper
+	if cfg.UsesDump() {
+		var dumpWAL dumper.WAL
+		if wal != nil {
+			dumpWAL = wal
+		}
+		dumpSrv = dumper.New(dbEngine, dumpWAL, cfg.Dump.Directory)
+	}
 
 	replica, err := CreateReplica(cfg.Replication, cfg.WAL, logger, dumpSrv, walStream, dumpStream)
 	if err != nil {
@@ -110,15 +120,17 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 		return nil
 	})
 
-	lastTx, err := i.dumper.Restore(ctx)
-	if err != nil {
-		return fmt.Errorf("restore dump failed: %w", err)
+	var lastTx database.Tx
+	if i.dumper != nil {
+		var err error
+		lastTx, err = i.dumper.Restore(ctx)
+		if err != nil {
+			return fmt.Errorf("restore dump failed: %w", err)
+		}
 	}
 
-	if i.wal != nil {
-		if err := strg.LoadWAL(ctx, lastTx); err != nil {
-			return err
-		}
+	if err := strg.LoadWAL(ctx, lastTx); err != nil {
+		return err
 	}
 
 	if i.master != nil {
@@ -146,12 +158,20 @@ func (i *Initializer) createComputeLayer() *compute.Compute {
 }
 
 func (i *Initializer) createStorageLayer() (*storage.Storage, error) {
-	walSyncCommit := i.cfg.WAL != nil && i.cfg.WAL.SyncCommit == config.WALSyncCommitOn
+	walSyncCommit := i.cfg.UsesWAL() && i.cfg.WAL.SyncCommit == config.WALSyncCommitOn
+	var walStore storage.WAL
+	if i.wal != nil {
+		walStore = i.wal
+	}
+	var dumperSrv storage.Dumper
+	if i.dumper != nil {
+		dumperSrv = i.dumper
+	}
 
 	strg, err := storage.NewStorage(
 		i.engine,
-		i.wal,
-		i.dumper,
+		walStore,
+		dumperSrv,
 		i.storageReplicaSlave(),
 		i.logger,
 		i.cfg.Engine.CleanInterval,
