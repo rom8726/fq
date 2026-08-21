@@ -65,7 +65,7 @@ func (m *Master) Start(ctx context.Context) error {
 			return nil, fmt.Errorf("failed to decode replication request: %w", err)
 		}
 
-		if request.DumpRequest.SessionUUID != "" {
+		if request.SessionUUID != "" {
 			return m.processDump(request.DumpRequest), nil
 		}
 

@@ -51,7 +51,6 @@ type Slave struct {
 	dumpAppliedCond *sync.Cond
 
 	// Retry mechanism
-	retryCount        int
 	maxRetries        int
 	retryDelay        time.Duration
 	maxRetryDelay     time.Duration
@@ -341,7 +340,7 @@ func (s *Slave) isNetworkError(err error) bool {
 
 	// Check for network errors
 	if netErr, ok := err.(net.Error); ok {
-		return netErr.Timeout() || netErr.Temporary()
+		return netErr.Timeout()
 	}
 
 	// Check for connection closed errors

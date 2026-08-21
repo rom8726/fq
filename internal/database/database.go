@@ -179,7 +179,7 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) st
 
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
 	// Validate key
-	if len(key) == 0 {
+	if key == "" {
 		return BatchKey{}, errKeyEmpty
 	}
 	if len(key) > maxKeyLength {
@@ -193,7 +193,13 @@ func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
 	}
 
 	if batchSize < minBatchSize || batchSize > maxBatchSize {
-		return BatchKey{}, fmt.Errorf("%w: %d (must be between %d and %d)", errInvalidBatchSize, batchSize, minBatchSize, maxBatchSize)
+		return BatchKey{}, fmt.Errorf(
+			"%w: %d (must be between %d and %d)",
+			errInvalidBatchSize,
+			batchSize,
+			minBatchSize,
+			maxBatchSize,
+		)
 	}
 
 	return BatchKey{

@@ -87,7 +87,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 func (i *Initializer) StartDatabase(ctx context.Context) error {
 	computeLayer := i.createComputeLayer()
 
-	strg, err := i.createStorageLayer(ctx)
+	strg, err := i.createStorageLayer()
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (i *Initializer) createComputeLayer() *compute.Compute {
 	return compute.NewCompute(queryParser, queryAnalyzer, i.logger)
 }
 
-func (i *Initializer) createStorageLayer(ctx context.Context) (*storage.Storage, error) {
+func (i *Initializer) createStorageLayer() (*storage.Storage, error) {
 	walSyncCommit := i.cfg.WAL != nil && i.cfg.WAL.SyncCommit == config.WALSyncCommitOn
 
 	strg, err := storage.NewStorage(

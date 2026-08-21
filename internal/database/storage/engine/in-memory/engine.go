@@ -214,39 +214,40 @@ func (e *Engine) applyLogs(logs []*wal.LogData) {
 }
 
 func (e *Engine) applyIncrFromLog(log *wal.LogData) {
-	if len(log.Arguments) < 3 {
-		e.logger.Error().
-			Uint64("lsn", log.LSN).
-			Int("arguments_count", len(log.Arguments)).
-			Msg("invalid WAL log: insufficient arguments for INCR")
-		return
-	}
-
-	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
-	if err != nil {
-		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Msg("failed to parse WAL log for INCR")
-		return
-	}
-
-	e.Incr(txCtx, batchKey)
+	e.applySingleKeyLog(log, "INCR", e.Incr)
 }
 
 func (e *Engine) applyDelFromLog(log *wal.LogData) {
+	e.applySingleKeyLog(log, "DEL", func(txCtx database.TxContext, key database.BatchKey) database.ValueType {
+		if e.Del(txCtx, key) {
+			return 1
+		}
+
+		return 0
+	})
+}
+
+func (e *Engine) applySingleKeyLog(
+	log *wal.LogData,
+	command string,
+	apply func(database.TxContext, database.BatchKey) database.ValueType,
+) {
 	if len(log.Arguments) < 3 {
 		e.logger.Error().
 			Uint64("lsn", log.LSN).
 			Int("arguments_count", len(log.Arguments)).
-			Msg("invalid WAL log: insufficient arguments for DEL")
+			Str("command", command).
+			Msg("invalid WAL log: insufficient arguments")
 		return
 	}
 
 	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
 	if err != nil {
-		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Msg("failed to parse WAL log for DEL")
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", command).Msg("failed to parse WAL log")
 		return
 	}
 
-	e.Del(txCtx, batchKey)
+	apply(txCtx, batchKey)
 }
 
 func (e *Engine) applyMDelFromLog(log *wal.LogData) {
@@ -287,7 +288,12 @@ func (e *Engine) applyDump(dumpElems []database.DumpElem) {
 	}
 }
 
-func parseWALBatchKeyAndCtx(lsn uint64, key, batchSizeStr, currTimeStr string) (database.BatchKey, database.TxContext, error) {
+func parseWALBatchKeyAndCtx(
+	lsn uint64,
+	key string,
+	batchSizeStr string,
+	currTimeStr string,
+) (database.BatchKey, database.TxContext, error) {
 	batchSize, err := strconv.ParseUint(batchSizeStr, 10, 32)
 	if err != nil {
 		return database.BatchKey{}, database.TxContext{}, fmt.Errorf("WAL log: parse batch size: %w", err)

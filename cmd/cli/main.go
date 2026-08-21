@@ -41,7 +41,7 @@ func main() {
 	}
 
 	line := liner.NewLiner()
-	defer line.Close()
+	defer func() { _ = line.Close() }()
 
 	line.SetCtrlCAborts(true)
 
