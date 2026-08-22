@@ -12,10 +12,13 @@ import (
 	"fq/internal/database/storage/replication"
 	"fq/internal/database/storage/wal"
 	"fq/internal/network"
+	"fq/internal/tools"
 )
 
 const defaultReplicationMasterAddress = ":1946"
 const defaultReplicationSyncInterval = time.Second
+const defaultReplicationMaxMessageSize = 16 << 20
+const replicationMessageOverheadMin = 1 << 20
 
 func CreateReplica(
 	replicationCfg config.ReplicationConfig,
@@ -51,7 +54,10 @@ func CreateReplica(
 	}
 
 	const maxReplicasNumber = 5
-	const maxMessageSize = 16 << 20
+	maxMessageSize, err := replicationMaxMessageSize(walCfg)
+	if err != nil {
+		return nil, err
+	}
 	idleTimeout := syncInterval * 3
 
 	if replicaType == config.ReplicaTypeMaster {
@@ -77,4 +83,22 @@ func CreateReplica(
 		syncInterval,
 		logger,
 	)
+}
+
+func replicationMaxMessageSize(walCfg *config.WALConfig) (int, error) {
+	if walCfg == nil || walCfg.MaxSegmentSize == "" {
+		return defaultReplicationMaxMessageSize, nil
+	}
+
+	maxSegmentSize, err := tools.ParseSize(walCfg.MaxSegmentSize)
+	if err != nil {
+		return 0, errors.New("max segment size is incorrect")
+	}
+
+	overhead := maxSegmentSize / 10
+	if overhead < replicationMessageOverheadMin {
+		overhead = replicationMessageOverheadMin
+	}
+
+	return max(defaultReplicationMaxMessageSize, maxSegmentSize+overhead), nil
 }
