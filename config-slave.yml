@@ -9,10 +9,10 @@ observability:
   address: ":2113"
 wal:
   sync_commit: off
-  flushing_batch_length: 4096
-  flushing_batch_timeout: 20ms
+  flushing_batch_length: 8192
+  flushing_batch_timeout: 1000ms
   queue_capacity: 16384
-  max_segment_size: 16MB
+  max_segment_size: 64MB
   data_directory: ./app/data-slave/wal/
 engine:
   type: in_memory
