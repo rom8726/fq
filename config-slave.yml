@@ -11,13 +11,13 @@ wal:
   sync_commit: off
   flushing_batch_length: 4096
   flushing_batch_timeout: 20ms
-  max_segment_size: 4096
+  max_segment_size: 16MB
   data_directory: ./app/data-slave/wal/
 engine:
   type: in_memory
   clean_interval: 5m
 dump:
-  interval: 1m
+  interval: 5m
   directory: ./app/data-slave/
 replication:
   replica_type: slave
