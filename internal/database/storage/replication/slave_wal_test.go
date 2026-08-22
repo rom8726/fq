@@ -39,6 +39,43 @@ func TestSaveWALSegmentCreatesDirectoryAndRemovesTempFile(t *testing.T) {
 	require.Equal(t, "wal_1.log", entries[0].Name())
 }
 
+func TestSaveWALChunkAppendsAtOffset(t *testing.T) {
+	directory := t.TempDir()
+	slave := &Slave{walDirectory: directory}
+	segmentName := "wal_1.log"
+	segmentPath := filepath.Join(directory, segmentName)
+	require.NoError(t, os.WriteFile(segmentPath, []byte("first"), 0o644))
+
+	require.NoError(t, slave.saveWALChunk(segmentName, 5, []byte("second")))
+
+	data, err := os.ReadFile(segmentPath)
+	require.NoError(t, err)
+	require.Equal(t, []byte("firstsecond"), data)
+}
+
+func TestSaveWALChunkTruncatesStaleTail(t *testing.T) {
+	directory := t.TempDir()
+	slave := &Slave{walDirectory: directory}
+	segmentName := "wal_1.log"
+	segmentPath := filepath.Join(directory, segmentName)
+	require.NoError(t, os.WriteFile(segmentPath, []byte("first stale tail"), 0o644))
+
+	require.NoError(t, slave.saveWALChunk(segmentName, 5, []byte("second")))
+
+	data, err := os.ReadFile(segmentPath)
+	require.NoError(t, err)
+	require.Equal(t, []byte("firstsecond"), data)
+}
+
+func TestSaveWALChunkRejectsOffsetPastEnd(t *testing.T) {
+	directory := t.TempDir()
+	slave := &Slave{walDirectory: directory}
+	segmentName := "wal_1.log"
+	require.NoError(t, os.WriteFile(filepath.Join(directory, segmentName), []byte("first"), 0o644))
+
+	require.Error(t, slave.saveWALChunk(segmentName, 6, []byte("second")))
+}
+
 func TestSaveWALSegmentRejectsUnsafeSegmentNames(t *testing.T) {
 	directory := t.TempDir()
 	slave := &Slave{walDirectory: directory}

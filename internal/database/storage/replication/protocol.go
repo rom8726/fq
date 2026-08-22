@@ -26,12 +26,15 @@ type DumpResponse struct {
 
 type WALRequest struct {
 	LastSegmentName string
+	SegmentOffset   int64
 }
 
 type WALResponse struct {
-	Succeed     bool
-	SegmentName string
-	SegmentData []byte
+	Succeed           bool
+	SegmentName       string
+	SegmentOffset     int64
+	NextSegmentOffset int64
+	SegmentData       []byte
 }
 
 func NewDumpRequest(sessionUUID string, lastSegmentNumber uint64) Request {
@@ -43,9 +46,9 @@ func NewDumpRequest(sessionUUID string, lastSegmentNumber uint64) Request {
 	}
 }
 
-func NewWALRequest(lastSegmentName string) Request {
+func NewWALRequest(lastSegmentName string, segmentOffset int64) Request {
 	return Request{
-		WALRequest: WALRequest{LastSegmentName: lastSegmentName},
+		WALRequest: WALRequest{LastSegmentName: lastSegmentName, SegmentOffset: segmentOffset},
 	}
 }
 

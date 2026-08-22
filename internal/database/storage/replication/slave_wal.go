@@ -17,7 +17,7 @@ import (
 const walDirectoryPerm = 0o750
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
-	request := NewWALRequest(s.lastSegmentName)
+	request := NewWALRequest(s.lastSegmentName, s.lastSegmentOffset)
 
 	requestData, err := Encode(&request)
 	if err != nil {
@@ -31,6 +31,7 @@ func (s *Slave) synchronizeWAL(ctx context.Context) error {
 			s.logger.Warn().
 				Err(err).
 				Str("last_segment_name", s.lastSegmentName).
+				Int64("last_segment_offset", s.lastSegmentOffset).
 				Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
 				Msg("network error detected during WAL sync, attempting reconnection")
 			if reconnectErr := s.reconnect(ctx); reconnectErr != nil {
@@ -74,41 +75,98 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 	}
 
 	filename := response.SegmentName
-	isSameSegment := filename == s.lastSegmentName
-	segmentSize := int64(len(response.SegmentData))
-
-	// If it's the same segment, check if it has new data
-	if isSameSegment && segmentSize <= s.lastSegmentSize {
-		s.logger.Debug().
-			Str("segment_name", filename).
-			Int64("segment_size", segmentSize).
-			Int64("last_segment_size", s.lastSegmentSize).
-			Msg("segment has no new data, skipping")
+	if len(response.SegmentData) == 0 {
 		return nil
 	}
 
 	s.logger.Debug().
 		Str("segment_name", filename).
-		Int64("segment_size", segmentSize).
+		Int64("segment_offset", response.SegmentOffset).
+		Int64("next_segment_offset", response.NextSegmentOffset).
+		Int("chunk_size", len(response.SegmentData)).
 		Str("last_segment_name", s.lastSegmentName).
-		Int64("last_segment_size", s.lastSegmentSize).
+		Int64("last_segment_offset", s.lastSegmentOffset).
 		Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
-		Bool("is_same_segment", isSameSegment).
-		Msg("received WAL segment from master")
+		Msg("received WAL chunk from master")
 
-	// Save segment (overwrite if same segment with new data)
-	if err := s.saveWALSegment(filename, response.SegmentData); err != nil {
-		return fmt.Errorf("save wal segment: %w", err)
+	if err := s.saveWALChunk(filename, response.SegmentOffset, response.SegmentData); err != nil {
+		return fmt.Errorf("save wal chunk: %w", err)
 	}
 
-	// Apply only new logs (filter by LSN)
 	if err := s.applyDataToEngine(ctx, response.SegmentData, response.SegmentName); err != nil {
-		return fmt.Errorf("apply data to engine segment: %w", err)
+		return fmt.Errorf("apply data to engine chunk: %w", err)
 	}
 
-	// Update last segment name and size
 	s.lastSegmentName = response.SegmentName
-	s.lastSegmentSize = segmentSize
+	s.lastSegmentOffset = response.NextSegmentOffset
+
+	return nil
+}
+
+func (s *Slave) saveWALChunk(segmentName string, offset int64, segmentData []byte) error {
+	if offset < 0 {
+		return fmt.Errorf("invalid wal segment offset: %d", offset)
+	}
+
+	filename, err := s.walSegmentPath(segmentName)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(s.walDirectory, walDirectoryPerm); err != nil {
+		return fmt.Errorf("failed to create wal directory: %w", err)
+	}
+
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to open wal segment: %w", err)
+	}
+
+	stat, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+
+		return fmt.Errorf("failed to stat wal segment: %w", err)
+	}
+	if stat.Size() < offset {
+		_ = file.Close()
+
+		return fmt.Errorf("wal segment %s is smaller than requested offset: %d < %d", segmentName, stat.Size(), offset)
+	}
+	if stat.Size() > offset {
+		if err := file.Truncate(offset); err != nil {
+			_ = file.Close()
+
+			return fmt.Errorf("failed to truncate wal segment: %w", err)
+		}
+	}
+
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		_ = file.Close()
+
+		return fmt.Errorf("failed to seek wal segment: %w", err)
+	}
+
+	if err := writeAll(file, segmentData); err != nil {
+		_ = file.Close()
+
+		return fmt.Errorf("failed to write wal chunk: %w", err)
+	}
+
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if syncErr != nil {
+		return fmt.Errorf("failed to sync wal segment: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("failed to close wal segment: %w", closeErr)
+	}
+
+	if offset == 0 {
+		if err := syncDirectory(s.walDirectory); err != nil {
+			return fmt.Errorf("failed to sync wal directory: %w", err)
+		}
+	}
 
 	return nil
 }
