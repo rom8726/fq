@@ -99,15 +99,15 @@ make run-bench
 
 Example with 500 connections for 60 seconds:
 ```shell
-go run ./cmd/bench -address :1945 -connections 500 -duration 60s
+go run ./cmd/bench -address :1945 -connections 500 -duration 60s -key_range 10000
 ```
 
 Limit target load and customize generated keys:
 ```shell
-go run ./cmd/bench -address :1945 -connections 200 -rps 50000 -keys 1000000 -batch 600
+go run ./cmd/bench -address :1945 -connections 200 -rps 50000 -key_range 100000 -batch 600
 ```
 
-The benchmark screen updates once per second and shows current RPS, errors, latency percentiles, and ASCII history charts.
+The benchmark screen updates once per second and shows current RPS, errors, latency percentiles, and terminal history charts. Use `-key_range` to control how many distinct keys are generated; smaller ranges create hotter keys and larger ranges spread writes across more keys.
 
 ### Example
 

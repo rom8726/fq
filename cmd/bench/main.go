@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/guptarohit/asciigraph"
+
 	"fq/internal/network"
 	"fq/internal/tools"
 )
@@ -30,7 +32,8 @@ type benchConfig struct {
 	maxMessageSize int
 	queryTemplate  string
 	keyPrefix      string
-	keys           uint64
+	keyStart       uint64
+	keyRange       uint64
 	batchSize      uint64
 }
 
@@ -96,7 +99,9 @@ func parseFlags() (benchConfig, error) {
 	maxMessageSizeStr := flag.String("max_message_size", "4KB", "max message size")
 	queryTemplate := flag.String("query", defaultQueryTemplate, "query template; supports {key}, {batch}, {worker}, {n}")
 	keyPrefix := flag.String("key_prefix", "bench", "key prefix for generated queries")
-	keys := flag.Uint64("keys", 100000, "number of distinct generated keys")
+	keyStart := flag.Uint64("key_start", 0, "first generated key id")
+	keyRange := flag.Uint64("key_range", 1000, "number of distinct generated keys")
+	keys := flag.Uint64("keys", 1000, "deprecated alias for key_range")
 	batchSize := flag.Uint64("batch", 600, "batch value for the default query template")
 	flag.Parse()
 
@@ -106,8 +111,11 @@ func parseFlags() (benchConfig, error) {
 	if *rps < 0 {
 		return benchConfig{}, fmt.Errorf("rps must be non-negative")
 	}
-	if *keys == 0 {
-		return benchConfig{}, fmt.Errorf("keys must be positive")
+	if *keys != 0 {
+		*keyRange = *keys
+	}
+	if *keyRange == 0 {
+		return benchConfig{}, fmt.Errorf("key_range must be positive")
 	}
 	if *batchSize == 0 {
 		return benchConfig{}, fmt.Errorf("batch must be positive")
@@ -128,7 +136,8 @@ func parseFlags() (benchConfig, error) {
 		maxMessageSize: maxMessageSize,
 		queryTemplate:  *queryTemplate,
 		keyPrefix:      *keyPrefix,
-		keys:           *keys,
+		keyStart:       *keyStart,
+		keyRange:       *keyRange,
 		batchSize:      *batchSize,
 	}, nil
 }
@@ -212,7 +221,7 @@ func waitForPace(ctx context.Context, interval time.Duration, next *time.Time) e
 }
 
 func makeQuery(cfg benchConfig, workerID int, n uint64) string {
-	keyID := (uint64(workerID) + n*uint64(cfg.connections)) % cfg.keys
+	keyID := cfg.keyStart + (uint64(workerID)+n*uint64(cfg.connections))%cfg.keyRange
 	replacer := strings.NewReplacer(
 		"{key}", cfg.keyPrefix+"_"+strconv.FormatUint(keyID, 10),
 		"{batch}", strconv.FormatUint(cfg.batchSize, 10),
@@ -351,7 +360,7 @@ func renderSnapshot(cfg benchConfig, snap snapshot, rpsHistory, p99History []flo
 		formatTargetRPS(cfg.rps),
 		snap.elapsed.Truncate(time.Second),
 	)
-	fmt.Printf("query=%q\n", cfg.queryTemplate)
+	fmt.Printf("query=%q  key_range=[%d,%d)\n", cfg.queryTemplate, cfg.keyStart, cfg.keyStart+cfg.keyRange)
 	fmt.Println(strings.Repeat("-", 72))
 	fmt.Printf("now:   rps=%9.1f  errors/s=%7.1f  count=%8d  errors=%5d\n",
 		rps,
@@ -370,15 +379,12 @@ func renderSnapshot(cfg benchConfig, snap snapshot, rpsHistory, p99History []flo
 		fmt.Printf("last error: %s\n", truncate(snap.lastError, 120))
 	}
 	fmt.Println(strings.Repeat("-", 72))
-	fmt.Printf("rps: %s\n", sparkline(appendHistory(rpsHistory, rps, 60), 60))
-	fmt.Printf("p99: %s  latest=%s\n",
-		sparkline(appendHistory(p99History, float64(p99.Microseconds()), 60), 60),
-		formatDuration(p99),
-	)
+	fmt.Println(renderGraph("RPS", appendHistory(rpsHistory, rps, 60)))
+	fmt.Println(renderGraph("p99 latency, ms", appendHistory(p99History, durationMillis(p99), 60)))
 	fmt.Println(strings.Repeat("-", 72))
 	fmt.Println("Stop: Ctrl+C")
 
-	return rps, float64(p99.Microseconds())
+	return rps, durationMillis(p99)
 }
 
 func truncate(s string, limit int) string {
@@ -422,41 +428,22 @@ func appendHistory(history []float64, value float64, limit int) []float64 {
 	return history
 }
 
-func sparkline(values []float64, width int) string {
+func renderGraph(caption string, values []float64) string {
 	if len(values) == 0 {
-		return strings.Repeat(" ", width)
-	}
-	if len(values) > width {
-		values = values[len(values)-width:]
+		return caption + ": no data"
 	}
 
-	maxValue := 0.0
-	for _, value := range values {
-		if value > maxValue {
-			maxValue = value
-		}
-	}
-	if maxValue == 0 {
-		maxValue = 1
-	}
+	return asciigraph.Plot(
+		values,
+		asciigraph.Width(60),
+		asciigraph.Height(7),
+		asciigraph.Caption(caption),
+		asciigraph.Precision(1),
+	)
+}
 
-	levels := " .:-=+*#%@"
-	var b strings.Builder
-	for i := 0; i < width-len(values); i++ {
-		b.WriteByte(' ')
-	}
-	for _, value := range values {
-		idx := int(math.Round(value / maxValue * float64(len(levels)-1)))
-		if idx < 0 {
-			idx = 0
-		}
-		if idx >= len(levels) {
-			idx = len(levels) - 1
-		}
-		b.WriteByte(levels[idx])
-	}
-
-	return b.String()
+func durationMillis(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000
 }
 
 func formatDuration(d time.Duration) string {
