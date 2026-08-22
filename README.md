@@ -213,6 +213,9 @@ Available metrics include:
 - `fq_replication_lag_lsn`
 - `fq_replication_reconnect_total`
 - `fq_replication_reconnect_attempts_total`
+- `fq_replication_replica_last_applied_lsn{replica_id}`
+- `fq_replication_replica_last_ack_timestamp{replica_id}`
+- `fq_replication_known_replicas`
 
 ### Replication
 
@@ -248,6 +251,7 @@ persistence:
   mode: wal_and_dump
 replication:
   replica_type: slave
+  replica_id: "replica-1"
   master_address: ":1946"  # Master replication address
   sync_interval: 1s
 ```

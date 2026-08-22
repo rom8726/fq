@@ -27,7 +27,7 @@ const (
 func CreateEngine(
 	cfg config.EngineConfig,
 	logger *zerolog.Logger,
-	walStream <-chan []*wal.LogData,
+	walStream <-chan wal.Chunk,
 	dumpStream <-chan database.DumpChunk,
 ) (storage.Engine, error) {
 	if cfg.Type != "" {

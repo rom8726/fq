@@ -22,6 +22,7 @@ dump:
   directory: ./app/data-slave/
 replication:
   replica_type: slave
+  replica_id: "replica-1"
   master_address: ":1946"
   sync_interval: 1s
 logging:

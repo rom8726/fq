@@ -16,6 +16,7 @@ type Master struct {
 	server       TCPServer
 	walDirectory string
 	dumpProvider DumpProvider
+	tracker      *ReplicaTracker
 	logger       *zerolog.Logger
 }
 
@@ -37,8 +38,17 @@ func NewMaster(
 		server:       server,
 		walDirectory: walDirectory,
 		dumpProvider: dumpProvider,
+		tracker:      NewReplicaTracker(),
 		logger:       logger,
 	}, nil
+}
+
+func (m *Master) ReplicaCursors() []ReplicaCursor {
+	if m.tracker == nil {
+		return nil
+	}
+
+	return m.tracker.List()
 }
 
 func (m *Master) IsMaster() bool {

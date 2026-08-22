@@ -35,7 +35,7 @@ type WAL struct {
 	queueCapacity int
 	directory     string
 
-	stream chan<- []*LogData
+	stream chan<- Chunk
 
 	records chan Log
 
@@ -50,7 +50,7 @@ type WAL struct {
 func NewWAL(
 	fsWriter fsWriter,
 	fsReader fsReader,
-	stream chan<- []*LogData,
+	stream chan<- Chunk,
 	flushTimeout time.Duration,
 	maxBatchSize int,
 	queueCapacity int,

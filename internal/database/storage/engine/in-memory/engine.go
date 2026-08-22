@@ -42,7 +42,7 @@ func NewEngine(
 	tableBuilder func() hashTable,
 	partitionsNumber int,
 	logger *zerolog.Logger,
-	walStream <-chan []*wal.LogData,
+	walStream <-chan wal.Chunk,
 	dumpStream <-chan database.DumpChunk,
 ) (*Engine, error) {
 	if tableBuilder == nil {
@@ -73,8 +73,12 @@ func NewEngine(
 
 	if walStream != nil {
 		go func() {
-			for logs := range walStream {
-				engine.applyLogs(logs)
+			for chunk := range walStream {
+				engine.applyLogs(chunk.Logs)
+				if chunk.Applied != nil {
+					chunk.Applied <- nil
+					close(chunk.Applied)
+				}
 			}
 		}()
 	}

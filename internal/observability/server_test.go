@@ -23,8 +23,11 @@ func TestServerServesHealthAndMetrics(t *testing.T) {
 	}()
 
 	baseURL := "http://" + address
+	client := &http.Client{
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	require.Eventually(t, func() bool {
-		resp, err := http.Get(baseURL + "/healthz")
+		resp, err := client.Get(baseURL + "/healthz")
 		if err != nil {
 			return false
 		}
@@ -33,12 +36,12 @@ func TestServerServesHealthAndMetrics(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	}, time.Second, 10*time.Millisecond)
 
-	resp, err := http.Get(baseURL + "/metrics")
+	resp, err := client.Get(baseURL + "/metrics")
 	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 	require.Contains(t, string(body), "fq_tcp_active_connections")
 	require.Contains(t, string(body), "# HELP")
 

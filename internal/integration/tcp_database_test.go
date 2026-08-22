@@ -86,7 +86,7 @@ func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
 	t.Helper()
 
 	logger := zerolog.Nop()
-	walStream := make(chan []*wal.LogData, 8)
+	walStream := make(chan wal.Chunk, 8)
 	dumpStream := make(chan database.DumpChunk, 1)
 
 	engine, err := inmemory.NewEngine(inmemory.HashTableBuilder, 4, &logger, walStream, dumpStream)
@@ -124,7 +124,7 @@ func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
 	}
 }
 
-func newTestWAL(directory string, stream chan<- []*wal.LogData, logger *zerolog.Logger) *wal.WAL {
+func newTestWAL(directory string, stream chan<- wal.Chunk, logger *zerolog.Logger) *wal.WAL {
 	return wal.NewWAL(
 		wal.NewFSWriter(directory, 1<<20, logger),
 		wal.NewFSReader(directory, logger),

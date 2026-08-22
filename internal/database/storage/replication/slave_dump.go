@@ -74,6 +74,9 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 				return fmt.Errorf("wait for dump apply: %w", err)
 			}
 
+			if s.dumpLastSegmentNumber > s.lastAppliedLSN {
+				s.lastAppliedLSN = s.dumpLastSegmentNumber
+			}
 			s.readDump = false
 			s.markDumpApplied()
 		} else {
@@ -113,6 +116,8 @@ func (s *Slave) waitForDumpChunkApplied(ctx context.Context, applied <-chan erro
 }
 
 // sendToDumpStream safely sends data to dumpStream with closed channel handling
+//
+//nolint:dupl // ok
 func (s *Slave) sendToDumpStream(ctx context.Context, chunk database.DumpChunk) (err error) {
 	defer func() {
 		if r := recover(); r != nil {

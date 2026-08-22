@@ -17,7 +17,7 @@ import (
 const walDirectoryPerm = 0o750
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
-	request := NewWALRequest(s.lastSegmentName, s.lastSegmentOffset)
+	request := NewWALRequest(s.replicaID, s.lastSegmentName, s.lastSegmentOffset, s.lastAppliedLSN)
 
 	requestData, err := Encode(&request)
 	if err != nil {
@@ -30,8 +30,10 @@ func (s *Slave) synchronizeWAL(ctx context.Context) error {
 		if s.isNetworkError(err) {
 			s.logger.Warn().
 				Err(err).
+				Str("replica_id", s.replicaID).
 				Str("last_segment_name", s.lastSegmentName).
 				Int64("last_segment_offset", s.lastSegmentOffset).
+				Uint64("last_applied_lsn", s.lastAppliedLSN).
 				Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
 				Msg("network error detected during WAL sync, attempting reconnection")
 			if reconnectErr := s.reconnect(ctx); reconnectErr != nil {
@@ -171,56 +173,6 @@ func (s *Slave) saveWALChunk(segmentName string, offset int64, segmentData []byt
 	return nil
 }
 
-func (s *Slave) saveWALSegment(segmentName string, segmentData []byte) error {
-	filename, err := s.walSegmentPath(segmentName)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(s.walDirectory, walDirectoryPerm); err != nil {
-		return fmt.Errorf("failed to create wal directory: %w", err)
-	}
-
-	tempFile, err := os.CreateTemp(s.walDirectory, "."+segmentName+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary wal segment: %w", err)
-	}
-	tempName := tempFile.Name()
-	removeTemp := true
-	defer func() {
-		if removeTemp {
-			_ = os.Remove(tempName)
-		}
-	}()
-
-	if err := writeAll(tempFile, segmentData); err != nil {
-		_ = tempFile.Close()
-
-		return fmt.Errorf("failed to write data to segment: %w", err)
-	}
-
-	if err := tempFile.Sync(); err != nil {
-		_ = tempFile.Close()
-
-		return fmt.Errorf("failed to sync temporary wal segment: %w", err)
-	}
-
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temporary wal segment: %w", err)
-	}
-
-	if err := os.Rename(tempName, filename); err != nil {
-		return fmt.Errorf("failed to replace wal segment: %w", err)
-	}
-	removeTemp = false
-
-	if err := syncDirectory(s.walDirectory); err != nil {
-		return fmt.Errorf("failed to sync wal directory: %w", err)
-	}
-
-	return nil
-}
-
 func (s *Slave) walSegmentPath(segmentName string) (string, error) {
 	if segmentName == "" ||
 		strings.ContainsAny(segmentName, `/\`) ||
@@ -263,24 +215,34 @@ func syncDirectory(directory string) error {
 }
 
 // sendToWALStream safely sends data to walStream with closed channel handling
-func (s *Slave) sendToWALStream(logs []*wal.LogData) error {
+//
+//nolint:dupl // ok
+func (s *Slave) sendToWALStream(ctx context.Context, chunk wal.Chunk) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error().Interface("panic", r).Msg("panic sending to walStream (channel closed)")
+			err = fmt.Errorf("send to walStream: %v", r)
 		}
 	}()
 
 	select {
-	case s.walStream <- logs:
+	case s.walStream <- chunk:
 		return nil
 	default:
-		// Channel is full, try to send with timeout
-		select {
-		case s.walStream <- logs:
-			return nil
-		case <-time.After(5 * time.Second):
-			return fmt.Errorf("timeout sending to walStream")
-		}
+	}
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case s.walStream <- chunk:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closeCh:
+		return errSlaveClosed
+	case <-timer.C:
+		return fmt.Errorf("timeout sending to walStream")
 	}
 }
 
@@ -350,13 +312,37 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 		Msg("applying WAL logs to engine")
 
 	// Safe channel send with closed channel check
-	if err := s.sendToWALStream(logsToApply); err != nil {
+	applied := make(chan error, 1)
+	chunk := wal.Chunk{
+		Logs:    logsToApply,
+		Applied: applied,
+	}
+	if err := s.sendToWALStream(ctx, chunk); err != nil {
 		return fmt.Errorf("failed to send WAL data to stream: %w", err)
 	}
 
-	// Update last applied LSN
+	if err := s.waitForWALChunkApplied(ctx, applied); err != nil {
+		return fmt.Errorf("wait for WAL apply: %w", err)
+	}
+
+	// Update last applied LSN after the engine has applied the chunk.
 	s.lastAppliedLSN = lastLSN
 	observability.SetReplicationLagLSN(0)
 
 	return nil
+}
+
+func (s *Slave) waitForWALChunkApplied(ctx context.Context, applied <-chan error) error {
+	if applied == nil {
+		return nil
+	}
+
+	select {
+	case err := <-applied:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closeCh:
+		return errSlaveClosed
+	}
 }

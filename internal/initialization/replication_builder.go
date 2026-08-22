@@ -25,7 +25,7 @@ func CreateReplica(
 	walCfg *config.WALConfig,
 	logger *zerolog.Logger,
 	dumperSrv *dumper.Dumper,
-	walStream chan<- []*wal.LogData,
+	walStream chan<- wal.Chunk,
 	dumpStream chan<- database.DumpChunk,
 ) (interface{}, error) {
 	if replicationCfg.ReplicaType == "" {
@@ -76,6 +76,7 @@ func CreateReplica(
 
 	return replication.NewSlaveWithFactory(
 		clientFactory,
+		replicationCfg.ReplicaID,
 		fsReader,
 		walStream,
 		dumpStream,

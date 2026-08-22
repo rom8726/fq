@@ -34,8 +34,9 @@ var errSlaveClosed = errors.New("slave is shutting down")
 type Slave struct {
 	clientFactory         TCPClientFactory
 	client                TCPClient
+	replicaID             string
 	walReader             WALReader
-	walStream             chan<- []*wal.LogData
+	walStream             chan<- wal.Chunk
 	dumpStream            chan<- database.DumpChunk
 	syncInterval          time.Duration
 	walDirectory          string
@@ -66,8 +67,9 @@ type Slave struct {
 
 func NewSlave(
 	client TCPClient,
+	replicaID string,
 	walReader WALReader,
-	walStream chan<- []*wal.LogData,
+	walStream chan<- wal.Chunk,
 	dumpStream chan<- database.DumpChunk,
 	walDirectory string,
 	syncInterval time.Duration,
@@ -81,6 +83,10 @@ func NewSlave(
 		return nil, errors.New("client is invalid")
 	}
 
+	if replicaID == "" {
+		return nil, errors.New("replicaID is invalid")
+	}
+
 	if logger == nil {
 		return nil, errors.New("logger is invalid")
 	}
@@ -92,6 +98,7 @@ func NewSlave(
 
 	slave := &Slave{
 		client:            client,
+		replicaID:         replicaID,
 		walReader:         walReader,
 		walStream:         walStream,
 		dumpStream:        dumpStream,
@@ -115,8 +122,9 @@ func NewSlave(
 // NewSlaveWithFactory creates a slave with a client factory for reconnection support
 func NewSlaveWithFactory(
 	clientFactory TCPClientFactory,
+	replicaID string,
 	walReader WALReader,
-	walStream chan<- []*wal.LogData,
+	walStream chan<- wal.Chunk,
 	dumpStream chan<- database.DumpChunk,
 	walDirectory string,
 	syncInterval time.Duration,
@@ -128,6 +136,10 @@ func NewSlaveWithFactory(
 
 	if clientFactory == nil {
 		return nil, errors.New("clientFactory is invalid")
+	}
+
+	if replicaID == "" {
+		return nil, errors.New("replicaID is invalid")
 	}
 
 	if logger == nil {
@@ -147,6 +159,7 @@ func NewSlaveWithFactory(
 	slave := &Slave{
 		clientFactory:     clientFactory,
 		client:            client,
+		replicaID:         replicaID,
 		walReader:         walReader,
 		walStream:         walStream,
 		dumpStream:        dumpStream,

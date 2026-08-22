@@ -46,6 +46,7 @@ func TestSynchronizeDumpWaitsForEngineAckBeforeMarkingApplied(t *testing.T) {
 	require.False(t, slave.readDump)
 	requireClosed(t, slave.dumpAppliedCh)
 	require.Equal(t, uint64(7), slave.dumpLastSegmentNumber)
+	require.Equal(t, uint64(7), slave.lastAppliedLSN)
 }
 
 func TestSynchronizeDumpPropagatesEngineApplyError(t *testing.T) {
@@ -132,7 +133,7 @@ func newTestSlave(t *testing.T, client TCPClient, dumpStream chan<- database.Dum
 	t.Helper()
 
 	logger := zerolog.Nop()
-	slave, err := NewSlave(client, testWALReader{}, nil, dumpStream, t.TempDir(), time.Millisecond, &logger)
+	slave, err := NewSlave(client, "replica-test", testWALReader{}, nil, dumpStream, t.TempDir(), time.Millisecond, &logger)
 	require.NoError(t, err)
 
 	return slave

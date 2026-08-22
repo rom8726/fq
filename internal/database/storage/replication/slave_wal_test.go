@@ -1,43 +1,18 @@
 package replication
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
+
+	"fq/internal/database/storage/wal"
 )
-
-func TestSaveWALSegmentReplacesExistingFileWithoutTrailingBytes(t *testing.T) {
-	directory := t.TempDir()
-	slave := &Slave{walDirectory: directory}
-	segmentName := "wal_1.log"
-	segmentPath := filepath.Join(directory, segmentName)
-
-	require.NoError(t, os.WriteFile(segmentPath, []byte("old data with stale tail"), 0o644))
-
-	require.NoError(t, slave.saveWALSegment(segmentName, []byte("new")))
-
-	data, err := os.ReadFile(segmentPath)
-	require.NoError(t, err)
-	require.Equal(t, []byte("new"), data)
-}
-
-func TestSaveWALSegmentCreatesDirectoryAndRemovesTempFile(t *testing.T) {
-	directory := filepath.Join(t.TempDir(), "wal")
-	slave := &Slave{walDirectory: directory}
-
-	require.NoError(t, slave.saveWALSegment("wal_1.log", []byte("segment data")))
-
-	data, err := os.ReadFile(filepath.Join(directory, "wal_1.log"))
-	require.NoError(t, err)
-	require.Equal(t, []byte("segment data"), data)
-
-	entries, err := os.ReadDir(directory)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, "wal_1.log", entries[0].Name())
-}
 
 func TestSaveWALChunkAppendsAtOffset(t *testing.T) {
 	directory := t.TempDir()
@@ -76,7 +51,7 @@ func TestSaveWALChunkRejectsOffsetPastEnd(t *testing.T) {
 	require.Error(t, slave.saveWALChunk(segmentName, 6, []byte("second")))
 }
 
-func TestSaveWALSegmentRejectsUnsafeSegmentNames(t *testing.T) {
+func TestSaveWALChunkRejectsUnsafeSegmentNames(t *testing.T) {
 	directory := t.TempDir()
 	slave := &Slave{walDirectory: directory}
 
@@ -88,7 +63,167 @@ func TestSaveWALSegmentRejectsUnsafeSegmentNames(t *testing.T) {
 		filepath.Join(directory, "wal_1.log"),
 	} {
 		t.Run(segmentName, func(t *testing.T) {
-			require.Error(t, slave.saveWALSegment(segmentName, []byte("data")))
+			require.Error(t, slave.saveWALChunk(segmentName, 0, []byte("data")))
 		})
 	}
+}
+
+func TestSlaveSendsLastAppliedLSNInNextWALRequest(t *testing.T) {
+	logger := zerolog.Nop()
+	walStream := make(chan wal.Chunk, 1)
+	client := newRecordingWALClient(t, WALResponse{Succeed: true})
+	walDirectory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(walDirectory, "wal_1.log"), []byte("0123456789"), 0o644))
+	slave := &Slave{
+		client:            client,
+		replicaID:         "replica-1",
+		walReader:         scriptedWALReader{logs: []*wal.LogData{{LSN: 7}}},
+		walStream:         walStream,
+		walDirectory:      walDirectory,
+		lastSegmentName:   "wal_1.log",
+		lastSegmentOffset: 10,
+		lastAppliedLSN:    3,
+		closeCh:           make(chan struct{}),
+		logger:            &logger,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		result <- slave.handleResponse(context.Background(), WALResponse{
+			Succeed:           true,
+			SegmentName:       "wal_1.log",
+			SegmentOffset:     10,
+			NextSegmentOffset: 20,
+			SegmentData:       []byte("chunk"),
+		})
+	}()
+
+	chunk := requireWALChunk(t, walStream)
+	require.Len(t, chunk.Logs, 1)
+	chunk.Applied <- nil
+	require.NoError(t, requireErrorResult(t, result))
+
+	require.NoError(t, slave.synchronizeWAL(context.Background()))
+
+	require.Len(t, client.requests, 1)
+	require.Equal(t, "replica-1", client.requests[0].ReplicaID)
+	require.Equal(t, "wal_1.log", client.requests[0].LastSegmentName)
+	require.Equal(t, int64(20), client.requests[0].SegmentOffset)
+	require.Equal(t, uint64(7), client.requests[0].LastAppliedLSN)
+}
+
+func TestSlaveDoesNotUpdateAckCursorIfSaveWALChunkFails(t *testing.T) {
+	logger := zerolog.Nop()
+	directory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "wal_1.log"), []byte("old"), 0o644))
+	slave := &Slave{
+		walReader:         scriptedWALReader{logs: []*wal.LogData{{LSN: 7}}},
+		walStream:         make(chan wal.Chunk, 1),
+		walDirectory:      directory,
+		lastSegmentName:   "wal_1.log",
+		lastSegmentOffset: 3,
+		lastAppliedLSN:    5,
+		closeCh:           make(chan struct{}),
+		logger:            &logger,
+	}
+
+	err := slave.handleResponse(context.Background(), WALResponse{
+		Succeed:           true,
+		SegmentName:       "wal_1.log",
+		SegmentOffset:     4,
+		NextSegmentOffset: 10,
+		SegmentData:       []byte("chunk"),
+	})
+
+	require.Error(t, err)
+	require.Equal(t, "wal_1.log", slave.lastSegmentName)
+	require.Equal(t, int64(3), slave.lastSegmentOffset)
+	require.Equal(t, uint64(5), slave.lastAppliedLSN)
+}
+
+func TestSlaveDoesNotUpdateAckCursorIfApplyDataToEngineFails(t *testing.T) {
+	logger := zerolog.Nop()
+	walStream := make(chan wal.Chunk, 1)
+	slave := &Slave{
+		walReader:         scriptedWALReader{logs: []*wal.LogData{{LSN: 7}}},
+		walStream:         walStream,
+		walDirectory:      t.TempDir(),
+		lastSegmentName:   "wal_1.log",
+		lastSegmentOffset: 3,
+		lastAppliedLSN:    5,
+		closeCh:           make(chan struct{}),
+		logger:            &logger,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		result <- slave.handleResponse(context.Background(), WALResponse{
+			Succeed:           true,
+			SegmentName:       "wal_1.log",
+			SegmentOffset:     0,
+			NextSegmentOffset: 10,
+			SegmentData:       []byte("chunk"),
+		})
+	}()
+
+	chunk := requireWALChunk(t, walStream)
+	applyErr := errors.New("apply failed")
+	chunk.Applied <- applyErr
+
+	require.ErrorIs(t, requireErrorResult(t, result), applyErr)
+	require.Equal(t, "wal_1.log", slave.lastSegmentName)
+	require.Equal(t, int64(3), slave.lastSegmentOffset)
+	require.Equal(t, uint64(5), slave.lastAppliedLSN)
+}
+
+type recordingWALClient struct {
+	t        *testing.T
+	response []byte
+	requests []WALRequest
+}
+
+func newRecordingWALClient(t *testing.T, response WALResponse) *recordingWALClient {
+	t.Helper()
+
+	responseData, err := Encode(&response)
+	require.NoError(t, err)
+
+	return &recordingWALClient{
+		t:        t,
+		response: responseData,
+	}
+}
+
+func (c *recordingWALClient) Send(_ context.Context, data []byte) ([]byte, error) {
+	var request Request
+	require.NoError(c.t, Decode(&request, data))
+	c.requests = append(c.requests, request.WALRequest)
+
+	return c.response, nil
+}
+
+func (c *recordingWALClient) Close() error {
+	return nil
+}
+
+type scriptedWALReader struct {
+	logs []*wal.LogData
+	err  error
+}
+
+func (r scriptedWALReader) ReadSegmentData(context.Context, []byte) ([]*wal.LogData, error) {
+	return r.logs, r.err
+}
+
+func requireWALChunk(t *testing.T, walStream <-chan wal.Chunk) wal.Chunk {
+	t.Helper()
+
+	select {
+	case chunk := <-walStream:
+		return chunk
+	case <-time.After(time.Second):
+		t.Fatal("WAL chunk was not sent")
+	}
+
+	return wal.Chunk{}
 }

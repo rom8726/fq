@@ -20,7 +20,7 @@ const defaultWALDataDirectory = "/app/data/wal"
 func CreateWAL(
 	cfg *config.WALConfig,
 	logger *zerolog.Logger,
-	stream chan<- []*wal.LogData,
+	stream chan<- wal.Chunk,
 ) (*wal.WAL, error) {
 	flushingBatchSize := defaultFlushingBatchSize
 	flushingBatchTimeout := defaultFlushingBatchTimeout

@@ -248,6 +248,12 @@ func TestValidateRejectsInvalidReplicationConfig(t *testing.T) {
 				cfg.Replication.SyncInterval = -time.Second
 			},
 		},
+		{
+			name: "missing slave replica id",
+			mutate: func(cfg *Config) {
+				cfg.Replication.ReplicaID = ""
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -302,6 +308,7 @@ func validConfig() Config {
 		},
 		Replication: ReplicationConfig{
 			ReplicaType:   ReplicaTypeSlave,
+			ReplicaID:     "replica-test",
 			MasterAddress: "localhost:1946",
 			SyncInterval:  time.Second,
 		},

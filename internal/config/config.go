@@ -103,6 +103,7 @@ type DumpConfig struct {
 
 type ReplicationConfig struct {
 	ReplicaType   string        `yaml:"replica_type"`
+	ReplicaID     string        `yaml:"replica_id"`
 	MasterAddress string        `yaml:"master_address"`
 	SyncInterval  time.Duration `yaml:"sync_interval"`
 }
@@ -216,6 +217,10 @@ func validate(cfg *Config) error {
 
 	err = validation.ValidateStruct(&cfg.Replication,
 		validation.Field(&cfg.Replication.ReplicaType, validation.In("", ReplicaTypeMaster, ReplicaTypeSlave)),
+		validation.Field(&cfg.Replication.ReplicaID, validation.When(
+			cfg.Replication.ReplicaType == ReplicaTypeSlave,
+			validation.Required,
+		)),
 		validation.Field(&cfg.Replication.MasterAddress, addressIfSetRule),
 		validation.Field(&cfg.Replication.SyncInterval, nonNegativeDurationRule),
 	)

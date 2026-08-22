@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"fq/internal/database/storage/wal"
+	"fq/internal/observability"
 )
 
 const (
@@ -27,6 +29,33 @@ func (m *Master) processWAL(request WALRequest) []byte {
 }
 
 func (m *Master) synchronizeWAL(request WALRequest) WALResponse {
+	if request.ReplicaID == "" {
+		m.logger.Error().Msg("replica id is required")
+
+		return WALResponse{}
+	}
+
+	cursor := ReplicaCursor{
+		ReplicaID:       request.ReplicaID,
+		LastSegmentName: request.LastSegmentName,
+		SegmentOffset:   request.SegmentOffset,
+		LastAppliedLSN:  request.LastAppliedLSN,
+		UpdatedAt:       time.Now(),
+	}
+	if m.tracker != nil {
+		m.tracker.Ack(cursor)
+		observability.SetReplicationReplicaLastAppliedLSN(cursor.ReplicaID, cursor.LastAppliedLSN)
+		observability.SetReplicationReplicaLastAckTimestamp(cursor.ReplicaID, cursor.UpdatedAt)
+		observability.SetReplicationKnownReplicas(len(m.tracker.List()))
+	}
+	m.logger.Debug().
+		Str("replica_id", cursor.ReplicaID).
+		Str("last_segment_name", cursor.LastSegmentName).
+		Int64("segment_offset", cursor.SegmentOffset).
+		Uint64("last_applied_lsn", cursor.LastAppliedLSN).
+		Time("updated_at", cursor.UpdatedAt).
+		Msg("replica WAL ack received")
+
 	if request.LastSegmentName != "" {
 		response, ok, err := m.synchronizeWALSegment(request.LastSegmentName, request.SegmentOffset)
 		if err != nil {

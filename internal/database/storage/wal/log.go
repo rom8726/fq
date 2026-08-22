@@ -10,6 +10,11 @@ type Log struct {
 	writePromise tools.Promise[error]
 }
 
+type Chunk struct {
+	Logs    []*LogData
+	Applied chan error
+}
+
 func NewLog(lsn uint64, commandID compute.CommandID, args []string) Log {
 	logData := logDataPool.Get()
 	logData.LSN = lsn

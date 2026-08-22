@@ -22,7 +22,7 @@ func (w *WAL) TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (la
 	}
 
 	if logIdx < len(logs) {
-		w.stream <- logs[logIdx:]
+		w.stream <- Chunk{Logs: logs[logIdx:]}
 
 		return logs[len(logs)-1].LSN, nil
 	}

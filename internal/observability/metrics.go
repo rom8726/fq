@@ -43,6 +43,18 @@ var (
 		Name: "fq_replication_reconnect_attempts_total",
 		Help: "Total number of replication reconnect attempts.",
 	})
+	replicationReplicaLastAppliedLSN = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "fq_replication_replica_last_applied_lsn",
+		Help: "Last LSN acknowledged as applied by a replica.",
+	}, []string{"replica_id"})
+	replicationReplicaLastAckTimestamp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "fq_replication_replica_last_ack_timestamp",
+		Help: "Unix timestamp of the last WAL ack received from a replica.",
+	}, []string{"replica_id"})
+	replicationKnownReplicas = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "fq_replication_known_replicas",
+		Help: "Number of replicas known by the master replication tracker.",
+	})
 )
 
 func init() {
@@ -55,6 +67,9 @@ func init() {
 		replicationLagLSN,
 		replicationReconnectTotal,
 		replicationReconnectAttemptsTotal,
+		replicationReplicaLastAppliedLSN,
+		replicationReplicaLastAckTimestamp,
+		replicationKnownReplicas,
 	)
 }
 
@@ -89,4 +104,16 @@ func IncReplicationReconnectTotal() {
 
 func IncReplicationReconnectAttemptsTotal() {
 	replicationReconnectAttemptsTotal.Inc()
+}
+
+func SetReplicationReplicaLastAppliedLSN(replicaID string, lsn uint64) {
+	replicationReplicaLastAppliedLSN.WithLabelValues(replicaID).Set(float64(lsn))
+}
+
+func SetReplicationReplicaLastAckTimestamp(replicaID string, timestamp time.Time) {
+	replicationReplicaLastAckTimestamp.WithLabelValues(replicaID).Set(float64(timestamp.Unix()))
+}
+
+func SetReplicationKnownReplicas(count int) {
+	replicationKnownReplicas.Set(float64(count))
 }

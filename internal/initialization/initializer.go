@@ -26,7 +26,7 @@ type Initializer struct {
 	logger         *zerolog.Logger
 	slave          *replication.Slave
 	master         *replication.Master
-	walStream      chan []*walPkg.LogData
+	walStream      chan walPkg.Chunk
 	dumpStream     chan database.DumpChunk
 	cfg            config.Config
 	maxMessageSize int
@@ -34,7 +34,7 @@ type Initializer struct {
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
-	walStream := make(chan []*walPkg.LogData, 1)
+	walStream := make(chan walPkg.Chunk, 1)
 	dumpStream := make(chan database.DumpChunk, 1)
 
 	logger, err := CreateLogger(cfg.Logging)
