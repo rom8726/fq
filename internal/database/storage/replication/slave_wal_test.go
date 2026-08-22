@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
+	"fq/internal/database"
 	"fq/internal/database/storage/wal"
 )
 
@@ -49,6 +50,34 @@ func TestSaveWALChunkRejectsOffsetPastEnd(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(directory, segmentName), []byte("first"), 0o644))
 
 	require.Error(t, slave.saveWALChunk(segmentName, 6, []byte("second")))
+}
+
+func TestSlaveRewindsAckCursorIfLocalSegmentIsBehind(t *testing.T) {
+	logger := zerolog.Nop()
+	directory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "wal_1.log"), nil, 0o644))
+	slave := &Slave{
+		walDirectory:      directory,
+		lastSegmentName:   "wal_1.log",
+		lastSegmentOffset: 1174,
+		lastAppliedLSN:    7,
+		closeCh:           make(chan struct{}),
+		logger:            &logger,
+	}
+
+	err := slave.handleResponse(context.Background(), WALResponse{
+		Succeed:           true,
+		SegmentName:       "wal_1.log",
+		SegmentOffset:     1174,
+		NextSegmentOffset: 2048,
+		SegmentData:       []byte("chunk"),
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "smaller than requested offset")
+	require.Equal(t, "wal_1.log", slave.lastSegmentName)
+	require.Equal(t, int64(0), slave.lastSegmentOffset)
+	require.Equal(t, uint64(7), slave.lastAppliedLSN)
 }
 
 func TestSaveWALChunkRejectsUnsafeSegmentNames(t *testing.T) {
@@ -110,6 +139,28 @@ func TestSlaveSendsLastAppliedLSNInNextWALRequest(t *testing.T) {
 	require.Equal(t, "wal_1.log", client.requests[0].LastSegmentName)
 	require.Equal(t, int64(20), client.requests[0].SegmentOffset)
 	require.Equal(t, uint64(7), client.requests[0].LastAppliedLSN)
+}
+
+func TestNewSlaveInitializesCursorOffsetFromLastLocalSegment(t *testing.T) {
+	logger := zerolog.Nop()
+	directory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "wal_1.log"), []byte("0123456789"), 0o644))
+	client := newRecordingWALClient(t, WALResponse{Succeed: true})
+
+	slave, err := NewSlave(
+		client,
+		"replica-1",
+		scriptedWALReader{},
+		make(chan wal.Chunk, 1),
+		make(chan database.DumpChunk, 1),
+		directory,
+		time.Second,
+		&logger,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "wal_1.log", slave.lastSegmentName)
+	require.Equal(t, int64(10), slave.lastSegmentOffset)
 }
 
 func TestSlaveDoesNotUpdateAckCursorIfSaveWALChunkFails(t *testing.T) {

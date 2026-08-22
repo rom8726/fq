@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,21 @@ import (
 )
 
 const walDirectoryPerm = 0o750
+
+type walSegmentOffsetMismatchError struct {
+	segmentName string
+	size        int64
+	offset      int64
+}
+
+func (e *walSegmentOffsetMismatchError) Error() string {
+	return fmt.Sprintf(
+		"wal segment %s is smaller than requested offset: %d < %d",
+		e.segmentName,
+		e.size,
+		e.offset,
+	)
+}
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
 	request := NewWALRequest(s.replicaID, s.lastSegmentName, s.lastSegmentOffset, s.lastAppliedLSN)
@@ -92,6 +108,11 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 		Msg("received WAL chunk from master")
 
 	if err := s.saveWALChunk(filename, response.SegmentOffset, response.SegmentData); err != nil {
+		var offsetMismatchErr *walSegmentOffsetMismatchError
+		if errors.As(err, &offsetMismatchErr) {
+			s.rewindWALCursor(offsetMismatchErr)
+		}
+
 		return fmt.Errorf("save wal chunk: %w", err)
 	}
 
@@ -133,7 +154,11 @@ func (s *Slave) saveWALChunk(segmentName string, offset int64, segmentData []byt
 	if stat.Size() < offset {
 		_ = file.Close()
 
-		return fmt.Errorf("wal segment %s is smaller than requested offset: %d < %d", segmentName, stat.Size(), offset)
+		return &walSegmentOffsetMismatchError{
+			segmentName: segmentName,
+			size:        stat.Size(),
+			offset:      offset,
+		}
 	}
 	if stat.Size() > offset {
 		if err := file.Truncate(offset); err != nil {
@@ -171,6 +196,22 @@ func (s *Slave) saveWALChunk(segmentName string, offset int64, segmentData []byt
 	}
 
 	return nil
+}
+
+func (s *Slave) rewindWALCursor(err *walSegmentOffsetMismatchError) {
+	if err == nil {
+		return
+	}
+
+	s.lastSegmentName = err.segmentName
+	s.lastSegmentOffset = err.size
+
+	s.logger.Warn().
+		Str("segment_name", err.segmentName).
+		Int64("local_segment_size", err.size).
+		Int64("requested_offset", err.offset).
+		Uint64("last_applied_lsn", s.lastAppliedLSN).
+		Msg("local WAL segment is behind replication cursor, rewinding WAL cursor")
 }
 
 func (s *Slave) walSegmentPath(segmentName string) (string, error) {

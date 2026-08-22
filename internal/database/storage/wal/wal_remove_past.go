@@ -14,12 +14,26 @@ func (w *WAL) RemovePastSegments(ctx context.Context, lsn uint64) error {
 		return fmt.Errorf("failed to scan WAL directory: %w", err)
 	}
 
+	filenames := make([]string, 0, len(files))
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
 
-		filePath := filepath.Join(w.directory, file.Name())
+		filenames = append(filenames, file.Name())
+	}
+	sort.Strings(filenames)
+	if len(filenames) == 0 {
+		return nil
+	}
+
+	lastSegmentName := filenames[len(filenames)-1]
+	for _, filename := range filenames {
+		if filename == lastSegmentName {
+			continue
+		}
+
+		filePath := filepath.Join(w.directory, filename)
 		logs, err := w.fsReader.ReadSegment(ctx, filePath)
 		if err != nil {
 			return fmt.Errorf("failed to read segment %s: %w", filePath, err)

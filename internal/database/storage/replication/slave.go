@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -91,9 +93,9 @@ func NewSlave(
 		return nil, errors.New("logger is invalid")
 	}
 
-	segmentName, err := wal.SegmentLast(walDirectory)
+	segmentName, segmentOffset, err := lastWALSegmentCursor(walDirectory)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to find last WAL segment")
+		logger.Error().Err(err).Msg("failed to find last WAL segment cursor")
 	}
 
 	slave := &Slave{
@@ -105,6 +107,7 @@ func NewSlave(
 		syncInterval:      syncInterval,
 		walDirectory:      walDirectory,
 		lastSegmentName:   segmentName,
+		lastSegmentOffset: segmentOffset,
 		closeCh:           make(chan struct{}),
 		closeDoneCh:       make(chan struct{}),
 		dumpAppliedCh:     make(chan struct{}),
@@ -151,9 +154,9 @@ func NewSlaveWithFactory(
 		return nil, fmt.Errorf("failed to create initial client: %w", err)
 	}
 
-	segmentName, err := wal.SegmentLast(walDirectory)
+	segmentName, segmentOffset, err := lastWALSegmentCursor(walDirectory)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to find last WAL segment")
+		logger.Error().Err(err).Msg("failed to find last WAL segment cursor")
 	}
 
 	slave := &Slave{
@@ -166,6 +169,7 @@ func NewSlaveWithFactory(
 		syncInterval:      syncInterval,
 		walDirectory:      walDirectory,
 		lastSegmentName:   segmentName,
+		lastSegmentOffset: segmentOffset,
 		closeCh:           make(chan struct{}),
 		closeDoneCh:       make(chan struct{}),
 		dumpAppliedCh:     make(chan struct{}),
@@ -178,6 +182,20 @@ func NewSlaveWithFactory(
 		logger:            logger,
 	}
 	return slave, nil
+}
+
+func lastWALSegmentCursor(walDirectory string) (segmentName string, sz int64, err error) {
+	segmentName, err = wal.SegmentLast(walDirectory)
+	if err != nil || segmentName == "" {
+		return segmentName, 0, err
+	}
+
+	stat, err := os.Stat(filepath.Join(walDirectory, segmentName))
+	if err != nil {
+		return segmentName, 0, err
+	}
+
+	return segmentName, stat.Size(), nil
 }
 
 func (s *Slave) IsMaster() bool {
