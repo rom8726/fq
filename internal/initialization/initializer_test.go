@@ -69,6 +69,7 @@ func testInitializerConfig() config.Config {
 		WAL: &config.WALConfig{
 			FlushingBatchLength:  100,
 			FlushingBatchTimeout: time.Millisecond,
+			QueueCapacity:        400,
 			MaxSegmentSize:       "10MB",
 			DataDirectory:        "/tmp/fq/wal",
 			SyncCommit:           config.WALSyncCommitOn,

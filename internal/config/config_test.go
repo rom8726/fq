@@ -183,6 +183,19 @@ func TestValidateRejectsInvalidWALConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "negative queue capacity",
+			mutate: func(cfg *Config) {
+				cfg.WAL.QueueCapacity = -1
+			},
+		},
+		{
+			name: "queue capacity less than flushing batch length",
+			mutate: func(cfg *Config) {
+				cfg.WAL.FlushingBatchLength = 100
+				cfg.WAL.QueueCapacity = 99
+			},
+		},
+		{
 			name: "invalid max segment size",
 			mutate: func(cfg *Config) {
 				cfg.WAL.MaxSegmentSize = "big"
@@ -266,6 +279,7 @@ func validConfig() Config {
 		WAL: &WALConfig{
 			FlushingBatchLength:  100,
 			FlushingBatchTimeout: time.Millisecond,
+			QueueCapacity:        400,
 			MaxSegmentSize:       "10MB",
 			DataDirectory:        "/tmp/fq/wal",
 			SyncCommit:           WALSyncCommitOn,

@@ -13,6 +13,7 @@ import (
 
 const defaultFlushingBatchSize = 100
 const defaultFlushingBatchTimeout = time.Millisecond * 10
+const defaultWALQueueCapacityMultiplier = 4
 const defaultMaxSegmentSize = 10 << 20
 const defaultWALDataDirectory = "/app/data/wal"
 
@@ -29,6 +30,11 @@ func CreateWAL(
 	if cfg != nil {
 		if cfg.FlushingBatchLength != 0 {
 			flushingBatchSize = cfg.FlushingBatchLength
+		}
+
+		queueCapacity := flushingBatchSize * defaultWALQueueCapacityMultiplier
+		if cfg.QueueCapacity != 0 {
+			queueCapacity = cfg.QueueCapacity
 		}
 
 		if cfg.FlushingBatchTimeout != 0 {
@@ -57,6 +63,7 @@ func CreateWAL(
 			stream,
 			flushingBatchTimeout,
 			flushingBatchSize,
+			queueCapacity,
 			dataDirectory,
 			logger,
 		), nil

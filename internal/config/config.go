@@ -90,6 +90,7 @@ type EngineConfig struct {
 type WALConfig struct {
 	FlushingBatchLength  int           `yaml:"flushing_batch_length"`
 	FlushingBatchTimeout time.Duration `yaml:"flushing_batch_timeout"`
+	QueueCapacity        int           `yaml:"queue_capacity"`
 	MaxSegmentSize       string        `yaml:"max_segment_size"`
 	DataDirectory        string        `yaml:"data_directory"`
 	SyncCommit           string        `yaml:"sync_commit"`
@@ -237,12 +238,19 @@ func validateWALConfig(cfg *WALConfig) error {
 	err := validation.ValidateStruct(cfg,
 		validation.Field(&cfg.FlushingBatchLength, validation.Required, validation.Min(1)),
 		validation.Field(&cfg.FlushingBatchTimeout, validation.Required, positiveDurationRule),
+		validation.Field(&cfg.QueueCapacity, validation.Min(0)),
 		validation.Field(&cfg.MaxSegmentSize, validation.Required, sizeRule),
 		validation.Field(&cfg.DataDirectory, validation.Required),
 		validation.Field(&cfg.SyncCommit, validation.Required, validation.In(WALSyncCommitOn, WALSyncCommitOff)),
 	)
 	if err != nil {
 		return fmt.Errorf("validate wal section: %w", err)
+	}
+
+	if cfg.QueueCapacity != 0 && cfg.QueueCapacity < cfg.FlushingBatchLength {
+		return fmt.Errorf(
+			"validate wal section: queue_capacity must be greater than or equal to flushing_batch_length",
+		)
 	}
 
 	return nil

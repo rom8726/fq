@@ -10,7 +10,8 @@ observability:
 wal:
   sync_commit: on
   flushing_batch_length: 4096
-  flushing_batch_timeout: 20ms
+  flushing_batch_timeout: 1000ms
+  queue_capacity: 16384
   max_segment_size: 16MB
   data_directory: ./app/data/wal/
 engine:

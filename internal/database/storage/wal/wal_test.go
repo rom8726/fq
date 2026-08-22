@@ -16,7 +16,7 @@ import (
 func TestWALFlushesPendingBatchOnShutdown(t *testing.T) {
 	writer := &recordingFSWriter{}
 	logger := zerolog.Nop()
-	wal := NewWAL(writer, nil, nil, time.Hour, 10, "", &logger)
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
 	wal.Start()
 
 	future := wal.Incr(context.Background(), testTxContext(1), testBatchKey("key"))
@@ -32,7 +32,7 @@ func TestWALShutdownClosesWriterAfterFlush(t *testing.T) {
 		closed: make(chan struct{}),
 	}
 	logger := zerolog.Nop()
-	wal := NewWAL(writer, nil, nil, time.Hour, 10, "", &logger)
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
 	wal.Start()
 
 	future := wal.Incr(context.Background(), testTxContext(1), testBatchKey("key"))
@@ -47,7 +47,7 @@ func TestWALShutdownClosesWriterAfterFlush(t *testing.T) {
 func TestWALRejectsPushAfterShutdown(t *testing.T) {
 	writer := &recordingFSWriter{}
 	logger := zerolog.Nop()
-	wal := NewWAL(writer, nil, nil, time.Hour, 10, "", &logger)
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
 	wal.Start()
 	wal.Shutdown()
 
@@ -60,7 +60,7 @@ func TestWALRejectsPushAfterShutdown(t *testing.T) {
 func TestWALRejectsPushWithCanceledContext(t *testing.T) {
 	writer := &recordingFSWriter{}
 	logger := zerolog.Nop()
-	wal := NewWAL(writer, nil, nil, time.Hour, 10, "", &logger)
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
 	wal.Start()
 	defer wal.Shutdown()
 
@@ -79,7 +79,7 @@ func TestWALPushRespectsContextWhenBackpressured(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	logger := zerolog.Nop()
-	wal := NewWAL(writer, nil, nil, time.Hour, 1, "", &logger)
+	wal := NewWAL(writer, nil, nil, time.Hour, 1, 1, "", &logger)
 	wal.Start()
 
 	first := wal.Incr(context.Background(), testTxContext(1), testBatchKey("first"))
@@ -100,13 +100,42 @@ func TestWALPushRespectsContextWhenBackpressured(t *testing.T) {
 	requireFutureError(t, second, nil)
 }
 
+func TestWALQueueCapacityCanExceedBatchSize(t *testing.T) {
+	writer := &blockingFSWriter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	logger := zerolog.Nop()
+	wal := NewWAL(writer, nil, nil, time.Hour, 1, 2, "", &logger)
+	wal.Start()
+
+	first := wal.Incr(context.Background(), testTxContext(1), testBatchKey("first"))
+	requireClosed(t, writer.started)
+
+	second := wal.Incr(context.Background(), testTxContext(2), testBatchKey("second"))
+	third := wal.Incr(context.Background(), testTxContext(3), testBatchKey("third"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	fourth := wal.Incr(ctx, testTxContext(4), testBatchKey("fourth"))
+	requireFutureError(t, fourth, context.DeadlineExceeded)
+
+	close(writer.release)
+	defer wal.Shutdown()
+
+	requireFutureError(t, first, nil)
+	requireFutureError(t, second, nil)
+	requireFutureError(t, third, nil)
+}
+
 func TestWALShutdownUnblocksBackpressuredPush(t *testing.T) {
 	writer := &blockingFSWriter{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 	}
 	logger := zerolog.Nop()
-	wal := NewWAL(writer, nil, nil, time.Hour, 1, "", &logger)
+	wal := NewWAL(writer, nil, nil, time.Hour, 1, 1, "", &logger)
 	wal.Start()
 
 	first := wal.Incr(context.Background(), testTxContext(1), testBatchKey("first"))

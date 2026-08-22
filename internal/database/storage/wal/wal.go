@@ -28,11 +28,12 @@ type fsReader interface {
 var errWALClosed = errors.New("wal is closed")
 
 type WAL struct {
-	fsWriter     fsWriter
-	fsReader     fsReader
-	flushTimeout time.Duration
-	maxBatchSize int
-	directory    string
+	fsWriter      fsWriter
+	fsReader      fsReader
+	flushTimeout  time.Duration
+	maxBatchSize  int
+	queueCapacity int
+	directory     string
 
 	stream chan<- []*LogData
 
@@ -52,24 +53,29 @@ func NewWAL(
 	stream chan<- []*LogData,
 	flushTimeout time.Duration,
 	maxBatchSize int,
+	queueCapacity int,
 	directory string,
 	logger *zerolog.Logger,
 ) *WAL {
 	if maxBatchSize <= 0 {
 		maxBatchSize = 1
 	}
+	if queueCapacity <= 0 {
+		queueCapacity = maxBatchSize
+	}
 
 	return &WAL{
-		fsWriter:     fsWriter,
-		fsReader:     fsReader,
-		flushTimeout: flushTimeout,
-		maxBatchSize: maxBatchSize,
-		directory:    directory,
-		stream:       stream,
-		records:      make(chan Log, maxBatchSize),
-		closeCh:      make(chan struct{}),
-		closeDoneCh:  make(chan struct{}),
-		logger:       logger,
+		fsWriter:      fsWriter,
+		fsReader:      fsReader,
+		flushTimeout:  flushTimeout,
+		maxBatchSize:  maxBatchSize,
+		queueCapacity: queueCapacity,
+		directory:     directory,
+		stream:        stream,
+		records:       make(chan Log, queueCapacity),
+		closeCh:       make(chan struct{}),
+		closeDoneCh:   make(chan struct{}),
+		logger:        logger,
 	}
 }
 

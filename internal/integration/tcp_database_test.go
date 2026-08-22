@@ -131,6 +131,7 @@ func newTestWAL(directory string, stream chan<- []*wal.LogData, logger *zerolog.
 		stream,
 		time.Millisecond,
 		16,
+		64,
 		directory,
 		logger,
 	)
