@@ -24,8 +24,9 @@ type FSWriter struct {
 	segment   *os.File
 	directory string
 
-	segmentSize    int
-	maxSegmentSize int
+	segmentSize       int
+	syncedSegmentSize int
+	maxSegmentSize    int
 
 	segmentTimestamp int64
 	segmentSequence  int
@@ -100,7 +101,7 @@ func (w *FSWriter) writeBatch(batch []Log) error {
 		return err
 	}
 
-	if err := w.segment.Sync(); err != nil {
+	if err := w.syncSegment(); err != nil {
 		w.logger.Error().Err(err).Msg("failed to sync segment file")
 
 		return err
@@ -178,6 +179,7 @@ func (w *FSWriter) rotateSegment() error {
 		if err == nil {
 			w.segment = segment
 			w.segmentSize = 0
+			w.syncedSegmentSize = 0
 
 			return nil
 		}
@@ -198,14 +200,15 @@ func (w *FSWriter) closeSegment() error {
 		return nil
 	}
 
-	segment := w.segment
-	w.segment = nil
-	w.segmentSize = 0
-
-	syncErr := segment.Sync()
+	syncErr := w.syncSegment()
 	if syncErr != nil {
 		w.logger.Error().Err(syncErr).Msg("failed to sync WAL segment before close")
 	}
+
+	segment := w.segment
+	w.segment = nil
+	w.segmentSize = 0
+	w.syncedSegmentSize = 0
 
 	closeErr := segment.Close()
 	if closeErr != nil {
@@ -213,6 +216,20 @@ func (w *FSWriter) closeSegment() error {
 	}
 
 	return errors.Join(syncErr, closeErr)
+}
+
+func (w *FSWriter) syncSegment() error {
+	if w.segment == nil || w.syncedSegmentSize == w.segmentSize {
+		return nil
+	}
+
+	if err := w.segment.Sync(); err != nil {
+		return err
+	}
+
+	w.syncedSegmentSize = w.segmentSize
+
+	return nil
 }
 
 func (w *FSWriter) nextSegmentName() string {

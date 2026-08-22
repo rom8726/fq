@@ -209,6 +209,24 @@ func TestWALSegmentNamesRemainUniqueWithinSameMillisecond(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestWALSegmentSyncIsSkippedWhenAlreadySynced(t *testing.T) {
+	logger := zerolog.Nop()
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+	defer func() {
+		require.NoError(t, fsWriter.Close())
+	}()
+
+	require.NoError(t, fsWriter.rotateSegment())
+	require.NoError(t, fsWriter.writeLogs([]byte("dirty data")))
+
+	require.NoError(t, fsWriter.syncSegment())
+	require.Equal(t, fsWriter.segmentSize, fsWriter.syncedSegmentSize)
+
+	syncedSize := fsWriter.syncedSegmentSize
+	require.NoError(t, fsWriter.syncSegment())
+	require.Equal(t, syncedSize, fsWriter.syncedSegmentSize)
+}
+
 func TestWALSegmentCloseIsIdempotentAndRejectsWrites(t *testing.T) {
 	logger := zerolog.Nop()
 	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
