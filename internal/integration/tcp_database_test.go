@@ -16,6 +16,7 @@ import (
 	"fq/internal/database"
 	"fq/internal/database/compute"
 	"fq/internal/database/storage"
+	"fq/internal/database/storage/dumper"
 	inmemory "fq/internal/database/storage/engine/in-memory"
 	"fq/internal/database/storage/wal"
 	"fq/internal/network"
@@ -67,6 +68,23 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	second.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 }
 
+func TestTCPDatabaseRecoversSlidingWindowFromDumpAfterRestart(t *testing.T) {
+	walDir := t.TempDir()
+	dumpDir := t.TempDir()
+
+	first := startTestDatabaseWithDump(t, walDir, dumpDir, false)
+	for i := 1; i <= 6; i++ {
+		first.RequireRateLimit("RLIMIT SW key_sw 10 600", true, database.ValueType(i), database.ValueType(10-i), 600)
+	}
+	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(6)))
+	first.Close()
+
+	second := startTestDatabaseWithDump(t, walDir, dumpDir, true)
+	defer second.Close()
+
+	second.RequireRateLimit("RLIMIT SW key_sw 10 600", true, 7, 3, 600)
+}
+
 func TestTCPDatabaseRecoversFromTruncatedWALTailAfterRestart(t *testing.T) {
 	walDir := t.TempDir()
 
@@ -98,11 +116,16 @@ type testDatabaseApp struct {
 	t       *testing.T
 	client  *network.TCPClient
 	storage *storage.Storage
+	dumper  *dumper.Dumper
 	cancel  context.CancelFunc
 	done    chan error
 }
 
 func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
+	return startTestDatabaseWithDump(t, walDir, "", false)
+}
+
+func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump bool) *testDatabaseApp {
 	t.Helper()
 
 	logger := zerolog.Nop()
@@ -113,11 +136,22 @@ func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
 	require.NoError(t, err)
 
 	walStore := newTestWAL(walDir, walStream, &logger)
-	strg, err := storage.NewStorage(engine, walStore, nil, nil, &logger, time.Hour, time.Hour, true)
+	var dumpStore *dumper.Dumper
+	var dumpStorage storage.Dumper
+	if dumpDir != "" {
+		dumpStore = dumper.New(engine, walStore, dumpDir)
+		dumpStorage = dumpStore
+	}
+	strg, err := storage.NewStorage(engine, walStore, dumpStorage, nil, &logger, time.Hour, time.Hour, true)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	require.NoError(t, strg.LoadWAL(ctx, database.NoTx))
+	lastTx := database.NoTx
+	if restoreDump && dumpStore != nil {
+		lastTx, err = dumpStore.Restore(ctx)
+		require.NoError(t, err)
+	}
+	require.NoError(t, strg.LoadWAL(ctx, lastTx))
 	strg.Start(ctx)
 
 	comp := compute.NewCompute(compute.NewParser(&logger), compute.NewAnalyzer(&logger), &logger)
@@ -139,6 +173,7 @@ func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
 		t:       t,
 		client:  client,
 		storage: strg,
+		dumper:  dumpStore,
 		cancel:  cancel,
 		done:    done,
 	}
