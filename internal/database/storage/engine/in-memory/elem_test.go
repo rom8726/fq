@@ -213,6 +213,93 @@ func TestSlidingWindowElem_DumpRespectsDumpTxInsideBucket(t *testing.T) {
 	require.Equal(t, now, elem.TxAt)
 }
 
+func TestTokenBucketElem_RLimit(t *testing.T) {
+	e := NewTokenBucketElem(10)
+	beforeApplyCalls := 0
+	beforeApply := func() error {
+		beforeApplyCalls++
+
+		return nil
+	}
+
+	first, err := e.RLimit(database.TxContext{Tx: 1, CurrTime: 100}, 3, 1, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    1,
+		Remaining:  2,
+		ResetAfter: 0,
+	}, first)
+
+	second, err := e.RLimit(database.TxContext{Tx: 2, CurrTime: 100}, 3, 1, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    2,
+		Remaining:  1,
+		ResetAfter: 0,
+	}, second)
+
+	third, err := e.RLimit(database.TxContext{Tx: 3, CurrTime: 100}, 3, 1, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    3,
+		Remaining:  0,
+		ResetAfter: 10,
+	}, third)
+
+	denied, err := e.RLimit(database.TxContext{Tx: 4, CurrTime: 105}, 3, 1, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    false,
+		Current:    3,
+		Remaining:  0,
+		ResetAfter: 5,
+	}, denied)
+
+	refilled, err := e.RLimit(database.TxContext{Tx: 5, CurrTime: 110}, 3, 1, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    3,
+		Remaining:  0,
+		ResetAfter: 10,
+	}, refilled)
+	require.Equal(t, 4, beforeApplyCalls)
+}
+
+func TestTokenBucketElem_DumpAndRestore(t *testing.T) {
+	e := NewTokenBucketElem(10)
+	_, err := e.RLimit(database.TxContext{Tx: 1, CurrTime: 100}, 3, 1, nil)
+	require.NoError(t, err)
+	_, err = e.RLimit(database.TxContext{Tx: 2, CurrTime: 100}, 3, 1, nil)
+	require.NoError(t, err)
+
+	value, txAt, tx := e.DumpValue(2)
+	require.Equal(t, database.ValueType(1), value)
+	require.Equal(t, database.TxTime(100), txAt)
+	require.Equal(t, database.Tx(2), tx)
+
+	restored := NewTokenBucketElem(10)
+	restored.Restore(database.DumpElem{
+		Kind:      database.DumpElemKindTokenBucket,
+		Value:     value,
+		TxAt:      txAt,
+		Tx:        tx,
+		BatchSize: 10,
+	})
+
+	result, err := restored.RLimit(database.TxContext{Tx: 3, CurrTime: 100}, 3, 1, nil)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    3,
+		Remaining:  0,
+		ResetAfter: 10,
+	}, result)
+}
+
 func TestElem_DumpValue(t *testing.T) {
 	now := database.TxTime(time.Now().Unix())
 

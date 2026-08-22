@@ -7,6 +7,7 @@ const (
 
 	DumpElemKindCounter             uint32 = 0
 	DumpElemKindSlidingWindowBucket uint32 = 1
+	DumpElemKindTokenBucket         uint32 = 2
 )
 
 type ValueType int32

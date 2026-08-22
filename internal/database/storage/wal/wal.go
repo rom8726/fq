@@ -246,6 +246,24 @@ func (w *WAL) RLimitSlidingWindow(
 	return w.push(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
 }
 
+func (w *WAL) RLimitTokenBucket(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+	capacity database.ValueType,
+	refillAmount database.ValueType,
+) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.RLimitTokenBucketCommandID, []string{
+		key.Key,
+		strconv.FormatInt(int64(capacity), 10),
+		strconv.FormatInt(int64(refillAmount), 10),
+		key.BatchSizeStr,
+		currTimeStr,
+	})
+}
+
 func (w *WAL) push(
 	ctx context.Context,
 	tx database.Tx,

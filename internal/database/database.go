@@ -45,6 +45,11 @@ type storageLayer interface {
 	Watch(ctx context.Context, key BatchKey) (ValueType, error)
 	RLimitFixedWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 	RLimitSlidingWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
+	RLimitTokenBucket(
+		ctx context.Context,
+		key BatchKey,
+		capacity, refillAmount ValueType,
+	) (RateLimitResult, error)
 }
 
 type Database struct {
@@ -189,11 +194,15 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) st
 func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) string {
 	arguments := query.Arguments()
 	algorithm := strings.ToUpper(arguments[0])
-	if algorithm != "FW" && algorithm != "SW" {
+	if algorithm != "FW" && algorithm != "SW" && algorithm != "TB" {
 		return makeErrorMsg(errInvalidRLimitAlgo)
 	}
 
-	key, err := makeBatchKey(arguments[1], arguments[3])
+	windowArgIndex := 3
+	if algorithm == "TB" {
+		windowArgIndex = 4
+	}
+	key, err := makeBatchKey(arguments[1], arguments[windowArgIndex])
 	if err != nil {
 		return makeErrorMsg(err)
 	}
@@ -209,6 +218,13 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) s
 		result, err = d.storageLayer.RLimitFixedWindow(ctx, key, limit)
 	case "SW":
 		result, err = d.storageLayer.RLimitSlidingWindow(ctx, key, limit)
+	case "TB":
+		refillAmount, parseErr := makeLimit(arguments[3])
+		if parseErr != nil {
+			return makeErrorMsg(parseErr)
+		}
+
+		result, err = d.storageLayer.RLimitTokenBucket(ctx, key, limit, refillAmount)
 	}
 	if err != nil {
 		return makeErrorMsg(err)

@@ -17,6 +17,7 @@ Use fq when you need:
 
 - Atomic fixed-window rate limiter
 - Atomic sliding-window rate limiter
+- Atomic token-bucket rate limiter
 - Counter commands for frequency capping
 - In-memory storage engine
 - WAL and periodic dumps for recovery
@@ -60,15 +61,29 @@ RLIMIT SW user_42 100 60
 
 This allows at most `100` requests for `user_42` in the last 60 seconds.
 
-Both commands return:
+#### Token Bucket
+
+```text
+RLIMIT TB <key> <capacity> <refill_amount> <refill_window>
+```
+
+Example:
+
+```text
+RLIMIT TB user_42 100 10 60
+```
+
+This starts `user_42` with a bucket of `100` tokens. Each allowed request consumes one token. Every 60 seconds the bucket receives up to `10` tokens, capped at `100`.
+
+All rate-limit commands return:
 
 ```text
 ok|<allowed>;<current>;<remaining>;<reset_after>
 ```
 
 - `allowed`: `1` when the request is allowed, `0` when it is rejected
-- `current`: current counter value for the limiter
-- `remaining`: requests left before the limit is reached
+- `current`: current counter value for `FW`/`SW`; used bucket capacity for `TB`
+- `remaining`: requests left before the limit is reached; tokens left for `TB`
 - `reset_after`: seconds until capacity is available again
 
 Example with limit `3`:
@@ -146,6 +161,13 @@ Try a sliding-window limiter:
 1;1;2;60
 ```
 
+Try a token-bucket limiter:
+
+```text
+[fq]> RLIMIT TB user_42 10 1 60
+1;1;9;0
+```
+
 ## Benchmarking
 
 Run a live latency/RPS benchmark against a running server:
@@ -170,6 +192,12 @@ Benchmark a rate-limit command:
 
 ```shell
 go run ./cmd/bench -address :1945 -connections 200 -duration 60s -query "RLIMIT FW {key} 100 {batch}"
+```
+
+Benchmark a token-bucket command:
+
+```shell
+go run ./cmd/bench -address :1945 -connections 200 -duration 60s -query "RLIMIT TB {key} 100 10 {batch}"
 ```
 
 The benchmark screen updates once per second and shows current RPS, errors, latency percentiles, and terminal history charts. Use `-key_range` to control how many distinct keys are generated; smaller ranges create hotter keys and larger ranges spread load across more keys.
@@ -289,7 +317,7 @@ fq is intentionally small:
 5. Periodic dumps compact in-memory state into recoverable snapshots.
 6. Replicas sync from dump and then apply WAL chunks.
 
-Rate-limit commands are atomic per key/window. For `RLIMIT FW`, allowed requests are stored as counter increments. For `RLIMIT SW`, allowed requests are stored as sliding-window events.
+Rate-limit commands are atomic per key/window. For `RLIMIT FW`, allowed requests are stored as counter increments. For `RLIMIT SW`, allowed requests are stored as sliding-window events. For `RLIMIT TB`, allowed requests are stored as token-bucket consume events with their capacity and refill parameters.
 
 ## Development
 

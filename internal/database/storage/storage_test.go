@@ -62,6 +62,21 @@ func (e *txRecordingEngine) RLimitSlidingWindow(
 	return database.RateLimitResult{Allowed: true, Current: 1}, nil
 }
 
+func (e *txRecordingEngine) RLimitTokenBucket(
+	txCtx database.TxContext,
+	_ database.BatchKey,
+	_ database.ValueType,
+	_ database.ValueType,
+	beforeApply func() error,
+) (database.RateLimitResult, error) {
+	e.lastTx = txCtx.Tx
+	if err := beforeApply(); err != nil {
+		return database.RateLimitResult{}, err
+	}
+
+	return database.RateLimitResult{Allowed: true, Current: 1}, nil
+}
+
 func (e *txRecordingEngine) Get(database.BatchKey) (database.ValueType, bool) {
 	return 0, false
 }

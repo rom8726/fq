@@ -38,7 +38,20 @@ type hashTable interface {
 		limit database.ValueType,
 		beforeApply func() error,
 	) (database.RateLimitResult, error)
+	RLimitTokenBucket(
+		txCtx database.TxContext,
+		key database.BatchKey,
+		capacity database.ValueType,
+		refillAmount database.ValueType,
+		beforeApply func() error,
+	) (database.RateLimitResult, error)
 	AddSlidingWindowEvent(txCtx database.TxContext, key database.BatchKey)
+	AddTokenBucketEvent(
+		txCtx database.TxContext,
+		key database.BatchKey,
+		capacity database.ValueType,
+		refillAmount database.ValueType,
+	)
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
 	Clean(ctx context.Context)
@@ -189,6 +202,34 @@ func (e *Engine) RLimitSlidingWindow(
 	return result, err
 }
 
+// RLimitTokenBucket ...
+//
+//nolint:gocritic // ok
+func (e *Engine) RLimitTokenBucket(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	capacity database.ValueType,
+	refillAmount database.ValueType,
+	beforeApply func() error,
+) (database.RateLimitResult, error) {
+	idx := e.partitionIdx(key.Key)
+	partition := e.partitions[idx]
+	result, err := partition.RLimitTokenBucket(txCtx, key, capacity, refillAmount, beforeApply)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Any("tx_ctx", txCtx).
+			Any("key", key).
+			Any("capacity", capacity).
+			Any("refill_amount", refillAmount).
+			Any("result", result).
+			Err(err).
+			Msg("success rlimit token bucket query")
+	}
+
+	return result, err
+}
+
 func (e *Engine) Get(key database.BatchKey) (database.ValueType, bool) {
 	idx := e.partitionIdx(key.Key)
 	partition := e.partitions[idx]
@@ -256,6 +297,14 @@ func (e *Engine) Dump(ctx context.Context, dumpTx database.Tx) (resC <-chan data
 }
 
 func (e *Engine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
+	if elem.Kind == database.DumpElemKindTokenBucket {
+		idx := e.partitionIdx(elem.Key)
+		partition := e.partitions[idx]
+		partition.RestoreDumpElem(elem)
+
+		return nil
+	}
+
 	if elem.Kind == database.DumpElemKindSlidingWindowBucket &&
 		isSlidingWindowEventExpired(elem.TxAt, database.TxTime(elem.BatchSize)) {
 		return nil
@@ -294,6 +343,8 @@ func (e *Engine) applyLogs(logs []*wal.LogData) {
 			e.applyMDelFromLog(log)
 		case compute.RLimitSlidingWindowCommandID:
 			e.applySlidingWindowEventFromLog(log)
+		case compute.RLimitTokenBucketCommandID:
+			e.applyTokenBucketEventFromLog(log)
 		}
 	}
 }
@@ -334,6 +385,48 @@ func (e *Engine) applySlidingWindowEventFromLog(log *wal.LogData) {
 	idx := e.partitionIdx(batchKey.Key)
 	partition := e.partitions[idx]
 	partition.AddSlidingWindowEvent(txCtx, batchKey)
+}
+
+func (e *Engine) applyTokenBucketEventFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 5 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Str("command", "RLIMIT_TB").
+			Msg("invalid WAL log: insufficient arguments")
+		return
+	}
+
+	capacity, err := strconv.ParseUint(log.Arguments[1], 10, 31)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_TB").Msg("failed to parse capacity")
+		return
+	}
+
+	refillAmount, err := strconv.ParseUint(log.Arguments[2], 10, 31)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_TB").Msg("failed to parse refill amount")
+		return
+	}
+	if capacity == 0 || refillAmount == 0 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Uint64("capacity", capacity).
+			Uint64("refill_amount", refillAmount).
+			Str("command", "RLIMIT_TB").
+			Msg("invalid WAL log: capacity and refill amount must be positive")
+		return
+	}
+
+	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[3], log.Arguments[4])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_TB").Msg("failed to parse WAL log")
+		return
+	}
+
+	idx := e.partitionIdx(batchKey.Key)
+	partition := e.partitions[idx]
+	partition.AddTokenBucketEvent(txCtx, batchKey, database.ValueType(capacity), database.ValueType(refillAmount))
 }
 
 func (e *Engine) applySingleKeyLog(

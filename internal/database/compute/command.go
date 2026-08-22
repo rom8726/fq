@@ -12,6 +12,7 @@ const (
 	WatchCommandID
 	RLimitCommandID
 	RLimitSlidingWindowCommandID
+	RLimitTokenBucketCommandID
 )
 
 var (

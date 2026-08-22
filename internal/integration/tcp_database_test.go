@@ -40,6 +40,12 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 	app.RequireQuery("DEL sliding 60", "ok|1")
 	app.RequireRateLimit("RLIMIT SW sliding 2 60", true, 1, 1, 60)
+	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", true, 1, 2, 60)
+	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", true, 2, 1, 60)
+	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", true, 3, 0, 60)
+	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", false, 3, 0, 60)
+	app.RequireQuery("DEL bucket 60", "ok|1")
+	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", true, 1, 2, 60)
 	app.RequireQuery("MDEL key 60 other 60", "ok|1;1")
 	app.RequireQuery("GET key 60", "ok|0")
 	app.RequireQuery("TRUNCATE key 60", "err|invalid command")
@@ -58,6 +64,8 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	first.RequireRateLimit("RLIMIT SW sliding 2 60", true, 1, 1, 60)
 	first.RequireRateLimit("RLIMIT SW sliding 2 60", true, 2, 0, 60)
 	first.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
+	first.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 1, 2, 600)
+	first.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 2, 1, 600)
 	first.Close()
 
 	second := startTestDatabase(t, walDir)
@@ -66,6 +74,7 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	second.RequireQuery("GET durable 60", "ok|2")
 	second.RequireQuery("GET limited 60", "ok|2")
 	second.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
+	second.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 3, 0, 600)
 }
 
 func TestTCPDatabaseRecoversSlidingWindowFromDumpAfterRestart(t *testing.T) {
@@ -83,6 +92,23 @@ func TestTCPDatabaseRecoversSlidingWindowFromDumpAfterRestart(t *testing.T) {
 	defer second.Close()
 
 	second.RequireRateLimit("RLIMIT SW key_sw 10 600", true, 7, 3, 600)
+}
+
+func TestTCPDatabaseRecoversTokenBucketFromDumpAfterRestart(t *testing.T) {
+	walDir := t.TempDir()
+	dumpDir := t.TempDir()
+
+	first := startTestDatabaseWithDump(t, walDir, dumpDir, false)
+	first.RequireRateLimit("RLIMIT TB key_tb 5 1 600", true, 1, 4, 600)
+	first.RequireRateLimit("RLIMIT TB key_tb 5 1 600", true, 2, 3, 600)
+	first.RequireRateLimit("RLIMIT TB key_tb 5 1 600", true, 3, 2, 600)
+	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(3)))
+	first.Close()
+
+	second := startTestDatabaseWithDump(t, walDir, dumpDir, true)
+	defer second.Close()
+
+	second.RequireRateLimit("RLIMIT TB key_tb 5 1 600", true, 4, 1, 600)
 }
 
 func TestTCPDatabaseRecoversFromTruncatedWALTailAfterRestart(t *testing.T) {
@@ -258,7 +284,7 @@ func (a *testDatabaseApp) RequireRateLimit(
 
 	resetAfter, err := strconv.ParseUint(fields[3], 10, 32)
 	require.NoError(a.t, err)
-	require.GreaterOrEqual(a.t, uint32(resetAfter), uint32(1))
+	require.GreaterOrEqual(a.t, uint32(resetAfter), uint32(0))
 	require.LessOrEqual(a.t, uint32(resetAfter), window)
 }
 

@@ -124,6 +124,47 @@ func TestEngineRLimitSlidingWindowDoesNotExceedLimitConcurrently(t *testing.T) {
 	require.Equal(t, int32(limit), allowedCount.Load())
 }
 
+func TestEngineRLimitTokenBucketDoesNotExceedCapacityConcurrently(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngine(HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+
+	key := database.BatchKey{
+		BatchSize:    60,
+		BatchSizeStr: "60",
+		Key:          "limited",
+	}
+	now := database.TxTime(time.Now().Unix())
+
+	const capacity = database.ValueType(10)
+	const refillAmount = database.ValueType(1)
+	const workers = 100
+
+	var allowedCount atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			result, err := engine.RLimitTokenBucket(
+				database.TxContext{Tx: database.Tx(i + 1), CurrTime: now},
+				key,
+				capacity,
+				refillAmount,
+				nil,
+			)
+			require.NoError(t, err)
+			if result.Allowed {
+				allowedCount.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	require.Equal(t, int32(capacity), allowedCount.Load())
+}
+
 func requireDumpAck(t *testing.T, applied <-chan error) error {
 	t.Helper()
 

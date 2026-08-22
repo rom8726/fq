@@ -26,6 +26,13 @@ type Engine interface {
 		database.ValueType,
 		func() error,
 	) (database.RateLimitResult, error)
+	RLimitTokenBucket(
+		database.TxContext,
+		database.BatchKey,
+		database.ValueType,
+		database.ValueType,
+		func() error,
+	) (database.RateLimitResult, error)
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
 	MDel(database.TxContext, []database.BatchKey) []bool
@@ -41,6 +48,13 @@ type WAL interface {
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	MDel(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) tools.FutureError
 	RLimitSlidingWindow(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
+	RLimitTokenBucket(
+		ctx context.Context,
+		txCtx database.TxContext,
+		key database.BatchKey,
+		capacity database.ValueType,
+		refillAmount database.ValueType,
+	) tools.FutureError
 	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
@@ -219,6 +233,28 @@ func (s *Storage) RLimitSlidingWindow(
 		}
 
 		future := s.wal.RLimitSlidingWindow(ctx, txCtx, key)
+		if s.syncCommit {
+			return future.Get()
+		}
+
+		return nil
+	})
+}
+
+func (s *Storage) RLimitTokenBucket(
+	ctx context.Context,
+	key database.BatchKey,
+	capacity database.ValueType,
+	refillAmount database.ValueType,
+) (database.RateLimitResult, error) {
+	txCtx := s.makeTxContext()
+
+	return s.engine.RLimitTokenBucket(txCtx, key, capacity, refillAmount, func() error {
+		if s.wal == nil {
+			return nil
+		}
+
+		future := s.wal.RLimitTokenBucket(ctx, txCtx, key, capacity, refillAmount)
 		if s.syncCommit {
 			return future.Get()
 		}

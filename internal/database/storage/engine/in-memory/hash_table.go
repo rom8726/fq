@@ -21,12 +21,14 @@ type HashTable struct {
 	mu sync.RWMutex
 	m  map[hashTableKey]*FqElem
 	sw map[hashTableKey]*SlidingWindowElem
+	tb map[hashTableKey]*TokenBucketElem
 }
 
 func NewHashTable() *HashTable {
 	return &HashTable{
 		m:  make(map[hashTableKey]*FqElem),
 		sw: make(map[hashTableKey]*SlidingWindowElem),
+		tb: make(map[hashTableKey]*TokenBucketElem),
 	}
 }
 
@@ -61,11 +63,36 @@ func (s *HashTable) RLimitSlidingWindow(
 	return v.RLimit(txCtx, limit, beforeApply)
 }
 
+func (s *HashTable) RLimitTokenBucket(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	capacity database.ValueType,
+	refillAmount database.ValueType,
+	beforeApply func() error,
+) (database.RateLimitResult, error) {
+	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
+	v := s.getOrInitTokenBucketElem(htKey)
+
+	return v.RLimit(txCtx, capacity, refillAmount, beforeApply)
+}
+
 func (s *HashTable) AddSlidingWindowEvent(txCtx database.TxContext, key database.BatchKey) {
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
 	v := s.getOrInitSlidingWindowElem(htKey)
 
 	v.AddEvent(txCtx)
+}
+
+func (s *HashTable) AddTokenBucketEvent(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	capacity database.ValueType,
+	refillAmount database.ValueType,
+) {
+	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
+	v := s.getOrInitTokenBucketElem(htKey)
+
+	v.AddEvent(txCtx, capacity, refillAmount)
 }
 
 func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {
@@ -94,9 +121,13 @@ func (s *HashTable) Del(key database.BatchKey) bool {
 	if slidingWindowFound {
 		delete(s.sw, htKey)
 	}
+	_, tokenBucketFound := s.tb[htKey]
+	if tokenBucketFound {
+		delete(s.tb, htKey)
+	}
 	s.mu.Unlock()
 
-	return counterFound || slidingWindowFound
+	return counterFound || slidingWindowFound || tokenBucketFound
 }
 
 func (s *HashTable) Clean(ctx context.Context) {
@@ -156,6 +187,16 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 			elem *SlidingWindowElem
 		}{k, v})
 	}
+	tbItems := make([]struct {
+		key  hashTableKey
+		elem *TokenBucketElem
+	}, 0, len(s.tb))
+	for k, v := range s.tb {
+		tbItems = append(tbItems, struct {
+			key  hashTableKey
+			elem *TokenBucketElem
+		}{k, v})
+	}
 	s.mu.RUnlock()
 
 	for _, item := range items {
@@ -183,6 +224,28 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 	for _, item := range swItems {
 		item.elem.Dump(ctx.Done(), item.key, dumpTx, ch)
 	}
+
+	for _, item := range tbItems {
+		value, txAt, tx := item.elem.DumpValue(dumpTx)
+		if value == database.ErrorValue {
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		ch <- database.DumpElem{
+			Kind:      database.DumpElemKindTokenBucket,
+			Key:       item.key.key,
+			BatchSize: item.key.batchSize,
+			Value:     value,
+			TxAt:      txAt,
+			Tx:        tx,
+		}
+	}
 }
 
 func (s *HashTable) RestoreDumpElem(elem database.DumpElem) {
@@ -190,6 +253,14 @@ func (s *HashTable) RestoreDumpElem(elem database.DumpElem) {
 		key := hashTableKey{key: elem.Key, batchSize: elem.BatchSize}
 		swElem := s.getOrInitSlidingWindowElem(key)
 		swElem.RestoreBucket(elem)
+
+		return
+	}
+
+	if elem.Kind == database.DumpElemKindTokenBucket {
+		key := hashTableKey{key: elem.Key, batchSize: elem.BatchSize}
+		tbElem := s.getOrInitTokenBucketElem(key)
+		tbElem.Restore(elem)
 
 		return
 	}
@@ -243,6 +314,26 @@ func (s *HashTable) getOrInitSlidingWindowElem(key hashTableKey) *SlidingWindowE
 	if !ok {
 		v = NewSlidingWindowElem(key.batchSize)
 		s.sw[key] = v
+	}
+	s.mu.Unlock()
+
+	return v
+}
+
+func (s *HashTable) getOrInitTokenBucketElem(key hashTableKey) *TokenBucketElem {
+	s.mu.RLock()
+	v, ok := s.tb[key]
+	s.mu.RUnlock()
+
+	if ok {
+		return v
+	}
+
+	s.mu.Lock()
+	v, ok = s.tb[key]
+	if !ok {
+		v = NewTokenBucketElem(key.batchSize)
+		s.tb[key] = v
 	}
 	s.mu.Unlock()
 

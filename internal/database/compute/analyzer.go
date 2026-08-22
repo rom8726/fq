@@ -16,7 +16,7 @@ const (
 	msgSizeQueryArgumentsNumber = 0
 	mdelQueryArgumentsNumber    = -2
 	watchQueryArgumentsNumber   = 2
-	rlimitQueryArgumentsNumber  = 4
+	rlimitQueryArgumentsNumber  = -3
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -67,6 +67,10 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 		if len(query.Arguments())%2 != 0 {
 			return Query{}, ErrInvalidArguments
 		}
+	case argumentsNumber == -3:
+		if !validRLimitArguments(query.Arguments()) {
+			return Query{}, ErrInvalidArguments
+		}
 	default:
 		return Query{}, fmt.Errorf("unknown arguments count setting: %d for command %d", argumentsNumber, commandID)
 	}
@@ -76,4 +80,19 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 	}
 
 	return query, nil
+}
+
+func validRLimitArguments(arguments []string) bool {
+	if len(arguments) == 0 {
+		return false
+	}
+
+	switch strings.ToUpper(arguments[0]) {
+	case "FW", "SW":
+		return len(arguments) == 4
+	case "TB":
+		return len(arguments) == 5
+	default:
+		return len(arguments) == 4 || len(arguments) == 5
+	}
 }

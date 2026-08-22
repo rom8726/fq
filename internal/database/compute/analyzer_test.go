@@ -48,6 +48,10 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"RLIMIT", "FW", "key", "100"},
 			err:    compute.ErrInvalidArguments,
 		},
+		"invalid number arguments for token bucket rlimit query": {
+			tokens: []string{"RLIMIT", "TB", "key", "100", "10"},
+			err:    compute.ErrInvalidArguments,
+		},
 		"valid incr query": {
 			tokens: []string{"INCR", "key", "60"},
 			query:  compute.NewQuery(compute.IncrCommandID, []string{"key", "60"}),
@@ -71,6 +75,10 @@ func TestAnalyzeQuery(t *testing.T) {
 		"valid rlimit query": {
 			tokens: []string{"RLIMIT", "FW", "key", "100", "60"},
 			query:  compute.NewQuery(compute.RLimitCommandID, []string{"FW", "key", "100", "60"}),
+		},
+		"valid token bucket rlimit query": {
+			tokens: []string{"RLIMIT", "TB", "key", "100", "10", "60"},
+			query:  compute.NewQuery(compute.RLimitCommandID, []string{"TB", "key", "100", "10", "60"}),
 		},
 	}
 
