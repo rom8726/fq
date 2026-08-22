@@ -51,6 +51,14 @@ func (m *Master) ReplicaCursors() []ReplicaCursor {
 	return m.tracker.List()
 }
 
+func (m *Master) MinReplicaAckLSN() (uint64, bool) {
+	if m.tracker == nil {
+		return 0, false
+	}
+
+	return m.tracker.MinLastAppliedLSN()
+}
+
 func (m *Master) IsMaster() bool {
 	return true
 }

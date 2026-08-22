@@ -47,3 +47,23 @@ func (t *ReplicaTracker) List() []ReplicaCursor {
 
 	return result
 }
+
+func (t *ReplicaTracker) MinLastAppliedLSN() (uint64, bool) {
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
+
+	if len(t.cursors) == 0 {
+		return 0, false
+	}
+
+	var minLSN uint64
+	first := true
+	for _, cursor := range t.cursors {
+		if first || cursor.LastAppliedLSN < minLSN {
+			minLSN = cursor.LastAppliedLSN
+			first = false
+		}
+	}
+
+	return minLSN, true
+}

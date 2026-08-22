@@ -18,6 +18,10 @@ type WAL interface {
 	RemovePastSegments(ctx context.Context, lsn uint64) error
 }
 
+type WALCleanupLSNProvider interface {
+	WALCleanupLSN() (uint64, bool)
+}
+
 type Engine interface {
 	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
 	RestoreDumpElem(ctx context.Context, elem database.DumpElem) error
@@ -27,6 +31,8 @@ type Dumper struct {
 	engine Engine
 	wal    WAL
 	dir    string
+
+	walCleanupLSNProvider WALCleanupLSNProvider
 
 	sessions       map[string]readSession
 	sessMu         sync.Mutex
@@ -60,6 +66,10 @@ func New(engine Engine, wal WAL, dir string) *Dumper {
 
 func (d *Dumper) currentDumpFilePath() string {
 	return filepath.Join(d.dir, currentDumpFileName)
+}
+
+func (d *Dumper) SetWALCleanupLSNProvider(provider WALCleanupLSNProvider) {
+	d.walCleanupLSNProvider = provider
 }
 
 // invalidateAllSessions invalidates all active dump read sessions

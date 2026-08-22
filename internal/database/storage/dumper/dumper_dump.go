@@ -78,12 +78,26 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 	shouldRemove = false // File successfully renamed, don't remove
 
 	if d.wal != nil {
-		if err := d.wal.RemovePastSegments(ctx, uint64(dumpTx)); err != nil {
+		cleanupLSN := d.walCleanupLSN(uint64(dumpTx))
+		if err := d.wal.RemovePastSegments(ctx, cleanupLSN); err != nil {
 			return fmt.Errorf("remove past WAL segments: %w", err)
 		}
 	}
 
 	return nil
+}
+
+func (d *Dumper) walCleanupLSN(dumpLSN uint64) uint64 {
+	if d.walCleanupLSNProvider == nil {
+		return dumpLSN
+	}
+
+	replicaLSN, ok := d.walCleanupLSNProvider.WALCleanupLSN()
+	if !ok || replicaLSN > dumpLSN {
+		return dumpLSN
+	}
+
+	return replicaLSN
 }
 
 func (d *Dumper) writeBatch(f *os.File, elems []database.DumpElem) error {

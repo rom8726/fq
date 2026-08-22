@@ -41,3 +41,30 @@ func TestReplicaTrackerHandlesConcurrentRequests(t *testing.T) {
 		require.NotZero(t, cursor.UpdatedAt)
 	}
 }
+
+func TestReplicaTrackerMinLastAppliedLSN(t *testing.T) {
+	tracker := NewReplicaTracker()
+
+	_, ok := tracker.MinLastAppliedLSN()
+	require.False(t, ok)
+
+	tracker.Ack(ReplicaCursor{
+		ReplicaID:      "replica-1",
+		LastAppliedLSN: 100,
+		UpdatedAt:      time.Now(),
+	})
+	tracker.Ack(ReplicaCursor{
+		ReplicaID:      "replica-2",
+		LastAppliedLSN: 40,
+		UpdatedAt:      time.Now(),
+	})
+	tracker.Ack(ReplicaCursor{
+		ReplicaID:      "replica-3",
+		LastAppliedLSN: 70,
+		UpdatedAt:      time.Now(),
+	})
+
+	minLSN, ok := tracker.MinLastAppliedLSN()
+	require.True(t, ok)
+	require.Equal(t, uint64(40), minLSN)
+}

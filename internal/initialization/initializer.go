@@ -210,9 +210,20 @@ func (i *Initializer) initializeReplication(replica interface{}) {
 		i.slave = v
 	case *replication.Master:
 		i.master = v
+		if i.dumper != nil {
+			i.dumper.SetWALCleanupLSNProvider(replicaWALCleanupLSNProvider{master: v})
+		}
 	default:
 		i.logger.Error().Msg("incorrect replication type")
 	}
+}
+
+type replicaWALCleanupLSNProvider struct {
+	master *replication.Master
+}
+
+func (p replicaWALCleanupLSNProvider) WALCleanupLSN() (uint64, bool) {
+	return p.master.MinReplicaAckLSN()
 }
 
 func (i *Initializer) storageReplicaSlave() storage.Replica {
