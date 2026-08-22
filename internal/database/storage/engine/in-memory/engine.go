@@ -32,6 +32,13 @@ type hashTable interface {
 		limit database.ValueType,
 		beforeApply func() error,
 	) (database.RateLimitResult, error)
+	RLimitSlidingWindow(
+		txCtx database.TxContext,
+		key database.BatchKey,
+		limit database.ValueType,
+		beforeApply func() error,
+	) (database.RateLimitResult, error)
+	AddSlidingWindowEvent(txCtx database.TxContext, key database.BatchKey)
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
 	Clean(ctx context.Context)
@@ -152,6 +159,36 @@ func (e *Engine) RLimitFixedWindow(
 	return result, err
 }
 
+// RLimitSlidingWindow ...
+//
+//nolint:dupl,gocritic // ok
+func (e *Engine) RLimitSlidingWindow(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	limit database.ValueType,
+	beforeApply func() error,
+) (database.RateLimitResult, error) {
+	if txCtx.FromWAL && isSlidingWindowEventExpired(txCtx.CurrTime, database.TxTime(key.BatchSize)) {
+		return database.RateLimitResult{}, nil
+	}
+
+	idx := e.partitionIdx(key.Key)
+	partition := e.partitions[idx]
+	result, err := partition.RLimitSlidingWindow(txCtx, key, limit, beforeApply)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Any("tx_ctx", txCtx).
+			Any("key", key).
+			Any("limit", limit).
+			Any("result", result).
+			Err(err).
+			Msg("success rlimit sliding window query")
+	}
+
+	return result, err
+}
+
 func (e *Engine) Get(key database.BatchKey) (database.ValueType, bool) {
 	idx := e.partitionIdx(key.Key)
 	partition := e.partitions[idx]
@@ -219,7 +256,12 @@ func (e *Engine) Dump(ctx context.Context, dumpTx database.Tx) (resC <-chan data
 }
 
 func (e *Engine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
-	if isExpired(elem.TxAt, database.TxTime(elem.BatchSize)) {
+	if elem.Kind == database.DumpElemKindSlidingWindowBucket &&
+		isSlidingWindowEventExpired(elem.TxAt, database.TxTime(elem.BatchSize)) {
+		return nil
+	}
+	if elem.Kind != database.DumpElemKindSlidingWindowBucket &&
+		isExpired(elem.TxAt, database.TxTime(elem.BatchSize)) {
 		return nil
 	}
 
@@ -250,6 +292,8 @@ func (e *Engine) applyLogs(logs []*wal.LogData) {
 			e.applyDelFromLog(log)
 		case compute.MDelCommandID:
 			e.applyMDelFromLog(log)
+		case compute.RLimitSlidingWindowCommandID:
+			e.applySlidingWindowEventFromLog(log)
 		}
 	}
 }
@@ -266,6 +310,30 @@ func (e *Engine) applyDelFromLog(log *wal.LogData) {
 
 		return 0
 	})
+}
+
+func (e *Engine) applySlidingWindowEventFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 3 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Str("command", "RLIMIT_SW").
+			Msg("invalid WAL log: insufficient arguments")
+		return
+	}
+
+	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_SW").Msg("failed to parse WAL log")
+		return
+	}
+	if isSlidingWindowEventExpired(txCtx.CurrTime, database.TxTime(batchKey.BatchSize)) {
+		return
+	}
+
+	idx := e.partitionIdx(batchKey.Key)
+	partition := e.partitions[idx]
+	partition.AddSlidingWindowEvent(txCtx, batchKey)
 }
 
 func (e *Engine) applySingleKeyLog(
@@ -366,6 +434,10 @@ func parseWALBatchKeyAndCtx(
 
 func isExpired(currTime, batchSize database.TxTime) bool {
 	return database.TxTime(time.Now().Unix()) > endOfBatch(currTime, batchSize)
+}
+
+func isSlidingWindowEventExpired(currTime, window database.TxTime) bool {
+	return currTime+window <= database.TxTime(time.Now().Unix())
 }
 
 func isExpiredWithDelta(currTime, batchSize database.TxTime) bool {

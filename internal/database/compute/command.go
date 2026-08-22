@@ -11,6 +11,7 @@ const (
 	MDelCommandID
 	WatchCommandID
 	RLimitCommandID
+	RLimitSlidingWindowCommandID
 )
 
 var (

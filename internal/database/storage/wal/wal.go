@@ -236,6 +236,16 @@ func (w *WAL) MDel(ctx context.Context, txCtx database.TxContext, keys []databas
 	return w.push(ctx, txCtx.Tx, compute.MDelCommandID, arr)
 }
 
+func (w *WAL) RLimitSlidingWindow(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
+}
+
 func (w *WAL) push(
 	ctx context.Context,
 	tx database.Tx,

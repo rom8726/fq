@@ -34,6 +34,11 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireRateLimit("RLIMIT FW limited 2 60", true, 2, 0, 60)
 	app.RequireRateLimit("RLIMIT FW limited 2 60", false, 2, 0, 60)
 	app.RequireQuery("GET limited 60", "ok|2")
+	app.RequireRateLimit("RLIMIT SW sliding 2 60", true, 1, 1, 60)
+	app.RequireRateLimit("RLIMIT SW sliding 2 60", true, 2, 0, 60)
+	app.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
+	app.RequireQuery("DEL sliding 60", "ok|1")
+	app.RequireRateLimit("RLIMIT SW sliding 2 60", true, 1, 1, 60)
 	app.RequireQuery("MDEL key 60 other 60", "ok|1;1")
 	app.RequireQuery("GET key 60", "ok|0")
 	app.RequireQuery("TRUNCATE key 60", "err|invalid command")
@@ -49,6 +54,9 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	first.RequireRateLimit("RLIMIT FW limited 2 60", true, 1, 1, 60)
 	first.RequireRateLimit("RLIMIT FW limited 2 60", true, 2, 0, 60)
 	first.RequireRateLimit("RLIMIT FW limited 2 60", false, 2, 0, 60)
+	first.RequireRateLimit("RLIMIT SW sliding 2 60", true, 1, 1, 60)
+	first.RequireRateLimit("RLIMIT SW sliding 2 60", true, 2, 0, 60)
+	first.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 	first.Close()
 
 	second := startTestDatabase(t, walDir)
@@ -56,6 +64,7 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 
 	second.RequireQuery("GET durable 60", "ok|2")
 	second.RequireQuery("GET limited 60", "ok|2")
+	second.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 }
 
 func TestTCPDatabaseRecoversFromTruncatedWALTailAfterRestart(t *testing.T) {

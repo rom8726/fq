@@ -20,6 +20,7 @@ The database supports the following commands:
  - **MDEL** < key > < capping > < key > < capping > < key > < capping > ... - Delete multiple keys
  - **WATCH** < key > < capping > - Watch for changes to a key's value (blocks until value changes or timeout)
  - **RLIMIT FW** < key > < limit > < window > - Fixed-window rate limit check and consume
+ - **RLIMIT SW** < key > < limit > < window > - Sliding-window rate limit check and consume
 
 < key > - is some string key for which you want to be able to increment the counter for a time interval of size < capping >.
 
@@ -56,6 +57,14 @@ Example with limit `3`:
 ```
 
 Only allowed requests are written to WAL as counter increments; rejected requests do not change state.
+
+The **RLIMIT SW** command implements an atomic sliding-window rate limiter with the same response format:
+
+```shell
+RLIMIT SW user:42 100 60
+```
+
+It counts allowed events in the last `<window>` seconds. Only allowed requests are written to WAL as sliding-window events; rejected requests do not change state.
 
 ### WATCH Command
 

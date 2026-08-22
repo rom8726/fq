@@ -4,6 +4,9 @@ const (
 	ErrorValue ValueType = -1
 
 	NoTx Tx = 0
+
+	DumpElemKindCounter             uint32 = 0
+	DumpElemKindSlidingWindowBucket uint32 = 1
 )
 
 type ValueType int32
@@ -26,6 +29,7 @@ type BatchKey struct {
 }
 
 type DumpElem struct {
+	Kind      uint32
 	Key       string
 	BatchSize uint32
 	Value     ValueType

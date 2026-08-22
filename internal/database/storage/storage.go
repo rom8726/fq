@@ -20,6 +20,12 @@ type Engine interface {
 		database.ValueType,
 		func() error,
 	) (database.RateLimitResult, error)
+	RLimitSlidingWindow(
+		database.TxContext,
+		database.BatchKey,
+		database.ValueType,
+		func() error,
+	) (database.RateLimitResult, error)
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
 	MDel(database.TxContext, []database.BatchKey) []bool
@@ -34,6 +40,7 @@ type WAL interface {
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	MDel(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) tools.FutureError
+	RLimitSlidingWindow(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
 	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
@@ -191,6 +198,27 @@ func (s *Storage) RLimitFixedWindow(
 		}
 
 		future := s.wal.Incr(ctx, txCtx, key)
+		if s.syncCommit {
+			return future.Get()
+		}
+
+		return nil
+	})
+}
+
+func (s *Storage) RLimitSlidingWindow(
+	ctx context.Context,
+	key database.BatchKey,
+	limit database.ValueType,
+) (database.RateLimitResult, error) {
+	txCtx := s.makeTxContext()
+
+	return s.engine.RLimitSlidingWindow(txCtx, key, limit, func() error {
+		if s.wal == nil {
+			return nil
+		}
+
+		future := s.wal.RLimitSlidingWindow(ctx, txCtx, key)
 		if s.syncCommit {
 			return future.Get()
 		}

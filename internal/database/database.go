@@ -44,6 +44,7 @@ type storageLayer interface {
 	MDel(ctx context.Context, keys []BatchKey) ([]bool, error)
 	Watch(ctx context.Context, key BatchKey) (ValueType, error)
 	RLimitFixedWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
+	RLimitSlidingWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 }
 
 type Database struct {
@@ -188,7 +189,7 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) st
 func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) string {
 	arguments := query.Arguments()
 	algorithm := strings.ToUpper(arguments[0])
-	if algorithm != "FW" {
+	if algorithm != "FW" && algorithm != "SW" {
 		return makeErrorMsg(errInvalidRLimitAlgo)
 	}
 
@@ -202,7 +203,13 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) s
 		return makeErrorMsg(err)
 	}
 
-	result, err := d.storageLayer.RLimitFixedWindow(ctx, key, limit)
+	var result RateLimitResult
+	switch algorithm {
+	case "FW":
+		result, err = d.storageLayer.RLimitFixedWindow(ctx, key, limit)
+	case "SW":
+		result, err = d.storageLayer.RLimitSlidingWindow(ctx, key, limit)
+	}
 	if err != nil {
 		return makeErrorMsg(err)
 	}

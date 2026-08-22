@@ -148,6 +148,71 @@ func TestElem_RLimitFixedWindow(t *testing.T) {
 	require.Equal(t, 3, beforeApplyCalls)
 }
 
+func TestSlidingWindowElem_RLimit(t *testing.T) {
+	e := NewSlidingWindowElem(60)
+	beforeApplyCalls := 0
+	beforeApply := func() error {
+		beforeApplyCalls++
+
+		return nil
+	}
+
+	first, err := e.RLimit(database.TxContext{Tx: 1000, CurrTime: 100}, 2, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    1,
+		Remaining:  1,
+		ResetAfter: 60,
+	}, first)
+
+	second, err := e.RLimit(database.TxContext{Tx: 1001, CurrTime: 110}, 2, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    2,
+		Remaining:  0,
+		ResetAfter: 50,
+	}, second)
+
+	denied, err := e.RLimit(database.TxContext{Tx: 1002, CurrTime: 120}, 2, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    false,
+		Current:    2,
+		Remaining:  0,
+		ResetAfter: 40,
+	}, denied)
+	require.Equal(t, 2, beforeApplyCalls)
+
+	afterOldestExpires, err := e.RLimit(database.TxContext{Tx: 1003, CurrTime: 160}, 2, beforeApply)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    2,
+		Remaining:  0,
+		ResetAfter: 10,
+	}, afterOldestExpires)
+	require.Equal(t, 3, beforeApplyCalls)
+}
+
+func TestSlidingWindowElem_DumpRespectsDumpTxInsideBucket(t *testing.T) {
+	e := NewSlidingWindowElem(60)
+	now := database.TxTime(time.Now().Unix())
+	e.AddEvent(database.TxContext{Tx: 1, CurrTime: now})
+	e.AddEvent(database.TxContext{Tx: 2, CurrTime: now})
+
+	ch := make(chan database.DumpElem, 1)
+	e.Dump(nil, hashTableKey{key: "key", batchSize: 60}, 1, ch)
+
+	require.Len(t, ch, 1)
+	elem := <-ch
+	require.Equal(t, database.DumpElemKindSlidingWindowBucket, elem.Kind)
+	require.Equal(t, database.ValueType(1), elem.Value)
+	require.Equal(t, database.Tx(1), elem.Tx)
+	require.Equal(t, now, elem.TxAt)
+}
+
 func TestElem_DumpValue(t *testing.T) {
 	now := database.TxTime(time.Now().Unix())
 
