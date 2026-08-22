@@ -177,6 +177,20 @@ persistence:
 
 Current master-slave replication requires `wal_and_dump`, because it uses the initial dump plus continuous WAL segment replication.
 
+#### WAL Commit Mode
+
+`wal.sync_commit` controls when a write command is acknowledged:
+
+```yaml
+wal:
+  sync_commit: off # on | off
+```
+
+- `on`: the command waits until its WAL batch is written and synced to disk before the response is sent. This gives stronger durability, but response latency includes WAL batching and disk sync time.
+- `off`: the command is applied to the in-memory engine and acknowledged without waiting for WAL sync. WAL is still written in the background, but a crash can lose commands that were already acknowledged and not flushed yet.
+
+For frequency capping workloads, `sync_commit: off` is usually the better default: losing a very small recent window of counters after a crash is often acceptable, while lower response latency and higher throughput matter more. Use `sync_commit: on` for commands or workloads that require stronger durability guarantees.
+
 ### Observability
 
 Health and metrics endpoints are enabled when `observability.address` is set:
