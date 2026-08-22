@@ -194,6 +194,7 @@ Available metrics include:
 - `fq_tcp_active_connections`
 - `fq_wal_queue_depth`
 - `fq_wal_flush_duration_seconds`
+- `fq_wal_flush_batch_records`
 - `fq_wal_flush_total`
 - `fq_replication_lag_lsn`
 - `fq_replication_reconnect_total`

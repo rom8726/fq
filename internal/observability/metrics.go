@@ -21,6 +21,11 @@ var (
 		Help:    "WAL flush duration in seconds.",
 		Buckets: prometheus.DefBuckets,
 	})
+	walFlushBatchRecords = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "fq_wal_flush_batch_records",
+		Help:    "Number of WAL records written in one flush.",
+		Buckets: []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192},
+	})
 	walFlushTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "fq_wal_flush_total",
 		Help: "Total number of WAL flushes.",
@@ -45,6 +50,7 @@ func init() {
 		tcpActiveConnections,
 		walQueueDepth,
 		walFlushDuration,
+		walFlushBatchRecords,
 		walFlushTotal,
 		replicationLagLSN,
 		replicationReconnectTotal,
@@ -67,6 +73,10 @@ func SetWALQueueDepth(depth int) {
 func ObserveWALFlushLatency(latency time.Duration) {
 	walFlushDuration.Observe(latency.Seconds())
 	walFlushTotal.Inc()
+}
+
+func ObserveWALFlushBatchSize(size int) {
+	walFlushBatchRecords.Observe(float64(size))
 }
 
 func SetReplicationLagLSN(lag uint64) {

@@ -120,9 +120,11 @@ func (w *WAL) Start() {
 				return
 			}
 
+			batchSize := len(batch)
 			start := time.Now()
 			w.fsWriter.WriteBatch(batch)
 			observability.ObserveWALFlushLatency(time.Since(start))
+			observability.ObserveWALFlushBatchSize(batchSize)
 			observability.SetWALQueueDepth(len(w.records))
 			batch = make([]Log, 0, w.maxBatchSize)
 			stopTimer()
