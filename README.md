@@ -50,6 +50,7 @@ make build
 This will create binaries in the `bin/` directory:
 - `bin/fq` - database server
 - `bin/fq-cli` - CLI client
+- `bin/fq-bench` - benchmark client
 
 ### Running
 
@@ -88,6 +89,25 @@ Or connect to slave (port :1947):
 ```shell
 go run ./cmd/cli -address :1947
 ```
+
+#### Benchmark Client
+
+Run a live latency/RPS benchmark against master:
+```shell
+make run-bench
+```
+
+Example with 500 connections for 60 seconds:
+```shell
+go run ./cmd/bench -address :1945 -connections 500 -duration 60s
+```
+
+Limit target load and customize generated keys:
+```shell
+go run ./cmd/bench -address :1945 -connections 200 -rps 50000 -keys 1000000 -batch 600
+```
+
+The benchmark screen updates once per second and shows current RPS, errors, latency percentiles, and ASCII history charts.
 
 ### Example
 
