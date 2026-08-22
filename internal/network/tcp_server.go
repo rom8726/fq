@@ -12,6 +12,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"fq/internal/observability"
 	"fq/internal/tools"
 )
 
@@ -93,8 +94,10 @@ func (s *TCPServer) HandleQueries(ctx context.Context, handler TCPHandler) error
 			wg.Add(1)
 			go func(connection net.Conn) {
 				s.semaphore.Acquire()
+				observability.IncTCPActiveConnections()
 
 				defer func() {
+					observability.DecTCPActiveConnections()
 					s.semaphore.Release()
 					wg.Done()
 				}()

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fq/internal/database/storage/wal"
+	"fq/internal/observability"
 )
 
 const walDirectoryPerm = 0o750
@@ -278,6 +279,7 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 	// Reuse existing slice, no need to allocate new one
 	logsToApply := logs[idx:]
 	lastLSN := logsToApply[len(logsToApply)-1].LSN
+	observability.SetReplicationLagLSN(lastLSN - s.lastAppliedLSN)
 
 	s.logger.Debug().
 		Str("segment_name", segmentName).
@@ -296,6 +298,7 @@ func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segme
 
 	// Update last applied LSN
 	s.lastAppliedLSN = lastLSN
+	observability.SetReplicationLagLSN(0)
 
 	return nil
 }

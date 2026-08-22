@@ -12,6 +12,7 @@ import (
 
 	"fq/internal/database"
 	"fq/internal/database/compute"
+	"fq/internal/observability"
 	"fq/internal/tools"
 )
 
@@ -96,7 +97,10 @@ func (w *WAL) Start() {
 				return
 			}
 
+			start := time.Now()
 			w.fsWriter.WriteBatch(batch)
+			observability.ObserveWALFlushLatency(time.Since(start))
+			observability.SetWALQueueDepth(len(w.records))
 			batch = make([]Log, 0, w.maxBatchSize)
 		}
 
@@ -106,6 +110,7 @@ func (w *WAL) Start() {
 				for {
 					select {
 					case record := <-w.records:
+						observability.SetWALQueueDepth(len(w.records))
 						batch = append(batch, record)
 						if len(batch) >= w.maxBatchSize {
 							flush()
@@ -118,6 +123,7 @@ func (w *WAL) Start() {
 					}
 				}
 			case record := <-w.records:
+				observability.SetWALQueueDepth(len(w.records))
 				batch = append(batch, record)
 				if len(batch) >= w.maxBatchSize {
 					flush()
@@ -217,6 +223,7 @@ func (w *WAL) push(
 		record.SetResult(errWALClosed)
 		record.ReleaseLogData()
 	case w.records <- record:
+		observability.SetWALQueueDepth(len(w.records))
 	}
 
 	return future

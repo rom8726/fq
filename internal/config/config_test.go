@@ -105,6 +105,13 @@ func TestValidateRejectsInvalidNetworkConfig(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsInvalidObservabilityConfig(t *testing.T) {
+	cfg := validConfig()
+	cfg.Observability.Address = "localhost"
+
+	require.Error(t, validate(&cfg))
+}
+
 func TestValidateRejectsInvalidPersistenceConfig(t *testing.T) {
 	cfg := validConfig()
 	cfg.Persistence.Mode = "wal_only"
@@ -268,6 +275,9 @@ func validConfig() Config {
 			MaxConnections: 100,
 			MaxMessageSize: "4KB",
 			IdleTimeout:    time.Minute,
+		},
+		Observability: ObservabilityConfig{
+			Address: "localhost:2112",
 		},
 		Logging: LoggingConfig{
 			Level: "info",

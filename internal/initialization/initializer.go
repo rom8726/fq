@@ -15,6 +15,7 @@ import (
 	"fq/internal/database/storage/replication"
 	walPkg "fq/internal/database/storage/wal"
 	"fq/internal/network"
+	"fq/internal/observability"
 )
 
 type Initializer struct {
@@ -29,6 +30,7 @@ type Initializer struct {
 	dumpStream     chan database.DumpChunk
 	cfg            config.Config
 	maxMessageSize int
+	observability  *observability.Server
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
@@ -87,6 +89,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		dumpStream:     dumpStream,
 		cfg:            cfg,
 		maxMessageSize: maxMessageSize,
+		observability:  observability.NewServer(cfg.Observability.Address, logger),
 	}
 
 	initializer.initializeReplication(replica)
@@ -138,6 +141,10 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 			return i.master.Start(groupCtx)
 		})
 	}
+
+	group.Go(func() error {
+		return i.observability.Start(groupCtx)
+	})
 
 	group.Go(func() error {
 		return i.server.HandleQueries(groupCtx, func(ctx context.Context, query []byte) ([]byte, error) {

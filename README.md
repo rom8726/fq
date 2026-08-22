@@ -157,6 +157,28 @@ persistence:
 
 Current master-slave replication requires `wal_and_dump`, because it uses the initial dump plus continuous WAL segment replication.
 
+### Observability
+
+Health and metrics endpoints are enabled when `observability.address` is set:
+
+```yaml
+observability:
+  address: ":2112"
+```
+
+- `GET /healthz`: liveness check
+- `GET /metrics`: Prometheus metrics
+
+Available metrics include:
+
+- `fq_tcp_active_connections`
+- `fq_wal_queue_depth`
+- `fq_wal_flush_duration_seconds`
+- `fq_wal_flush_total`
+- `fq_replication_lag_lsn`
+- `fq_replication_reconnect_total`
+- `fq_replication_reconnect_attempts_total`
+
 ### Replication
 
 The database supports **master-slave replication**:

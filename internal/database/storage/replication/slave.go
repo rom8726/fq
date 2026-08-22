@@ -13,6 +13,7 @@ import (
 
 	"fq/internal/database"
 	"fq/internal/database/storage/wal"
+	"fq/internal/observability"
 )
 
 type TCPClient interface {
@@ -298,8 +299,10 @@ func (s *Slave) reconnect(ctx context.Context) error {
 		}
 
 		newClient, err := s.clientFactory.Create()
+		observability.IncReplicationReconnectAttemptsTotal()
 		if err == nil {
 			s.client = newClient
+			observability.IncReplicationReconnectTotal()
 			s.logger.Info().
 				Int("attempt", attempt+1).
 				Int("max_attempts", maxAttempts).

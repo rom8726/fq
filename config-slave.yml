@@ -5,6 +5,8 @@ network:
   idle_timeout: 10m
 persistence:
   mode: wal_and_dump
+observability:
+  address: ":2113"
 wal:
   sync_commit: off
   flushing_batch_length: 4096

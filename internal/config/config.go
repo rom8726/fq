@@ -30,13 +30,14 @@ const (
 )
 
 type Config struct {
-	Engine      EngineConfig      `yaml:"engine"`
-	Persistence PersistenceConfig `yaml:"persistence"`
-	WAL         *WALConfig        `yaml:"wal"`
-	Network     NetworkConfig     `yaml:"network"`
-	Logging     LoggingConfig     `yaml:"logging"`
-	Dump        DumpConfig        `yaml:"dump"`
-	Replication ReplicationConfig `yaml:"replication"`
+	Engine        EngineConfig        `yaml:"engine"`
+	Persistence   PersistenceConfig   `yaml:"persistence"`
+	WAL           *WALConfig          `yaml:"wal"`
+	Network       NetworkConfig       `yaml:"network"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	Logging       LoggingConfig       `yaml:"logging"`
+	Dump          DumpConfig          `yaml:"dump"`
+	Replication   ReplicationConfig   `yaml:"replication"`
 }
 
 func (cfg Config) PersistenceMode() string {
@@ -75,6 +76,10 @@ func (cfg NetworkConfig) ParseMaxMessageSize() (int, error) {
 
 type LoggingConfig struct {
 	Level string `yaml:"level"`
+}
+
+type ObservabilityConfig struct {
+	Address string `yaml:"address"`
 }
 
 type EngineConfig struct {
@@ -180,6 +185,13 @@ func validate(cfg *Config) error {
 	)
 	if err != nil {
 		return fmt.Errorf("validate network section: %w", err)
+	}
+
+	err = validation.ValidateStruct(&cfg.Observability,
+		validation.Field(&cfg.Observability.Address, addressIfSetRule),
+	)
+	if err != nil {
+		return fmt.Errorf("validate observability section: %w", err)
 	}
 
 	if cfg.UsesWAL() && cfg.WAL == nil {
