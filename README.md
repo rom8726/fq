@@ -19,8 +19,43 @@ The database supports the following commands:
  - **DEL** < key > < capping > - Delete a key
  - **MDEL** < key > < capping > < key > < capping > < key > < capping > ... - Delete multiple keys
  - **WATCH** < key > < capping > - Watch for changes to a key's value (blocks until value changes or timeout)
+ - **RLIMIT FW** < key > < limit > < window > - Fixed-window rate limit check and consume
 
 < key > - is some string key for which you want to be able to increment the counter for a time interval of size < capping >.
+
+### Rate Limiting
+
+The **RLIMIT FW** command implements an atomic fixed-window rate limiter:
+
+```shell
+RLIMIT FW user_42 100 60
+```
+
+The response format is:
+
+```text
+ok|<allowed>;<current>;<remaining>;<reset_after>
+```
+
+- `allowed`: `1` when the request is allowed, `0` when it is rejected
+- `current`: current counter value in the window
+- `remaining`: requests left before the limit is reached
+- `reset_after`: seconds until the current fixed window resets
+
+Example with limit `3`:
+
+```text
+[fq]> RLIMIT FW user_42 3 60
+1;1;2;44
+[fq]> RLIMIT FW user_42 3 60
+1;2;1;43
+[fq]> RLIMIT FW user_42 3 60
+1;3;0;42
+[fq]> RLIMIT FW user_42 3 60
+0;3;0;41
+```
+
+Only allowed requests are written to WAL as counter increments; rejected requests do not change state.
 
 ### WATCH Command
 

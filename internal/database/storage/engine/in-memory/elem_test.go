@@ -83,6 +83,71 @@ func TestElem_Value(t *testing.T) {
 	require.Equal(t, database.ValueType(2), e.value)
 }
 
+func TestElem_RLimitFixedWindow(t *testing.T) {
+	e := NewFqElem(60)
+	currTime := database.TxTime(120)
+	beforeApplyCalls := 0
+	beforeApply := func() error {
+		beforeApplyCalls++
+
+		return nil
+	}
+
+	first, err := e.RLimitFixedWindow(
+		database.TxContext{Tx: 1000, DumpTx: database.NoTx, CurrTime: currTime},
+		2,
+		beforeApply,
+	)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    1,
+		Remaining:  1,
+		ResetAfter: 60,
+	}, first)
+
+	second, err := e.RLimitFixedWindow(
+		database.TxContext{Tx: 1001, DumpTx: database.NoTx, CurrTime: currTime + 1},
+		2,
+		beforeApply,
+	)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    2,
+		Remaining:  0,
+		ResetAfter: 59,
+	}, second)
+
+	denied, err := e.RLimitFixedWindow(
+		database.TxContext{Tx: 1002, DumpTx: database.NoTx, CurrTime: currTime + 2},
+		2,
+		beforeApply,
+	)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    false,
+		Current:    2,
+		Remaining:  0,
+		ResetAfter: 58,
+	}, denied)
+	require.Equal(t, 2, beforeApplyCalls)
+
+	nextWindow, err := e.RLimitFixedWindow(
+		database.TxContext{Tx: 1003, DumpTx: database.NoTx, CurrTime: currTime + 60},
+		2,
+		beforeApply,
+	)
+	require.NoError(t, err)
+	require.Equal(t, database.RateLimitResult{
+		Allowed:    true,
+		Current:    1,
+		Remaining:  1,
+		ResetAfter: 60,
+	}, nextWindow)
+	require.Equal(t, 3, beforeApplyCalls)
+}
+
 func TestElem_DumpValue(t *testing.T) {
 	now := database.TxTime(time.Now().Unix())
 

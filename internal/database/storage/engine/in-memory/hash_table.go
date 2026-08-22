@@ -34,6 +34,18 @@ func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) databa
 	return v.Incr(txCtx)
 }
 
+func (s *HashTable) RLimitFixedWindow(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	limit database.ValueType,
+	beforeApply func() error,
+) (database.RateLimitResult, error) {
+	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
+	v := s.getOrInitElem(htKey)
+
+	return v.RLimitFixedWindow(txCtx, limit, beforeApply)
+}
+
 func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
 

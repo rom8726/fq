@@ -10,6 +10,7 @@ const (
 	MsgSizeCommandID
 	MDelCommandID
 	WatchCommandID
+	RLimitCommandID
 )
 
 var (
@@ -20,6 +21,7 @@ var (
 	MsgSizeCommand = "MSGSIZE"
 	MDelCommand    = "MDEL"
 	WatchCommand   = "WATCH"
+	RLimitCommand  = "RLIMIT"
 )
 
 var commandNamesToID = map[string]CommandID{
@@ -30,6 +32,7 @@ var commandNamesToID = map[string]CommandID{
 	MsgSizeCommand: MsgSizeCommandID,
 	MDelCommand:    MDelCommandID,
 	WatchCommand:   WatchCommandID,
+	RLimitCommand:  RLimitCommandID,
 }
 
 func (c CommandID) Int() int {

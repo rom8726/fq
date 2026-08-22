@@ -13,5 +13,6 @@ func TestCommandNameToCommandID(t *testing.T) {
 	require.Equal(t, compute.GetCommandID, compute.CommandNameToCommandID("GET"))
 	require.Equal(t, compute.DelCommandID, compute.CommandNameToCommandID("DEL"))
 	require.Equal(t, compute.MsgSizeCommandID, compute.CommandNameToCommandID("MSGSIZE"))
+	require.Equal(t, compute.RLimitCommandID, compute.CommandNameToCommandID("RLIMIT"))
 	require.Equal(t, compute.UnknownCommandID, compute.CommandNameToCommandID("TRUNCATE"))
 }

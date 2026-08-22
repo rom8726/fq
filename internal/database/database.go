@@ -17,6 +17,8 @@ const (
 	maxKeyLength = 1024
 	maxBatchSize = math.MaxUint32
 	minBatchSize = 1
+	maxLimit     = uint64(1<<31 - 1)
+	minLimit     = 1
 )
 
 var (
@@ -26,6 +28,9 @@ var (
 	errInvalidArgumentsCount = errors.New("invalid arguments count")
 	errKeyTooLong            = errors.New("key length exceeds maximum")
 	errKeyEmpty              = errors.New("key cannot be empty")
+	errLimitNotNumber        = errors.New("limit is not a number")
+	errInvalidLimit          = errors.New("invalid limit")
+	errInvalidRLimitAlgo     = errors.New("invalid rate limit algorithm")
 )
 
 type computeLayer interface {
@@ -38,6 +43,7 @@ type storageLayer interface {
 	Del(ctx context.Context, key BatchKey) (bool, error)
 	MDel(ctx context.Context, keys []BatchKey) ([]bool, error)
 	Watch(ctx context.Context, key BatchKey) (ValueType, error)
+	RLimitFixedWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 }
 
 type Database struct {
@@ -91,6 +97,8 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		return d.handleMDelQuery(ctx, query)
 	case compute.WatchCommandID:
 		return d.handleWatchQuery(ctx, query)
+	case compute.RLimitCommandID:
+		return d.handleRLimitQuery(ctx, query)
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -177,6 +185,31 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) st
 	return makeValueMsg(value)
 }
 
+func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) string {
+	arguments := query.Arguments()
+	algorithm := strings.ToUpper(arguments[0])
+	if algorithm != "FW" {
+		return makeErrorMsg(errInvalidRLimitAlgo)
+	}
+
+	key, err := makeBatchKey(arguments[1], arguments[3])
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	limit, err := makeLimit(arguments[2])
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	result, err := d.storageLayer.RLimitFixedWindow(ctx, key, limit)
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	return makeRateLimitMsg(result)
+}
+
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
 	// Validate key
 	if key == "" {
@@ -228,6 +261,25 @@ func makeBatchKeys(args []string) ([]BatchKey, error) {
 	return res, nil
 }
 
+func makeLimit(limitStr string) (ValueType, error) {
+	limit, err := strconv.ParseUint(limitStr, 10, 64)
+	if err != nil {
+		return 0, errLimitNotNumber
+	}
+
+	if limit < minLimit || limit > maxLimit {
+		return 0, fmt.Errorf(
+			"%w: %d (must be between %d and %d)",
+			errInvalidLimit,
+			limit,
+			minLimit,
+			maxLimit,
+		)
+	}
+
+	return ValueType(limit), nil
+}
+
 func makeErrorMsg(err error) string {
 	return "err|" + err.Error()
 }
@@ -267,4 +319,17 @@ func makeBoolsMsg(arr []bool) string {
 	}
 
 	return buff.String()
+}
+
+func makeRateLimitMsg(result RateLimitResult) string {
+	allowed := "0"
+	if result.Allowed {
+		allowed = "1"
+	}
+
+	return "ok|" +
+		allowed + ";" +
+		strconv.FormatInt(int64(result.Current), 10) + ";" +
+		strconv.FormatInt(int64(result.Remaining), 10) + ";" +
+		strconv.FormatUint(uint64(result.ResetAfter), 10)
 }

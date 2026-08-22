@@ -26,6 +26,12 @@ var (
 
 type hashTable interface {
 	Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType
+	RLimitFixedWindow(
+		txCtx database.TxContext,
+		key database.BatchKey,
+		limit database.ValueType,
+		beforeApply func() error,
+	) (database.RateLimitResult, error)
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
 	Clean(ctx context.Context)
@@ -117,6 +123,33 @@ func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.
 	}
 
 	return value
+}
+
+func (e *Engine) RLimitFixedWindow(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	limit database.ValueType,
+	beforeApply func() error,
+) (database.RateLimitResult, error) {
+	if txCtx.FromWAL && isExpired(txCtx.CurrTime, database.TxTime(key.BatchSize)) {
+		return database.RateLimitResult{}, nil
+	}
+
+	idx := e.partitionIdx(key.Key)
+	partition := e.partitions[idx]
+	result, err := partition.RLimitFixedWindow(txCtx, key, limit, beforeApply)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Any("tx_ctx", txCtx).
+			Any("key", key).
+			Any("limit", limit).
+			Any("result", result).
+			Err(err).
+			Msg("success rlimit fixed window query")
+	}
+
+	return result, err
 }
 
 func (e *Engine) Get(key database.BatchKey) (database.ValueType, bool) {

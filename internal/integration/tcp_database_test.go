@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,9 +30,14 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireQuery("INCR key 60", "ok|2")
 	app.RequireQuery("GET key 60", "ok|2")
 	app.RequireQuery("INCR other 60", "ok|1")
+	app.RequireRateLimit("RLIMIT FW limited 2 60", true, 1, 1, 60)
+	app.RequireRateLimit("RLIMIT FW limited 2 60", true, 2, 0, 60)
+	app.RequireRateLimit("RLIMIT FW limited 2 60", false, 2, 0, 60)
+	app.RequireQuery("GET limited 60", "ok|2")
 	app.RequireQuery("MDEL key 60 other 60", "ok|1;1")
 	app.RequireQuery("GET key 60", "ok|0")
 	app.RequireQuery("TRUNCATE key 60", "err|invalid command")
+	app.RequireQuery("RLIMIT XX limited 2 60", "err|invalid rate limit algorithm")
 }
 
 func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
@@ -39,12 +46,16 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	first := startTestDatabase(t, walDir)
 	first.RequireQuery("INCR durable 60", "ok|1")
 	first.RequireQuery("INCR durable 60", "ok|2")
+	first.RequireRateLimit("RLIMIT FW limited 2 60", true, 1, 1, 60)
+	first.RequireRateLimit("RLIMIT FW limited 2 60", true, 2, 0, 60)
+	first.RequireRateLimit("RLIMIT FW limited 2 60", false, 2, 0, 60)
 	first.Close()
 
 	second := startTestDatabase(t, walDir)
 	defer second.Close()
 
 	second.RequireQuery("GET durable 60", "ok|2")
+	second.RequireQuery("GET limited 60", "ok|2")
 }
 
 func TestTCPDatabaseRecoversFromTruncatedWALTailAfterRestart(t *testing.T) {
@@ -170,6 +181,41 @@ func (a *testDatabaseApp) RequireQuery(query, expected string) {
 	response, err := a.client.Send(ctx, []byte(query))
 	require.NoError(a.t, err)
 	require.Equal(a.t, expected, string(response))
+}
+
+func (a *testDatabaseApp) RequireRateLimit(
+	query string,
+	allowed bool,
+	current database.ValueType,
+	remaining database.ValueType,
+	window uint32,
+) {
+	a.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	response, err := a.client.Send(ctx, []byte(query))
+	require.NoError(a.t, err)
+
+	parts := strings.Split(string(response), "|")
+	require.Len(a.t, parts, 2)
+	require.Equal(a.t, "ok", parts[0])
+
+	fields := strings.Split(parts[1], ";")
+	require.Len(a.t, fields, 4)
+	if allowed {
+		require.Equal(a.t, "1", fields[0])
+	} else {
+		require.Equal(a.t, "0", fields[0])
+	}
+	require.Equal(a.t, strconv.FormatInt(int64(current), 10), fields[1])
+	require.Equal(a.t, strconv.FormatInt(int64(remaining), 10), fields[2])
+
+	resetAfter, err := strconv.ParseUint(fields[3], 10, 32)
+	require.NoError(a.t, err)
+	require.GreaterOrEqual(a.t, uint32(resetAfter), uint32(1))
+	require.LessOrEqual(a.t, uint32(resetAfter), window)
 }
 
 func (a *testDatabaseApp) Close() {

@@ -1,6 +1,7 @@
 package inmemory
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -39,6 +40,59 @@ func (e *FqElem) Incr(txCtx database.TxContext) database.ValueType {
 		value = 0
 	}
 
+	return e.applyIncrementLocked(txCtx, value)
+}
+
+func (e *FqElem) RLimitFixedWindow(
+	txCtx database.TxContext,
+	limit database.ValueType,
+	beforeApply func() error,
+) (database.RateLimitResult, error) {
+	batchStartsAt := startOfBatch(txCtx.CurrTime, e.batchSize)
+	batchEndsAt := endOfBatch(txCtx.CurrTime, e.batchSize)
+	resetAfter := uint32(0)
+	if batchEndsAt >= txCtx.CurrTime {
+		resetAfter = uint32(batchEndsAt - txCtx.CurrTime + 1)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	value := e.value
+	if e.lastTxAt < batchStartsAt {
+		value = 0
+	}
+
+	if value >= limit {
+		return database.RateLimitResult{
+			Allowed:    false,
+			Current:    value,
+			Remaining:  0,
+			ResetAfter: resetAfter,
+		}, nil
+	}
+
+	if beforeApply != nil {
+		if err := beforeApply(); err != nil {
+			return database.RateLimitResult{}, fmt.Errorf("before apply rate limit increment: %w", err)
+		}
+	}
+
+	current := e.applyIncrementLocked(txCtx, value)
+	remaining := limit - current
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return database.RateLimitResult{
+		Allowed:    true,
+		Current:    current,
+		Remaining:  remaining,
+		ResetAfter: resetAfter,
+	}, nil
+}
+
+func (e *FqElem) applyIncrementLocked(txCtx database.TxContext, value database.ValueType) database.ValueType {
 	if e.dumpVer != txCtx.DumpTx {
 		if txCtx.Tx == txCtx.DumpTx {
 			e.dumpValue = value + 1

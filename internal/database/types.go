@@ -37,3 +37,10 @@ type DumpChunk struct {
 	Elems   []DumpElem
 	Applied chan error
 }
+
+type RateLimitResult struct {
+	Allowed    bool
+	Current    ValueType
+	Remaining  ValueType
+	ResetAfter uint32
+}

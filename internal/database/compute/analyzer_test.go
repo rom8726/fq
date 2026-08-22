@@ -44,6 +44,10 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"MSGSIZE", "key"},
 			err:    compute.ErrInvalidArguments,
 		},
+		"invalid number arguments for rlimit query": {
+			tokens: []string{"RLIMIT", "FW", "key", "100"},
+			err:    compute.ErrInvalidArguments,
+		},
 		"valid incr query": {
 			tokens: []string{"INCR", "key", "60"},
 			query:  compute.NewQuery(compute.IncrCommandID, []string{"key", "60"}),
@@ -63,6 +67,10 @@ func TestAnalyzeQuery(t *testing.T) {
 		"valid message size query": {
 			tokens: []string{"MSGSIZE"},
 			query:  compute.NewQuery(compute.MsgSizeCommandID, []string{}),
+		},
+		"valid rlimit query": {
+			tokens: []string{"RLIMIT", "FW", "key", "100", "60"},
+			query:  compute.NewQuery(compute.RLimitCommandID, []string{"FW", "key", "100", "60"}),
 		},
 	}
 

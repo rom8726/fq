@@ -14,6 +14,12 @@ import (
 
 type Engine interface {
 	Incr(database.TxContext, database.BatchKey) database.ValueType
+	RLimitFixedWindow(
+		database.TxContext,
+		database.BatchKey,
+		database.ValueType,
+		func() error,
+	) (database.RateLimitResult, error)
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
 	MDel(database.TxContext, []database.BatchKey) []bool
@@ -170,6 +176,27 @@ func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.Val
 	}
 
 	return s.engine.Incr(txCtx, key), nil
+}
+
+func (s *Storage) RLimitFixedWindow(
+	ctx context.Context,
+	key database.BatchKey,
+	limit database.ValueType,
+) (database.RateLimitResult, error) {
+	txCtx := s.makeTxContext()
+
+	return s.engine.RLimitFixedWindow(txCtx, key, limit, func() error {
+		if s.wal == nil {
+			return nil
+		}
+
+		future := s.wal.Incr(ctx, txCtx, key)
+		if s.syncCommit {
+			return future.Get()
+		}
+
+		return nil
+	})
 }
 
 func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueType, error) {
