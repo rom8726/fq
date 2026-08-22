@@ -86,20 +86,37 @@ func (w *WAL) Start() {
 
 		batch := make([]Log, 0, w.maxBatchSize)
 		timer := time.NewTimer(w.flushTimeout)
+		if !timer.Stop() {
+			<-timer.C
+		}
 		defer timer.Stop()
 
-		resetTimer := func() {
+		var timerC <-chan time.Time
+
+		startTimer := func() {
+			if timerC != nil {
+				return
+			}
+			timer.Reset(w.flushTimeout)
+			timerC = timer.C
+		}
+
+		stopTimer := func() {
+			if timerC == nil {
+				return
+			}
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
 				default:
 				}
 			}
-			timer.Reset(w.flushTimeout)
+			timerC = nil
 		}
 
 		flush := func() {
 			if len(batch) == 0 {
+				stopTimer()
 				return
 			}
 
@@ -108,6 +125,32 @@ func (w *WAL) Start() {
 			observability.ObserveWALFlushLatency(time.Since(start))
 			observability.SetWALQueueDepth(len(w.records))
 			batch = make([]Log, 0, w.maxBatchSize)
+			stopTimer()
+		}
+
+		appendRecord := func(record Log) {
+			if len(batch) == 0 {
+				startTimer()
+			}
+			batch = append(batch, record)
+			if len(batch) >= w.maxBatchSize {
+				flush()
+			}
+		}
+
+		drainReadyRecords := func() {
+			for len(batch) < w.maxBatchSize {
+				select {
+				case record := <-w.records:
+					observability.SetWALQueueDepth(len(w.records))
+					if len(batch) == 0 {
+						startTimer()
+					}
+					batch = append(batch, record)
+				default:
+					return
+				}
+			}
 		}
 
 		for {
@@ -117,11 +160,7 @@ func (w *WAL) Start() {
 					select {
 					case record := <-w.records:
 						observability.SetWALQueueDepth(len(w.records))
-						batch = append(batch, record)
-						if len(batch) >= w.maxBatchSize {
-							flush()
-							resetTimer()
-						}
+						appendRecord(record)
 					default:
 						flush()
 
@@ -130,14 +169,11 @@ func (w *WAL) Start() {
 				}
 			case record := <-w.records:
 				observability.SetWALQueueDepth(len(w.records))
-				batch = append(batch, record)
-				if len(batch) >= w.maxBatchSize {
-					flush()
-					resetTimer()
-				}
-			case <-timer.C:
+				appendRecord(record)
+			case <-timerC:
+				timerC = nil
+				drainReadyRecords()
 				flush()
-				resetTimer()
 			}
 		}
 	}()

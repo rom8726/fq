@@ -129,6 +129,29 @@ func TestWALQueueCapacityCanExceedBatchSize(t *testing.T) {
 	requireFutureError(t, third, nil)
 }
 
+func TestWALFlushTimeoutStartsAfterFirstRecord(t *testing.T) {
+	writer := &notifyingFSWriter{
+		wrote: make(chan struct{}, 1),
+	}
+	logger := zerolog.Nop()
+	flushTimeout := 80 * time.Millisecond
+	wal := NewWAL(writer, nil, nil, flushTimeout, 10, 10, "", &logger)
+	wal.Start()
+	defer wal.Shutdown()
+
+	time.Sleep(flushTimeout * 2)
+
+	future := wal.Incr(context.Background(), testTxContext(1), testBatchKey("key"))
+	select {
+	case <-writer.wrote:
+		t.Fatal("WAL flushed before the adaptive timeout elapsed")
+	case <-time.After(flushTimeout / 4):
+	}
+
+	requireFutureError(t, future, nil)
+	require.Equal(t, []int{1}, writer.BatchSizes())
+}
+
 func TestWALShutdownUnblocksBackpressuredPush(t *testing.T) {
 	writer := &blockingFSWriter{
 		started: make(chan struct{}),
@@ -200,6 +223,21 @@ func (w *closeRecordingFSWriter) Close() error {
 	})
 
 	return nil
+}
+
+type notifyingFSWriter struct {
+	recordingFSWriter
+
+	wrote chan struct{}
+}
+
+func (w *notifyingFSWriter) WriteBatch(batch []Log) {
+	w.recordingFSWriter.WriteBatch(batch)
+
+	select {
+	case w.wrote <- struct{}{}:
+	default:
+	}
 }
 
 type blockingFSWriter struct {
