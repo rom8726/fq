@@ -27,6 +27,48 @@ Use fq when you need:
 - CLI client and live benchmark client
 - Go client: [fq-client-go](https://github.com/fq-db/fq-client-go)
 
+## Installation
+
+### Docker
+
+```shell
+docker run --rm \
+  -p 1945:1945 \
+  -p 1946:1946 \
+  -p 2112:2112 \
+  ghcr.io/fq-db/fq:latest
+```
+
+To use a local configuration file:
+
+```shell
+docker run --rm \
+  -p 1945:1945 \
+  -p 1946:1946 \
+  -p 2112:2112 \
+  -v "$PWD/config.yml:/app/config.yml:ro" \
+  -v "$PWD/data:/app/data" \
+  ghcr.io/fq-db/fq:latest
+```
+
+### Binaries
+
+Prebuilt binaries for Linux and macOS are attached to each
+[GitHub Release](https://github.com/fq-db/fq/releases). Release archives include:
+
+- `fq` - server
+- `fq-cli` - CLI client
+- `fq-bench` - benchmark client
+- example configuration files
+
+### From Source
+
+```shell
+git clone https://github.com/fq-db/fq.git
+cd fq
+make build
+```
+
 ## Commands
 
 fq uses a small text protocol over framed TCP requests.

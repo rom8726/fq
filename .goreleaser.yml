@@ -1,0 +1,109 @@
+version: 2
+
+project_name: fq
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: fq
+    main: ./cmd/fq
+    binary: fq
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Commit={{ .Commit }}
+
+  - id: fq-cli
+    main: ./cmd/cli
+    binary: fq-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Commit={{ .Commit }}
+
+  - id: fq-bench
+    main: ./cmd/bench
+    binary: fq-bench
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Commit={{ .Commit }}
+
+archives:
+  - id: binaries
+    ids:
+      - fq
+      - fq-cli
+      - fq-bench
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+      - config.yml
+      - config-slave.yml
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+dockers_v2:
+  - images:
+      - ghcr.io/fq-db/fq
+    tags:
+      - "{{ .Tag }}"
+      - latest
+    dockerfile: Dockerfile.goreleaser
+    ids:
+      - fq
+      - fq-cli
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    extra_files:
+      - config.yml
+    labels:
+      org.opencontainers.image.title: fq
+      org.opencontainers.image.description: Fast quotas database for rate limiting and quota counters
+      org.opencontainers.image.source: https://github.com/fq-db/fq
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+
+release:
+  github:
+    owner: fq-db
+    name: fq

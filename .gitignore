@@ -23,6 +23,7 @@ go.work.sum
 
 # Build artifacts
 bin/
+dist/
 
 # Runtime data
 app/data/

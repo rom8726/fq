@@ -1,0 +1,13 @@
+.git
+.github
+.gocache
+.gomodcache
+.golangci-cache
+.idea
+.vscode
+app/data
+app/data-slave
+bin
+dist
+*.test
+*.out
