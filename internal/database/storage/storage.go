@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -68,6 +69,8 @@ type Replica interface {
 	Shutdown()
 }
 
+var ErrInvalidLimitEventQueueCapacity = errors.New("limit event queue capacity is invalid")
+
 type Storage struct {
 	engine        Engine
 	wal           WAL
@@ -78,8 +81,11 @@ type Storage struct {
 	dumpInterval  time.Duration
 	syncCommit    bool
 
-	tx     atomic.Uint64
-	dumpTx atomic.Uint64
+	tx                      atomic.Uint64
+	dumpTx                  atomic.Uint64
+	limitEvents             map[chan database.LimitEvent]struct{}
+	limitEventQueueCapacity int
+	eventsMu                sync.RWMutex
 }
 
 func NewStorage(
@@ -91,6 +97,7 @@ func NewStorage(
 	cleanInterval time.Duration,
 	dumpInterval time.Duration,
 	syncCommit bool,
+	limitEventQueueCapacity int,
 ) (*Storage, error) {
 	if engine == nil {
 		return nil, errors.New("engine is invalid")
@@ -100,15 +107,21 @@ func NewStorage(
 		return nil, errors.New("logger is invalid")
 	}
 
+	if limitEventQueueCapacity <= 0 {
+		return nil, ErrInvalidLimitEventQueueCapacity
+	}
+
 	return &Storage{
-		engine:        engine,
-		wal:           wal,
-		dumper:        dumper,
-		replica:       replica,
-		logger:        logger,
-		cleanInterval: cleanInterval,
-		dumpInterval:  dumpInterval,
-		syncCommit:    syncCommit,
+		engine:                  engine,
+		wal:                     wal,
+		dumper:                  dumper,
+		replica:                 replica,
+		logger:                  logger,
+		cleanInterval:           cleanInterval,
+		dumpInterval:            dumpInterval,
+		syncCommit:              syncCommit,
+		limitEventQueueCapacity: limitEventQueueCapacity,
+		limitEvents:             make(map[chan database.LimitEvent]struct{}),
 	}, nil
 }
 
@@ -206,7 +219,7 @@ func (s *Storage) RLimitFixedWindow(
 ) (database.RateLimitResult, error) {
 	txCtx := s.makeTxContext()
 
-	return s.engine.RLimitFixedWindow(txCtx, key, limit, func() error {
+	result, err := s.engine.RLimitFixedWindow(txCtx, key, limit, func() error {
 		if s.wal == nil {
 			return nil
 		}
@@ -218,6 +231,13 @@ func (s *Storage) RLimitFixedWindow(
 
 		return nil
 	})
+	if err != nil {
+		return database.RateLimitResult{}, err
+	}
+
+	s.publishLimitFilled(key, result)
+
+	return result, nil
 }
 
 func (s *Storage) RLimitSlidingWindow(
@@ -227,7 +247,7 @@ func (s *Storage) RLimitSlidingWindow(
 ) (database.RateLimitResult, error) {
 	txCtx := s.makeTxContext()
 
-	return s.engine.RLimitSlidingWindow(txCtx, key, limit, func() error {
+	result, err := s.engine.RLimitSlidingWindow(txCtx, key, limit, func() error {
 		if s.wal == nil {
 			return nil
 		}
@@ -239,6 +259,13 @@ func (s *Storage) RLimitSlidingWindow(
 
 		return nil
 	})
+	if err != nil {
+		return database.RateLimitResult{}, err
+	}
+
+	s.publishLimitFilled(key, result)
+
+	return result, nil
 }
 
 func (s *Storage) RLimitTokenBucket(
@@ -249,7 +276,7 @@ func (s *Storage) RLimitTokenBucket(
 ) (database.RateLimitResult, error) {
 	txCtx := s.makeTxContext()
 
-	return s.engine.RLimitTokenBucket(txCtx, key, capacity, refillAmount, func() error {
+	result, err := s.engine.RLimitTokenBucket(txCtx, key, capacity, refillAmount, func() error {
 		if s.wal == nil {
 			return nil
 		}
@@ -261,6 +288,13 @@ func (s *Storage) RLimitTokenBucket(
 
 		return nil
 	})
+	if err != nil {
+		return database.RateLimitResult{}, err
+	}
+
+	s.publishLimitFilled(key, result)
+
+	return result, nil
 }
 
 func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueType, error) {
@@ -324,6 +358,62 @@ func (s *Storage) Watch(ctx context.Context, key database.BatchKey) (database.Va
 			if currentValue != lastValue {
 				return currentValue, nil
 			}
+		}
+	}
+}
+
+//nolint:gocritic // ok
+func (s *Storage) SubscribeLimitEvents(ctx context.Context) (<-chan database.LimitEvent, func()) {
+	ch := make(chan database.LimitEvent, s.limitEventQueueCapacity)
+
+	s.eventsMu.Lock()
+	s.limitEvents[ch] = struct{}{}
+	s.eventsMu.Unlock()
+
+	var once sync.Once
+	unsubscribe := func() {
+		once.Do(func() {
+			s.eventsMu.Lock()
+			delete(s.limitEvents, ch)
+			close(ch)
+			s.eventsMu.Unlock()
+		})
+	}
+
+	go func() {
+		<-ctx.Done()
+		unsubscribe()
+	}()
+
+	return ch, unsubscribe
+}
+
+func (s *Storage) publishLimitFilled(
+	key database.BatchKey,
+	result database.RateLimitResult,
+) {
+	if !result.LimitFilled {
+		return
+	}
+
+	event := database.LimitEvent{
+		Key:        key.Key,
+		Window:     key.BatchSize,
+		Current:    result.Current,
+		ResetAfter: result.ResetAfter,
+	}
+
+	s.eventsMu.RLock()
+	defer s.eventsMu.RUnlock()
+
+	for ch := range s.limitEvents {
+		select {
+		case ch <- event:
+		default:
+			s.logger.Warn().
+				Str("key", event.Key).
+				Uint32("window", event.Window).
+				Msg("limit event subscriber is slow, dropping event")
 		}
 	}
 }

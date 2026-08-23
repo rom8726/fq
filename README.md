@@ -109,6 +109,7 @@ GET <key> <window>
 DEL <key> <window>
 MDEL <key> <window> <key> <window> ...
 WATCH <key> <window>
+STREAM
 MSGSIZE
 ```
 
@@ -117,9 +118,14 @@ MSGSIZE
 - `DEL`: deletes counter and limiter state for the key/window pair
 - `MDEL`: deletes multiple key/window pairs
 - `WATCH`: waits until a key value changes or the request times out
+- `STREAM`: streams limit-filled events as `ok|<key>;<window>;<current>;<reset_after>` frames
 - `MSGSIZE`: returns the maximum configured request/response payload size
 
 Counter commands are useful for frequency capping and quota tracking where the application performs the decision itself.
+
+`STREAM` emits an event when a rate-limit command moves a key/window from below the limit to filled. Rejected rate-limit requests do not emit events. `current` and `reset_after` match the `RLIMIT` result that filled the limit.
+
+Clients should reconnect and resubscribe after idle disconnects. The Go TCP client returns `network.ErrIdleTimeout` when its local idle deadline expires while waiting for a frame; if the server closes the connection first, clients may receive `io.EOF` or another connection-closed error instead.
 
 ## Quick Start
 
@@ -230,6 +236,17 @@ wal:
 - `off`: the command is applied to the in-memory engine and acknowledged without waiting for WAL sync. WAL is still written in the background, but a crash can lose commands that were already acknowledged and not flushed yet.
 
 For quota and rate-limit workloads, `sync_commit: off` is often the better default: losing a small recent slice of counters after a crash can be acceptable, while low latency and high throughput are usually critical. Use `sync_commit: on` when acknowledged writes must survive a process or machine crash.
+
+### Stream Event Queue
+
+`engine.limit_event_queue_capacity` controls the per-subscriber queue size for `STREAM` events:
+
+```yaml
+engine:
+  limit_event_queue_capacity: 16
+```
+
+If a stream subscriber is slower than incoming limit-filled events and its queue is full, new events for that subscriber are dropped.
 
 ## Replication
 

@@ -10,6 +10,7 @@ const (
 	MsgSizeCommandID
 	MDelCommandID
 	WatchCommandID
+	StreamCommandID
 	RLimitCommandID
 	RLimitSlidingWindowCommandID
 	RLimitTokenBucketCommandID
@@ -23,6 +24,7 @@ var (
 	MsgSizeCommand = "MSGSIZE"
 	MDelCommand    = "MDEL"
 	WatchCommand   = "WATCH"
+	StreamCommand  = "STREAM"
 	RLimitCommand  = "RLIMIT"
 )
 
@@ -34,6 +36,7 @@ var commandNamesToID = map[string]CommandID{
 	MsgSizeCommand: MsgSizeCommandID,
 	MDelCommand:    MDelCommandID,
 	WatchCommand:   WatchCommandID,
+	StreamCommand:  StreamCommandID,
 	RLimitCommand:  RLimitCommandID,
 }
 

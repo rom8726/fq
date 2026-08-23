@@ -27,6 +27,8 @@ const (
 	ReplicaTypeSlave  = "slave"
 
 	configDefaultFilePath = "config.yml"
+
+	DefaultLimitEventQueueCapacity = 16
 )
 
 type Config struct {
@@ -83,8 +85,17 @@ type ObservabilityConfig struct {
 }
 
 type EngineConfig struct {
-	Type          string        `yaml:"type"`
-	CleanInterval time.Duration `yaml:"clean_interval"`
+	Type                    string        `yaml:"type"`
+	CleanInterval           time.Duration `yaml:"clean_interval"`
+	LimitEventQueueCapacity int           `yaml:"limit_event_queue_capacity"`
+}
+
+func (cfg EngineConfig) LimitEventQueueCapacityValue() int {
+	if cfg.LimitEventQueueCapacity == 0 {
+		return DefaultLimitEventQueueCapacity
+	}
+
+	return cfg.LimitEventQueueCapacity
 }
 
 type WALConfig struct {
@@ -164,6 +175,7 @@ func validate(cfg *Config) error {
 	err = validation.ValidateStruct(&cfg.Engine,
 		validation.Field(&cfg.Engine.Type, validation.Required, validation.In("in_memory")),
 		validation.Field(&cfg.Engine.CleanInterval, validation.Required, positiveDurationRule),
+		validation.Field(&cfg.Engine.LimitEventQueueCapacity, validation.Min(0)),
 	)
 	if err != nil {
 		return fmt.Errorf("validate engine section: %w", err)

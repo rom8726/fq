@@ -87,5 +87,5 @@ func TestTCPIdleClientConnection(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	_, err = client.Send(context.Background(), []byte(request))
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrIdleTimeout)
 }

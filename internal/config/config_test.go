@@ -15,6 +15,22 @@ func TestValidateAcceptsValidConfig(t *testing.T) {
 	require.NoError(t, validate(&cfg))
 }
 
+func TestEngineLimitEventQueueCapacityDefaults(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.LimitEventQueueCapacity = 0
+
+	require.NoError(t, validate(&cfg))
+	require.Equal(t, DefaultLimitEventQueueCapacity, cfg.Engine.LimitEventQueueCapacityValue())
+}
+
+func TestEngineLimitEventQueueCapacityUsesConfiguredValue(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.LimitEventQueueCapacity = 64
+
+	require.NoError(t, validate(&cfg))
+	require.Equal(t, 64, cfg.Engine.LimitEventQueueCapacityValue())
+}
+
 func TestPersistenceModeDefaultsToWALAndDump(t *testing.T) {
 	cfg := validConfig()
 	cfg.Persistence = PersistenceConfig{}
@@ -103,6 +119,13 @@ func TestValidateRejectsInvalidNetworkConfig(t *testing.T) {
 			require.Error(t, validate(&cfg))
 		})
 	}
+}
+
+func TestValidateRejectsInvalidEngineConfig(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.LimitEventQueueCapacity = -1
+
+	require.Error(t, validate(&cfg))
 }
 
 func TestValidateRejectsInvalidObservabilityConfig(t *testing.T) {

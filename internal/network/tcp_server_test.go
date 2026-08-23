@@ -78,6 +78,45 @@ func TestTCPServerHandlesMultipleFrames(t *testing.T) {
 	}
 }
 
+func TestTCPServerHandlesStreamedResponses(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	address := freeTCPAddress(t)
+	maxMessageSize := 2048
+	logger := zerolog.Nop()
+	server, err := NewTCPServer(address, 10, maxMessageSize, time.Minute, &logger)
+	require.NoError(t, err)
+
+	go func() {
+		require.NoError(t, server.HandleQueryStreams(ctx, func(
+			_ context.Context,
+			buffer []byte,
+			write func([]byte) error,
+		) error {
+			require.Equal(t, []byte("stream"), buffer)
+			require.NoError(t, write([]byte("first")))
+
+			return write([]byte("second"))
+		}))
+	}()
+
+	connection := dialEventually(t, address)
+	defer func() { _ = connection.Close() }()
+
+	require.NoError(t, writeFrame(connection, []byte("stream")))
+
+	first, err := readFrame(connection, maxMessageSize)
+	require.NoError(t, err)
+	require.Equal(t, []byte("first"), first)
+
+	second, err := readFrame(connection, maxMessageSize)
+	require.NoError(t, err)
+	require.Equal(t, []byte("second"), second)
+}
+
 func TestTCPServerRejectsOversizedFrame(t *testing.T) {
 	t.Parallel()
 

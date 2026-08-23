@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
+	"fq/internal/config"
 	"fq/internal/database"
 	"fq/internal/database/compute"
 	"fq/internal/database/storage"
@@ -168,7 +169,17 @@ func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump
 		dumpStore = dumper.New(engine, walStore, dumpDir)
 		dumpStorage = dumpStore
 	}
-	strg, err := storage.NewStorage(engine, walStore, dumpStorage, nil, &logger, time.Hour, time.Hour, true)
+	strg, err := storage.NewStorage(
+		engine,
+		walStore,
+		dumpStorage,
+		nil,
+		&logger,
+		time.Hour,
+		time.Hour,
+		true,
+		config.DefaultLimitEventQueueCapacity,
+	)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

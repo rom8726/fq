@@ -2,10 +2,14 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
+
+var ErrIdleTimeout = errors.New("idle timeout")
 
 type TCPClient struct {
 	connection     net.Conn
@@ -37,30 +41,53 @@ func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration)
 }
 
 func (c *TCPClient) Send(ctx context.Context, request []byte) ([]byte, error) {
+	var result []byte
+	err := c.Stream(ctx, request, func(message []byte) error {
+		result = make([]byte, len(message))
+		copy(result, message)
+
+		return io.EOF
+	})
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]byte) error) error {
 	if len(request) > c.maxMessageSize {
-		return nil, fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
+		return fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
 	}
 
 	if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
-		return nil, err
+		return c.normalizeTimeoutError(ctx, err)
 	}
 
 	if err := writeFrame(c.connection, request); err != nil {
-		return nil, err
+		return c.normalizeTimeoutError(ctx, err)
 	}
 
 	response := c.bufferPool.Get()
 	defer c.bufferPool.Put(response)
 
-	message, err := readFrameInto(c.connection, c.maxMessageSize, response)
-	if err != nil {
-		return nil, err
+	for {
+		if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
+			return c.normalizeTimeoutError(ctx, err)
+		}
+
+		message, err := readFrameInto(c.connection, c.maxMessageSize, response)
+		if err != nil {
+			return c.normalizeTimeoutError(ctx, err)
+		}
+
+		result := make([]byte, len(message))
+		copy(result, message)
+
+		if err := handle(result); err != nil {
+			return err
+		}
 	}
-
-	result := make([]byte, len(message))
-	copy(result, message)
-
-	return result, nil
 }
 
 func (c *TCPClient) Close() error {
@@ -84,4 +111,21 @@ func (c *TCPClient) deadline(ctx context.Context) time.Time {
 	}
 
 	return deadline
+}
+
+func (c *TCPClient) normalizeTimeoutError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return ErrIdleTimeout
+	}
+
+	return err
 }

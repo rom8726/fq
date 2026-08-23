@@ -78,9 +78,37 @@ func main() {
 				timeout = 30 * time.Second
 				fmt.Println("Watching for changes... (press Ctrl+C to cancel)")
 			}
+			if isStreamCommand(request) {
+				timeout = time.Hour
+				fmt.Println("Streaming limit events... (press Ctrl+C to cancel)")
+			}
 
 			ctx, cancel := context.WithDeadline(context.Background(), start.Add(timeout))
 			defer cancel()
+
+			if isStreamCommand(request) {
+				err := client.Stream(ctx, []byte(request), func(response []byte) error {
+					fmt.Printf("%s\t\t\t\tElapsed: %s\n", parseResp(response), time.Since(start).String())
+
+					return nil
+				})
+				if err != nil {
+					if errors.Is(err, network.ErrIdleTimeout) {
+						fmt.Println("Stream idle timeout")
+
+						return
+					}
+
+					if errors.Is(err, context.DeadlineExceeded) {
+						fmt.Println("Stream timeout")
+						return
+					}
+
+					logger.Fatal().Err(err).Msg("failed to stream query")
+				}
+
+				return
+			}
 
 			response, err := client.Send(ctx, []byte(request))
 			elapsed := time.Since(start)
@@ -126,4 +154,9 @@ func parseResp(response []byte) aurora.Value {
 func isWatchCommand(request string) bool {
 	upperRequest := strings.ToUpper(strings.TrimSpace(request))
 	return strings.HasPrefix(upperRequest, "WATCH ")
+}
+
+func isStreamCommand(request string) bool {
+	upperRequest := strings.ToUpper(strings.TrimSpace(request))
+	return upperRequest == "STREAM"
 }

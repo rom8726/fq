@@ -85,10 +85,11 @@ func (e *FqElem) RLimitFixedWindow(
 	}
 
 	return database.RateLimitResult{
-		Allowed:    true,
-		Current:    current,
-		Remaining:  remaining,
-		ResetAfter: resetAfter,
+		Allowed:     true,
+		Current:     current,
+		Remaining:   remaining,
+		ResetAfter:  resetAfter,
+		LimitFilled: value < limit && current >= limit,
 	}, nil
 }
 

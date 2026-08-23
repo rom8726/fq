@@ -32,6 +32,7 @@ func (e *TokenBucketElem) RLimit(
 	defer e.mu.Unlock()
 
 	e.refillLocked(txCtx.CurrTime, capacity, refillAmount)
+	previous := usedCapacity(e.tokens, capacity)
 	if e.tokens <= 0 {
 		return e.makeResultLocked(txCtx.CurrTime, capacity, false), nil
 	}
@@ -44,7 +45,10 @@ func (e *TokenBucketElem) RLimit(
 
 	e.consumeLocked(txCtx)
 
-	return e.makeResultLocked(txCtx.CurrTime, capacity, true), nil
+	result := e.makeResultLocked(txCtx.CurrTime, capacity, true)
+	result.LimitFilled = previous < capacity && result.Current >= capacity
+
+	return result, nil
 }
 
 func (e *TokenBucketElem) AddEvent(
@@ -161,6 +165,23 @@ func (e *TokenBucketElem) makeResultLocked(
 		Remaining:  remaining,
 		ResetAfter: resetAfter,
 	}
+}
+
+func usedCapacity(tokens, capacity database.ValueType) database.ValueType {
+	remaining := tokens
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining > capacity {
+		remaining = capacity
+	}
+
+	current := capacity - remaining
+	if current < 0 {
+		return 0
+	}
+
+	return current
 }
 
 func (e *TokenBucketElem) nextRefillAfterLocked(now database.TxTime) uint32 {

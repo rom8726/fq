@@ -17,6 +17,7 @@ wal:
 engine:
   type: in_memory
   clean_interval: 5m
+  limit_event_queue_capacity: 16
 dump:
   interval: 1m
   directory: ./app/data-slave/

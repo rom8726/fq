@@ -72,6 +72,10 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"MSGSIZE"},
 			query:  compute.NewQuery(compute.MsgSizeCommandID, []string{}),
 		},
+		"valid stream query": {
+			tokens: []string{"STREAM"},
+			query:  compute.NewQuery(compute.StreamCommandID, []string{}),
+		},
 		"valid rlimit query": {
 			tokens: []string{"RLIMIT", "FW", "key", "100", "60"},
 			query:  compute.NewQuery(compute.RLimitCommandID, []string{"FW", "key", "100", "60"}),

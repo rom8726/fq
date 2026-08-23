@@ -16,6 +16,7 @@ const (
 	msgSizeQueryArgumentsNumber = 0
 	mdelQueryArgumentsNumber    = -2
 	watchQueryArgumentsNumber   = 2
+	streamQueryArgumentsNumber  = 0
 	rlimitQueryArgumentsNumber  = -3
 )
 
@@ -26,6 +27,7 @@ var queryArgumentsNumber = map[CommandID]int{
 	MsgSizeCommandID: msgSizeQueryArgumentsNumber,
 	MDelCommandID:    mdelQueryArgumentsNumber,
 	WatchCommandID:   watchQueryArgumentsNumber,
+	StreamCommandID:  streamQueryArgumentsNumber,
 	RLimitCommandID:  rlimitQueryArgumentsNumber,
 }
 

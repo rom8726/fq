@@ -44,8 +44,16 @@ type DumpChunk struct {
 }
 
 type RateLimitResult struct {
-	Allowed    bool
+	Allowed     bool
+	Current     ValueType
+	Remaining   ValueType
+	ResetAfter  uint32
+	LimitFilled bool
+}
+
+type LimitEvent struct {
+	Key        string
+	Window     uint32
 	Current    ValueType
-	Remaining  ValueType
 	ResetAfter uint32
 }

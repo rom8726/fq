@@ -41,13 +41,13 @@ func (e *SlidingWindowElem) RLimit(
 	defer e.mu.Unlock()
 
 	e.pruneLocked(txCtx.CurrTime)
-	current, oldest := e.currentLocked()
+	previous, oldest := e.currentLocked()
 	resetAfter := e.resetAfter(txCtx.CurrTime, oldest)
 
-	if current >= limit {
+	if previous >= limit {
 		return database.RateLimitResult{
 			Allowed:    false,
-			Current:    current,
+			Current:    previous,
 			Remaining:  0,
 			ResetAfter: resetAfter,
 		}, nil
@@ -59,7 +59,7 @@ func (e *SlidingWindowElem) RLimit(
 		}
 	}
 
-	current = e.addEventLocked(txCtx.CurrTime, txCtx.Tx)
+	current := e.addEventLocked(txCtx.CurrTime, txCtx.Tx)
 	_, oldest = e.currentLocked()
 	resetAfter = e.resetAfter(txCtx.CurrTime, oldest)
 	remaining := limit - current
@@ -68,10 +68,11 @@ func (e *SlidingWindowElem) RLimit(
 	}
 
 	return database.RateLimitResult{
-		Allowed:    true,
-		Current:    current,
-		Remaining:  remaining,
-		ResetAfter: resetAfter,
+		Allowed:     true,
+		Current:     current,
+		Remaining:   remaining,
+		ResetAfter:  resetAfter,
+		LimitFilled: previous < limit && current >= limit,
 	}, nil
 }
 

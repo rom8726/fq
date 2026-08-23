@@ -147,11 +147,16 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 	})
 
 	group.Go(func() error {
-		return i.server.HandleQueries(groupCtx, func(ctx context.Context, query []byte) ([]byte, error) {
-			response := db.HandleQuery(ctx, string(query))
-
-			return []byte(response), nil
+		return i.server.HandleQueryStreams(groupCtx, func(
+			ctx context.Context,
+			query []byte,
+			write func([]byte) error,
+		) error {
+			return db.HandleQueryStream(ctx, string(query), func(response string) error {
+				return write([]byte(response))
+			})
 		})
+
 	})
 
 	return group.Wait()
@@ -184,6 +189,7 @@ func (i *Initializer) createStorageLayer() (*storage.Storage, error) {
 		i.cfg.Engine.CleanInterval,
 		i.cfg.Dump.Interval,
 		walSyncCommit,
+		i.cfg.Engine.LimitEventQueueCapacityValue(),
 	)
 	if err != nil {
 		i.logger.Error().Err(err).Msg("failed to initialize storage layer")

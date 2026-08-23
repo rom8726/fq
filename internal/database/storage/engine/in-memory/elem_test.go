@@ -113,10 +113,11 @@ func TestElem_RLimitFixedWindow(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, database.RateLimitResult{
-		Allowed:    true,
-		Current:    2,
-		Remaining:  0,
-		ResetAfter: 59,
+		Allowed:     true,
+		Current:     2,
+		Remaining:   0,
+		ResetAfter:  59,
+		LimitFilled: true,
 	}, second)
 
 	denied, err := e.RLimitFixedWindow(
@@ -169,10 +170,11 @@ func TestSlidingWindowElem_RLimit(t *testing.T) {
 	second, err := e.RLimit(database.TxContext{Tx: 1001, CurrTime: 110}, 2, beforeApply)
 	require.NoError(t, err)
 	require.Equal(t, database.RateLimitResult{
-		Allowed:    true,
-		Current:    2,
-		Remaining:  0,
-		ResetAfter: 50,
+		Allowed:     true,
+		Current:     2,
+		Remaining:   0,
+		ResetAfter:  50,
+		LimitFilled: true,
 	}, second)
 
 	denied, err := e.RLimit(database.TxContext{Tx: 1002, CurrTime: 120}, 2, beforeApply)
@@ -188,10 +190,11 @@ func TestSlidingWindowElem_RLimit(t *testing.T) {
 	afterOldestExpires, err := e.RLimit(database.TxContext{Tx: 1003, CurrTime: 160}, 2, beforeApply)
 	require.NoError(t, err)
 	require.Equal(t, database.RateLimitResult{
-		Allowed:    true,
-		Current:    2,
-		Remaining:  0,
-		ResetAfter: 10,
+		Allowed:     true,
+		Current:     2,
+		Remaining:   0,
+		ResetAfter:  10,
+		LimitFilled: true,
 	}, afterOldestExpires)
 	require.Equal(t, 3, beforeApplyCalls)
 }
@@ -243,10 +246,11 @@ func TestTokenBucketElem_RLimit(t *testing.T) {
 	third, err := e.RLimit(database.TxContext{Tx: 3, CurrTime: 100}, 3, 1, beforeApply)
 	require.NoError(t, err)
 	require.Equal(t, database.RateLimitResult{
-		Allowed:    true,
-		Current:    3,
-		Remaining:  0,
-		ResetAfter: 10,
+		Allowed:     true,
+		Current:     3,
+		Remaining:   0,
+		ResetAfter:  10,
+		LimitFilled: true,
 	}, third)
 
 	denied, err := e.RLimit(database.TxContext{Tx: 4, CurrTime: 105}, 3, 1, beforeApply)
@@ -261,10 +265,11 @@ func TestTokenBucketElem_RLimit(t *testing.T) {
 	refilled, err := e.RLimit(database.TxContext{Tx: 5, CurrTime: 110}, 3, 1, beforeApply)
 	require.NoError(t, err)
 	require.Equal(t, database.RateLimitResult{
-		Allowed:    true,
-		Current:    3,
-		Remaining:  0,
-		ResetAfter: 10,
+		Allowed:     true,
+		Current:     3,
+		Remaining:   0,
+		ResetAfter:  10,
+		LimitFilled: true,
 	}, refilled)
 	require.Equal(t, 4, beforeApplyCalls)
 }
@@ -293,10 +298,11 @@ func TestTokenBucketElem_DumpAndRestore(t *testing.T) {
 	result, err := restored.RLimit(database.TxContext{Tx: 3, CurrTime: 100}, 3, 1, nil)
 	require.NoError(t, err)
 	require.Equal(t, database.RateLimitResult{
-		Allowed:    true,
-		Current:    3,
-		Remaining:  0,
-		ResetAfter: 10,
+		Allowed:     true,
+		Current:     3,
+		Remaining:   0,
+		ResetAfter:  10,
+		LimitFilled: true,
 	}, result)
 }
 

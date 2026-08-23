@@ -24,6 +24,7 @@ const (
 var errFrameTooLarge = errors.New("frame exceeds maximum message size")
 
 type TCPHandler = func(context.Context, []byte) ([]byte, error)
+type TCPStreamHandler = func(context.Context, []byte, func([]byte) error) error
 
 type TCPServer struct {
 	address     string
@@ -66,6 +67,17 @@ func NewTCPServer(
 }
 
 func (s *TCPServer) HandleQueries(ctx context.Context, handler TCPHandler) error {
+	return s.HandleQueryStreams(ctx, func(ctx context.Context, request []byte, write func([]byte) error) error {
+		response, err := handler(ctx, request)
+		if err != nil {
+			return err
+		}
+
+		return write(response)
+	})
+}
+
+func (s *TCPServer) HandleQueryStreams(ctx context.Context, handler TCPStreamHandler) error {
 	listener, err := net.Listen("tcp", s.address)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
@@ -125,7 +137,7 @@ func (s *TCPServer) Start(ctx context.Context, handler func(context.Context, []b
 	return s.HandleQueries(ctx, handler)
 }
 
-func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, handler TCPHandler) {
+func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, handler TCPStreamHandler) {
 	stopClose := make(chan struct{})
 	go func() {
 		select {
@@ -156,23 +168,28 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 
-		response, err := handler(ctx, request)
+		requestCtx, requestCancel := context.WithTimeout(ctx, s.idleTimeout)
+		err = handler(requestCtx, request, func(response []byte) error {
+			if len(response) > s.messageSize {
+				s.logger.Error().
+					Int("response_size", len(response)).
+					Int("max_size", s.messageSize).
+					Msg("handler response exceeds maximum, closing connection")
+
+				return errFrameTooLarge
+			}
+
+			if err := writeFrame(connection, response); err != nil {
+				s.logger.Warn().Err(err).Msg("failed to write")
+
+				return err
+			}
+
+			return nil
+		})
+		requestCancel()
 		if err != nil {
 			s.logger.Error().Err(err).Msg("handler failed")
-
-			break
-		}
-
-		if len(response) > s.messageSize {
-			s.logger.Error().
-				Int("response_size", len(response)).
-				Int("max_size", s.messageSize).
-				Msg("handler response exceeds maximum, closing connection")
-			break
-		}
-
-		if err := writeFrame(connection, response); err != nil {
-			s.logger.Warn().Err(err).Msg("failed to write")
 
 			break
 		}

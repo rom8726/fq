@@ -43,6 +43,7 @@ type storageLayer interface {
 	Del(ctx context.Context, key BatchKey) (bool, error)
 	MDel(ctx context.Context, keys []BatchKey) ([]bool, error)
 	Watch(ctx context.Context, key BatchKey) (ValueType, error)
+	SubscribeLimitEvents(ctx context.Context) (<-chan LimitEvent, func())
 	RLimitFixedWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 	RLimitSlidingWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 	RLimitTokenBucket(
@@ -74,6 +75,20 @@ func NewDatabase(
 }
 
 func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
+	var response string
+	err := d.HandleQueryStream(ctx, queryStr, func(msg string) error {
+		response = msg
+
+		return nil
+	})
+	if err != nil {
+		return makeErrorMsg(err)
+	}
+
+	return response
+}
+
+func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write func(string) error) error {
 	if d.logger.GetLevel() == zerolog.DebugLevel {
 		d.logger.Debug().
 			Str("query", queryStr).
@@ -82,34 +97,39 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 
 	// Validate message size
 	if len(queryStr) > d.maxMessageSize {
-		return makeErrorMsg(fmt.Errorf("message size %d exceeds maximum %d", len(queryStr), d.maxMessageSize))
+		return write(makeErrorMsg(fmt.Errorf("message size %d exceeds maximum %d", len(queryStr), d.maxMessageSize)))
 	}
 
 	query, err := d.computeLayer.HandleQuery(ctx, queryStr)
 	if err != nil {
-		return makeErrorMsg(err)
+		return write(makeErrorMsg(err))
 	}
 
+	var response string
 	switch query.CommandID() {
 	case compute.IncrCommandID:
-		return d.handleIncrQuery(ctx, query)
+		response = d.handleIncrQuery(ctx, query)
 	case compute.GetCommandID:
-		return d.handleGetQuery(ctx, query)
+		response = d.handleGetQuery(ctx, query)
 	case compute.DelCommandID:
-		return d.handleDelQuery(ctx, query)
+		response = d.handleDelQuery(ctx, query)
 	case compute.MsgSizeCommandID:
-		return d.handleMsgSizeQuery()
+		response = d.handleMsgSizeQuery()
 	case compute.MDelCommandID:
-		return d.handleMDelQuery(ctx, query)
+		response = d.handleMDelQuery(ctx, query)
 	case compute.WatchCommandID:
-		return d.handleWatchQuery(ctx, query)
+		response = d.handleWatchQuery(ctx, query)
+	case compute.StreamCommandID:
+		return d.handleStreamQuery(ctx, write)
 	case compute.RLimitCommandID:
-		return d.handleRLimitQuery(ctx, query)
+		response = d.handleRLimitQuery(ctx, query)
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
-		return makeErrorMsg(errInternalConfiguration)
+		response = makeErrorMsg(errInternalConfiguration)
 	}
+
+	return write(response)
 }
 
 func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query) string {
@@ -189,6 +209,26 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) st
 	}
 
 	return makeValueMsg(value)
+}
+
+func (d *Database) handleStreamQuery(ctx context.Context, write func(string) error) error {
+	events, unsubscribe := d.storageLayer.SubscribeLimitEvents(ctx)
+	defer unsubscribe()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case event, ok := <-events:
+			if !ok {
+				return ctx.Err()
+			}
+
+			if err := write(makeLimitEventMsg(event)); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) string {
@@ -355,4 +395,12 @@ func makeRateLimitMsg(result RateLimitResult) string {
 		strconv.FormatInt(int64(result.Current), 10) + ";" +
 		strconv.FormatInt(int64(result.Remaining), 10) + ";" +
 		strconv.FormatUint(uint64(result.ResetAfter), 10)
+}
+
+func makeLimitEventMsg(event LimitEvent) string {
+	return "ok|" +
+		event.Key + ";" +
+		strconv.FormatUint(uint64(event.Window), 10) + ";" +
+		strconv.FormatInt(int64(event.Current), 10) + ";" +
+		strconv.FormatUint(uint64(event.ResetAfter), 10)
 }
