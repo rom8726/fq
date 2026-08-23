@@ -28,13 +28,13 @@ build-bench:
 .PHONY: run-server
 run-server:
 	@echo "-> Running fq server (master)..."
-	@mkdir -p ./app/data/wal
+	@mkdir -p ./fq_data/wal
 	@go run ./cmd/fq
 
 .PHONY: run-slave
 run-slave:
 	@echo "-> Running fq server (slave replica)..."
-	@mkdir -p ./app/data-slave/wal
+	@mkdir -p ./fq_data-slave/wal
 	@go run ./cmd/fq config-slave.yml
 
 .PHONY: run-cli

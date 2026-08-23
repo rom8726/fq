@@ -13,14 +13,14 @@ wal:
   flushing_batch_timeout: 1000ms
   queue_capacity: 16384
   max_segment_size: 64MB
-  data_directory: ./app/data/wal/
+  data_directory: ./fq_data/wal/
 engine:
   type: in_memory
   clean_interval: 5m
   limit_event_queue_capacity: 16
 dump:
   interval: 1m
-  directory: ./app/data/
+  directory: ./fq_data/
 replication:
   replica_type: master
   master_address: ":1946"

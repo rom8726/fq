@@ -28,6 +28,8 @@ dist/
 # Runtime data
 app/data/
 app/data-slave/
+fq_data/
+fq_data-slave/
 
 # Local Go caches
 .gocache/

@@ -13,7 +13,7 @@ WORKDIR /app
 COPY --from=build /go/src/github.com/fq-db/fq/bin/fq ./fq
 COPY --from=build /go/src/github.com/fq-db/fq/bin/fq-cli ./fq-cli
 COPY --from=build /go/src/github.com/fq-db/fq/config.yml ./config.yml
-RUN mkdir -p /app/data/wal
+RUN mkdir -p /app/fq_data/wal
 RUN chown nobody: /app -R
 
 USER nobody

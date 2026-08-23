@@ -47,7 +47,7 @@ docker run --rm \
   -p 1946:1946 \
   -p 2112:2112 \
   -v "$PWD/config.yml:/app/config.yml:ro" \
-  -v "$PWD/data:/app/data" \
+  -v "$PWD/fq_data:/app/fq_data" \
   ghcr.io/fq-db/fq:latest
 ```
 

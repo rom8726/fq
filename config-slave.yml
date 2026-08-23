@@ -13,7 +13,7 @@ wal:
   flushing_batch_timeout: 1000ms
   queue_capacity: 16384
   max_segment_size: 64MB
-  data_directory: ./app/data-slave/wal/
+  data_directory: ./fq_data-slave/wal/
 engine:
   type: in_memory
   clean_interval: 5m

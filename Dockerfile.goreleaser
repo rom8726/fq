@@ -6,7 +6,7 @@ COPY ${TARGETPLATFORM}/fq ./fq
 COPY ${TARGETPLATFORM}/fq-cli ./fq-cli
 COPY config.yml ./config.yml
 
-RUN mkdir -p /app/data/wal && chown nobody: /app -R
+RUN mkdir -p /app/fq_data/wal && chown nobody: /app -R
 
 USER nobody
 EXPOSE 1945 1946 2112
