@@ -9,8 +9,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/database"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 func TestWALFlushesPendingBatchOnShutdown(t *testing.T) {

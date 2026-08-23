@@ -9,9 +9,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/database"
-	"fq/internal/database/compute"
-	"fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/storage/wal"
 )
 
 const (

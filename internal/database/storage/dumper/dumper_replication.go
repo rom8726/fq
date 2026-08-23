@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 type readSession struct {

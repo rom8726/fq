@@ -6,9 +6,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/config"
-	"fq/internal/database/storage/wal"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 const defaultFlushingBatchSize = 100

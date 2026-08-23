@@ -9,7 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/compute"
 )
 
 func TestReadLogsTruncatesIncompletePayloadTailInLastSegment(t *testing.T) {

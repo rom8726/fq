@@ -11,8 +11,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/database"
-	"fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/wal"
 )
 
 func TestSaveWALChunkAppendsAtOffset(t *testing.T) {

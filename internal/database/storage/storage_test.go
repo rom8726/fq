@@ -8,9 +8,9 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/config"
-	"fq/internal/database"
-	inmemory "fq/internal/database/storage/engine/in-memory"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database"
+	inmemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
 )
 
 func TestLoadWALWithoutWALContinuesAfterDumpLastTx(t *testing.T) {

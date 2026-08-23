@@ -16,8 +16,8 @@ import (
 
 	"github.com/guptarohit/asciigraph"
 
-	"fq/internal/network"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 const defaultQueryTemplate = "INCR {key} {batch}"

@@ -5,7 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 type Request struct {

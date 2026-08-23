@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {

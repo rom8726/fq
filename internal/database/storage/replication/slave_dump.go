@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 func (s *Slave) synchronizeDump(ctx context.Context) error {

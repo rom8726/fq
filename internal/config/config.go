@@ -12,7 +12,7 @@ import (
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"gopkg.in/yaml.v3"
 
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 const (

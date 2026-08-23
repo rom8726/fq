@@ -8,8 +8,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/database"
-	inMemory "fq/internal/database/storage/engine/in-memory"
+	"github.com/fq-db/fq/internal/database"
+	inMemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
 )
 
 func TestDumper_GetNextData(t *testing.T) {

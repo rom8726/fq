@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 func TestDumperWALCleanupUsesDumpTxWithoutProvider(t *testing.T) {

@@ -1,4 +1,4 @@
-module fq
+module github.com/fq-db/fq
 
 go 1.25.0
 

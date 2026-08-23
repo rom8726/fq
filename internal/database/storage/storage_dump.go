@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 var errDumpDisabled = errors.New("dump is disabled")

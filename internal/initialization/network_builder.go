@@ -6,9 +6,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/config"
-	"fq/internal/network"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 const defaultServerAddress = "localhost:1945"

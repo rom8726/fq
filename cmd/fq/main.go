@@ -9,8 +9,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/config"
-	"fq/internal/initialization"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/initialization"
 )
 
 const (

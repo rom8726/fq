@@ -9,7 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 func TestEngineAcknowledgesDumpChunkAfterApply(t *testing.T) {

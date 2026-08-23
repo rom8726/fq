@@ -5,11 +5,11 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/config"
-	"fq/internal/database"
-	"fq/internal/database/storage"
-	inMemory "fq/internal/database/storage/engine/in-memory"
-	"fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage"
+	inMemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
+	"github.com/fq-db/fq/internal/database/storage/wal"
 )
 
 const (

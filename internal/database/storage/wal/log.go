@@ -1,8 +1,8 @@
 package wal
 
 import (
-	"fq/internal/database/compute"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 type Log struct {

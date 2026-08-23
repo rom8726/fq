@@ -10,8 +10,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/database"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 type Engine interface {

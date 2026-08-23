@@ -13,14 +13,14 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/config"
-	"fq/internal/database"
-	"fq/internal/database/compute"
-	"fq/internal/database/storage"
-	"fq/internal/database/storage/dumper"
-	inmemory "fq/internal/database/storage/engine/in-memory"
-	"fq/internal/database/storage/wal"
-	"fq/internal/network"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/storage"
+	"github.com/fq-db/fq/internal/database/storage/dumper"
+	inmemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
+	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/network"
 )
 
 func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {

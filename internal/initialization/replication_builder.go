@@ -6,13 +6,13 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/config"
-	"fq/internal/database"
-	"fq/internal/database/storage/dumper"
-	"fq/internal/database/storage/replication"
-	"fq/internal/database/storage/wal"
-	"fq/internal/network"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/dumper"
+	"github.com/fq-db/fq/internal/database/storage/replication"
+	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 const defaultReplicationMasterAddress = ":1946"

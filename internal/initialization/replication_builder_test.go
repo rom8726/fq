@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/config"
+	"github.com/fq-db/fq/internal/config"
 )
 
 func TestReplicationMaxMessageSizeDefaultsToMinimum(t *testing.T) {

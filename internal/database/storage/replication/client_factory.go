@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"fq/internal/network"
+	"github.com/fq-db/fq/internal/network"
 )
 
 // TCPClientFactoryImpl implements TCPClientFactory for creating TCP clients

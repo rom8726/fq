@@ -1,6 +1,6 @@
 package replication
 
-import "fq/internal/database"
+import "github.com/fq-db/fq/internal/database"
 
 type DumpProvider interface {
 	GetNextData(sessionUUID string) ([]database.DumpElem, bool, error)

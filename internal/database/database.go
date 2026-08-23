@@ -10,7 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/compute"
 )
 
 const (

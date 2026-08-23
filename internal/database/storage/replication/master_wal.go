@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"fq/internal/database/storage/wal"
-	"fq/internal/observability"
+	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/observability"
 )
 
 const (

@@ -7,15 +7,15 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 
-	"fq/internal/config"
-	"fq/internal/database"
-	"fq/internal/database/compute"
-	"fq/internal/database/storage"
-	"fq/internal/database/storage/dumper"
-	"fq/internal/database/storage/replication"
-	walPkg "fq/internal/database/storage/wal"
-	"fq/internal/network"
-	"fq/internal/observability"
+	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/storage"
+	"github.com/fq-db/fq/internal/database/storage/dumper"
+	"github.com/fq-db/fq/internal/database/storage/replication"
+	walPkg "github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/observability"
 )
 
 type Initializer struct {

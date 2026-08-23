@@ -12,8 +12,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/observability"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 const (

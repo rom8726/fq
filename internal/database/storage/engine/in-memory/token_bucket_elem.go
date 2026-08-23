@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 type TokenBucketElem struct {

@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"fq/internal/database/compute"
-	"fq/internal/database/compute/mocks"
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/compute/mocks"
 )
 
 func TestHandleQueryWithParsingError(t *testing.T) {

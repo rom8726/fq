@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 
-	"fq/internal/database"
+	"github.com/fq-db/fq/internal/database"
 )
 
 func (d *Dumper) Restore(ctx context.Context) (database.Tx, error) {

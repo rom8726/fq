@@ -10,10 +10,10 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"fq/internal/database"
-	"fq/internal/database/compute"
-	"fq/internal/observability"
-	"fq/internal/tools"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/tools"
 )
 
 type fsWriter interface {

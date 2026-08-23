@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
-	"fq/internal/database"
-	"fq/internal/database/storage/wal"
-	"fq/internal/observability"
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/observability"
 )
 
 type TCPClient interface {

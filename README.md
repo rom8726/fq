@@ -25,7 +25,7 @@ Use fq when you need:
 - Replica ack tracking and replication lag metrics
 - Prometheus metrics and health endpoint
 - CLI client and live benchmark client
-- Go client: [fq-client-go](https://github.com/rom8726/fq-client-go)
+- Go client: [fq-client-go](https://github.com/fq-db/fq-client-go)
 
 ## Commands
 

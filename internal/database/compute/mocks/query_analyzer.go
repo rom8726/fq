@@ -4,7 +4,7 @@ package mocks
 
 import (
 	context "context"
-	compute "fq/internal/database/compute"
+	compute "github.com/fq-db/fq/internal/database/compute"
 
 	mock "github.com/stretchr/testify/mock"
 )
