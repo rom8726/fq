@@ -55,7 +55,7 @@ func TestRLimitFixedWindowPublishesWhenLimitIsFilled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events, unsubscribe := strg.SubscribeLimitEvents(ctx)
+	events, unsubscribe := strg.SubscribeLimitEvents(ctx, "")
 	defer unsubscribe()
 
 	key := database.BatchKey{Key: "user_42", BatchSize: 60, BatchSizeStr: "60"}
@@ -80,6 +80,45 @@ func TestRLimitFixedWindowPublishesWhenLimitIsFilled(t *testing.T) {
 	require.False(t, result.Allowed)
 	require.False(t, result.LimitFilled)
 	requireNoLimitEvent(t, events)
+}
+
+func TestLimitEventSubscriptionFiltersByPrefix(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := inmemory.NewEngine(inmemory.HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+	strg, err := NewStorage(
+		engine,
+		nil,
+		nil,
+		nil,
+		&logger,
+		time.Hour,
+		time.Hour,
+		false,
+		config.DefaultLimitEventQueueCapacity,
+	)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, unsubscribe := strg.SubscribeLimitEvents(ctx, "tenant_a-")
+	defer unsubscribe()
+
+	otherKey := database.BatchKey{Key: "tenant_b-user_42", BatchSize: 60, BatchSizeStr: "60"}
+	_, err = strg.RLimitFixedWindow(ctx, otherKey, 1)
+	require.NoError(t, err)
+	requireNoLimitEvent(t, events)
+
+	matchingKey := database.BatchKey{Key: "tenant_a-user_42", BatchSize: 60, BatchSizeStr: "60"}
+	result, err := strg.RLimitFixedWindow(ctx, matchingKey, 1)
+	require.NoError(t, err)
+	require.True(t, result.LimitFilled)
+	require.Equal(t, database.LimitEvent{
+		Key:        "tenant_a-user_42",
+		Window:     60,
+		Current:    1,
+		ResetAfter: result.ResetAfter,
+	}, requireLimitEvent(t, events))
 }
 
 type txRecordingEngine struct {

@@ -43,7 +43,7 @@ type storageLayer interface {
 	Del(ctx context.Context, key BatchKey) (bool, error)
 	MDel(ctx context.Context, keys []BatchKey) ([]bool, error)
 	Watch(ctx context.Context, key BatchKey) (ValueType, error)
-	SubscribeLimitEvents(ctx context.Context) (<-chan LimitEvent, func())
+	SubscribeLimitEvents(ctx context.Context, prefix string) (<-chan LimitEvent, func())
 	RLimitFixedWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 	RLimitSlidingWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 	RLimitTokenBucket(
@@ -120,7 +120,9 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	case compute.WatchCommandID:
 		response = d.handleWatchQuery(ctx, query)
 	case compute.StreamCommandID:
-		return d.handleStreamQuery(ctx, write)
+		return d.handleStreamQuery(ctx, "", write)
+	case compute.PStreamCommandID:
+		return d.handlePStreamQuery(ctx, query, write)
 	case compute.RLimitCommandID:
 		response = d.handleRLimitQuery(ctx, query)
 	default:
@@ -211,8 +213,18 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) st
 	return makeValueMsg(value)
 }
 
-func (d *Database) handleStreamQuery(ctx context.Context, write func(string) error) error {
-	events, unsubscribe := d.storageLayer.SubscribeLimitEvents(ctx)
+func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, write func(string) error) error {
+	arguments := query.Arguments()
+	prefix, err := makeStreamPrefix(arguments[0])
+	if err != nil {
+		return write(makeErrorMsg(err))
+	}
+
+	return d.handleStreamQuery(ctx, prefix, write)
+}
+
+func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write func(string) error) error {
+	events, unsubscribe := d.storageLayer.SubscribeLimitEvents(ctx, prefix)
 	defer unsubscribe()
 
 	for {
@@ -229,6 +241,17 @@ func (d *Database) handleStreamQuery(ctx context.Context, write func(string) err
 			}
 		}
 	}
+}
+
+func makeStreamPrefix(prefix string) (string, error) {
+	if prefix == "" {
+		return "", errKeyEmpty
+	}
+	if len(prefix) > maxKeyLength {
+		return "", errKeyTooLong
+	}
+
+	return prefix, nil
 }
 
 func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) string {

@@ -11,6 +11,7 @@ const (
 	MDelCommandID
 	WatchCommandID
 	StreamCommandID
+	PStreamCommandID
 	RLimitCommandID
 	RLimitSlidingWindowCommandID
 	RLimitTokenBucketCommandID
@@ -25,6 +26,7 @@ var (
 	MDelCommand    = "MDEL"
 	WatchCommand   = "WATCH"
 	StreamCommand  = "STREAM"
+	PStreamCommand = "PSTREAM"
 	RLimitCommand  = "RLIMIT"
 )
 
@@ -37,6 +39,7 @@ var commandNamesToID = map[string]CommandID{
 	MDelCommand:    MDelCommandID,
 	WatchCommand:   WatchCommandID,
 	StreamCommand:  StreamCommandID,
+	PStreamCommand: PStreamCommandID,
 	RLimitCommand:  RLimitCommandID,
 }
 

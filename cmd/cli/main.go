@@ -158,5 +158,5 @@ func isWatchCommand(request string) bool {
 
 func isStreamCommand(request string) bool {
 	upperRequest := strings.ToUpper(strings.TrimSpace(request))
-	return upperRequest == "STREAM"
+	return upperRequest == "STREAM" || strings.HasPrefix(upperRequest, "PSTREAM ")
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,9 +84,13 @@ type Storage struct {
 
 	tx                      atomic.Uint64
 	dumpTx                  atomic.Uint64
-	limitEvents             map[chan database.LimitEvent]struct{}
+	limitEvents             map[chan database.LimitEvent]limitEventSubscriber
 	limitEventQueueCapacity int
 	eventsMu                sync.RWMutex
+}
+
+type limitEventSubscriber struct {
+	prefix string
 }
 
 func NewStorage(
@@ -121,7 +126,7 @@ func NewStorage(
 		dumpInterval:            dumpInterval,
 		syncCommit:              syncCommit,
 		limitEventQueueCapacity: limitEventQueueCapacity,
-		limitEvents:             make(map[chan database.LimitEvent]struct{}),
+		limitEvents:             make(map[chan database.LimitEvent]limitEventSubscriber),
 	}, nil
 }
 
@@ -363,11 +368,11 @@ func (s *Storage) Watch(ctx context.Context, key database.BatchKey) (database.Va
 }
 
 //nolint:gocritic // ok
-func (s *Storage) SubscribeLimitEvents(ctx context.Context) (<-chan database.LimitEvent, func()) {
+func (s *Storage) SubscribeLimitEvents(ctx context.Context, prefix string) (<-chan database.LimitEvent, func()) {
 	ch := make(chan database.LimitEvent, s.limitEventQueueCapacity)
 
 	s.eventsMu.Lock()
-	s.limitEvents[ch] = struct{}{}
+	s.limitEvents[ch] = limitEventSubscriber{prefix: prefix}
 	s.eventsMu.Unlock()
 
 	var once sync.Once
@@ -406,7 +411,11 @@ func (s *Storage) publishLimitFilled(
 	s.eventsMu.RLock()
 	defer s.eventsMu.RUnlock()
 
-	for ch := range s.limitEvents {
+	for ch, subscriber := range s.limitEvents {
+		if subscriber.prefix != "" && !strings.HasPrefix(event.Key, subscriber.prefix) {
+			continue
+		}
+
 		select {
 		case ch <- event:
 		default:

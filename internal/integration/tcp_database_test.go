@@ -53,6 +53,60 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireQuery("RLIMIT XX limited 2 60", "err|invalid rate limit algorithm")
 }
 
+func TestTCPDatabasePStreamFiltersLimitEventsByPrefix(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	streamClient := connectEventually(t, app.address)
+
+	events := make(chan string, 2)
+	errs := make(chan error, 1)
+	go func() {
+		errs <- streamClient.Stream(context.Background(), []byte("PSTREAM tenant_a-"), func(response []byte) error {
+			events <- string(response)
+
+			return nil
+		})
+	}()
+
+	app.RequireRateLimit("RLIMIT FW tenant_b-user_42 1 60", true, 1, 0, 60)
+	requireNoStreamEvent(t, events)
+
+	app.RequireRateLimit("RLIMIT FW tenant_a-user_42 1 60", true, 1, 0, 60)
+	event := requireStreamEvent(t, events)
+	require.True(t, strings.HasPrefix(event, "ok|tenant_a-user_42;60;1;"))
+
+	require.NoError(t, streamClient.Close())
+	select {
+	case <-errs:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop")
+	}
+}
+
+func requireNoStreamEvent(t *testing.T, events <-chan string) {
+	t.Helper()
+
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected stream event: %s", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func requireStreamEvent(t *testing.T, events <-chan string) string {
+	t.Helper()
+
+	select {
+	case event := <-events:
+		return event
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for stream event")
+	}
+
+	return ""
+}
+
 func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	walDir := t.TempDir()
 
@@ -141,6 +195,7 @@ func TestTCPDatabaseRecoversFromTruncatedWALTailAfterRestart(t *testing.T) {
 
 type testDatabaseApp struct {
 	t       *testing.T
+	address string
 	client  *network.TCPClient
 	storage *storage.Storage
 	dumper  *dumper.Dumper
@@ -199,8 +254,14 @@ func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump
 
 	done := make(chan error, 1)
 	go func() {
-		done <- server.HandleQueries(ctx, func(ctx context.Context, query []byte) ([]byte, error) {
-			return []byte(db.HandleQuery(ctx, string(query))), nil
+		done <- server.HandleQueryStreams(ctx, func(
+			ctx context.Context,
+			query []byte,
+			write func([]byte) error,
+		) error {
+			return db.HandleQueryStream(ctx, string(query), func(response string) error {
+				return write([]byte(response))
+			})
 		})
 	}()
 
@@ -208,6 +269,7 @@ func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump
 
 	return &testDatabaseApp{
 		t:       t,
+		address: address,
 		client:  client,
 		storage: strg,
 		dumper:  dumpStore,
