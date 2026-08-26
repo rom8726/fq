@@ -232,6 +232,21 @@ Example with 500 connections for 60 seconds:
 go run ./cmd/bench -address :1945 -connections 500 -duration 60s -key_range 10000
 ```
 
+Run a reproducible benchmark with warmup and a JSON report:
+
+```shell
+go run ./cmd/bench \
+  -address :1945 \
+  -connections 500 \
+  -warmup 10s \
+  -duration 60s \
+  -key_range 10000 \
+  -key_distribution uniform \
+  -seed 42 \
+  -output json \
+  -output_file benchmarks/results/smoke.json
+```
+
 Limit target load and customize generated keys:
 
 ```shell
@@ -251,6 +266,15 @@ go run ./cmd/bench -address :1945 -connections 200 -duration 60s -query "RLIMIT 
 ```
 
 The benchmark screen updates once per second and shows current RPS, errors, latency percentiles, and terminal history charts. Use `-key_range` to control how many distinct keys are generated; smaller ranges create hotter keys and larger ranges spread load across more keys.
+
+For reproducible runs:
+
+- `-warmup` excludes the warmup period from final metrics.
+- `-output text|json|csv` controls the final report format.
+- `-output_file` writes the final report to a file.
+- `-seed` is recorded in report metadata and drives random key distributions.
+- `-key_distribution sequential|uniform|zipfian` controls generated key selection.
+- Final reports include p50, p95, p99, p99.9, max latency, throughput, error rate, Go/runtime metadata, and a benchmark config hash.
 
 ## Persistence
 

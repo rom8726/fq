@@ -52,6 +52,18 @@ run-bench:
 	@echo "-> Running fq benchmark..."
 	@go run ./cmd/bench -address :1945
 
+.PHONY: bench-smoke
+bench-smoke:
+	@echo "-> Running fq benchmark smoke profile..."
+	@mkdir -p ./benchmarks/results
+	@go run ./cmd/bench -address :1945 -connections 100 -warmup 5s -duration 30s -key_range 10000 -key_distribution uniform -seed 42 -output json -output_file ./benchmarks/results/smoke.json
+
+.PHONY: bench-release
+bench-release:
+	@echo "-> Running fq benchmark release profile..."
+	@mkdir -p ./benchmarks/results
+	@go run ./cmd/bench -address :1945 -connections 500 -warmup 30s -duration 120s -key_range 100000 -key_distribution zipfian -seed 42 -output json -output_file ./benchmarks/results/release.json
+
 .PHONY: lint
 lint:
 	golangci-lint -v run
