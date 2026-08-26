@@ -458,6 +458,9 @@ func recordResult(
 	measuredLatencies *[]time.Duration,
 	lastError *string,
 ) {
+	if res.err != nil || res.badResp {
+		*lastError = res.errText
+	}
 	if !measuring {
 		return
 	}
@@ -467,7 +470,6 @@ func recordResult(
 	if res.err != nil || res.badResp {
 		*measuredErrors++
 		*windowErrors++
-		*lastError = res.errText
 	}
 	if res.latency > 0 {
 		*windowLatencies = append(*windowLatencies, res.latency)
@@ -510,6 +512,7 @@ func drainResults(
 	}
 }
 
+//nolint:lll // ok
 func renderSnapshot(cfg benchConfig, snap snapshot, rpsHistory, p99History []float64) (rps, p99dur float64) {
 	latencies := append([]time.Duration(nil), snap.latencies...)
 	slices.Sort(latencies)
@@ -527,44 +530,57 @@ func renderSnapshot(cfg benchConfig, snap snapshot, rpsHistory, p99History []flo
 
 	fmt.Print("\033[H\033[2J")
 	fmt.Println("fq bench")
-	fmt.Println(strings.Repeat("-", 72))
-	fmt.Printf("address=%s  connections=%d  target_rps=%s  elapsed=%s\n",
-		cfg.address,
-		cfg.connections,
-		formatTargetRPS(cfg.rps),
-		snap.elapsed.Truncate(time.Second),
-	)
-	fmt.Printf("query=%q  key_distribution=%s  key_range=[%d,%d)\n",
-		cfg.queryTemplate,
-		cfg.keyDistribution,
-		cfg.keyStart,
-		cfg.keyStart+cfg.keyRange,
-	)
-	if cfg.warmup > 0 {
-		fmt.Printf("warmup=%s  phase=%s\n", cfg.warmup, formatPhase(snap.measuring))
-	}
-	fmt.Println(strings.Repeat("-", 72))
-	fmt.Printf("now:   rps=%9.1f  errors/s=%7.1f  count=%8d  errors=%5d\n",
+	fmt.Println(strings.Repeat("=", 78))
+	fmt.Printf("%-10s %s\n", "phase", formatRunState(cfg, snap))
+	fmt.Printf("%-10s %s\n", "progress", formatProgress(cfg, snap.elapsed))
+	fmt.Printf("%-10s %s\n", "target", fmt.Sprintf("%s rps, %d connections", formatTargetRPS(cfg.rps), cfg.connections))
+	fmt.Printf("%-10s %s\n", "workload", fmt.Sprintf("%q", cfg.queryTemplate))
+	fmt.Printf("%-10s %s\n", "keys", fmt.Sprintf("%s [%d,%d), seed=%d", cfg.keyDistribution, cfg.keyStart, cfg.keyStart+cfg.keyRange, cfg.seed))
+	fmt.Println(strings.Repeat("-", 78))
+	fmt.Println("current window")
+	fmt.Printf("  %-14s %12.1f   %-14s %12.1f\n",
+		"rps",
 		rps,
+		"errors/s",
 		errRate,
+	)
+	fmt.Printf("  %-14s %12d   %-14s %12d\n",
+		"requests",
 		snap.windowCount,
+		"errors",
 		snap.windowErrors,
 	)
-	fmt.Printf("lat:   p50=%10s  p95=%10s  p99=%10s  p99.9=%10s  max=%10s\n",
+	fmt.Printf("  %-14s %12s   %-14s %12s   %-14s %12s\n",
+		"p50",
 		formatDuration(p50),
+		"p95",
 		formatDuration(p95),
+		"p99",
 		formatDuration(p99),
+	)
+	fmt.Printf("  %-14s %12s   %-14s %12s\n",
+		"p99.9",
 		formatDuration(p999),
+		"max",
 		formatDuration(maxLatency),
 	)
-	fmt.Printf("total: requests=%d  errors=%d\n", snap.totalCount, snap.totalErrors)
+	fmt.Println(strings.Repeat("-", 78))
+	fmt.Println("measured total")
+	fmt.Printf("  %-14s %12d   %-14s %12d   %-14s %12.4f\n",
+		"requests",
+		snap.totalCount,
+		"errors",
+		snap.totalErrors,
+		"error_rate",
+		errorRatio(snap.totalCount, snap.totalErrors),
+	)
 	if snap.lastError != "" {
-		fmt.Printf("last error: %s\n", truncate(snap.lastError, 120))
+		fmt.Printf("  %-14s %s\n", "last_error", truncate(snap.lastError, 120))
 	}
-	fmt.Println(strings.Repeat("-", 72))
+	fmt.Println(strings.Repeat("-", 78))
 	fmt.Println(renderGraph("RPS", appendHistory(rpsHistory, rps, 60)))
 	fmt.Println(renderGraph("p99 latency, ms", appendHistory(p99History, durationMillis(p99), 60)))
-	fmt.Println(strings.Repeat("-", 72))
+	fmt.Println(strings.Repeat("=", 78))
 	fmt.Println("Stop: Ctrl+C")
 
 	return rps, durationMillis(p99)
@@ -713,27 +729,50 @@ func writeReport(cfg benchConfig, report runReport) error {
 
 func formatTextReport(report runReport) string {
 	var b strings.Builder
-	b.WriteString("\nFinal report\n")
-	b.WriteString(strings.Repeat("-", 72))
+	b.WriteString("\nfq bench final report\n")
+	b.WriteString(strings.Repeat("=", 78))
 	b.WriteByte('\n')
-	fmt.Fprintf(&b, "config_hash=%s  go=%s  cpu=%d\n",
-		report.Metadata.ConfigHash,
+	fmt.Fprintf(&b, "%-14s %s\n", "config_hash", report.Metadata.ConfigHash)
+	fmt.Fprintf(&b, "%-14s %s/%s, %s, cpu=%d\n",
+		"runtime",
+		report.Metadata.GOOS,
+		report.Metadata.GOARCH,
 		report.Metadata.GoVersion,
-		report.Metadata.NumCPU)
-	fmt.Fprintf(&b, "requests=%d  errors=%d  error_rate=%.4f  throughput=%.1f rps\n",
-		report.Summary.Requests,
-		report.Summary.Errors,
-		report.Summary.ErrorRate,
-		report.Summary.ThroughputRPS)
-	fmt.Fprintf(&b, "latency: p50=%s  p95=%s  p99=%s  p99.9=%s  max=%s\n",
+		report.Metadata.NumCPU,
+	)
+	fmt.Fprintf(&b, "%-14s %s, %d connections, target=%s rps\n",
+		"target",
+		report.Metadata.Address,
+		report.Metadata.Connections,
+		formatFloatTarget(report.Metadata.TargetRPS),
+	)
+	fmt.Fprintf(&b, "%-14s warmup=%s, measure=%s, keys=%s [%d,%d), seed=%d\n",
+		"workload",
+		report.Metadata.Warmup,
+		report.Metadata.Duration,
+		report.Metadata.KeyDistribution,
+		report.Metadata.KeyStart,
+		report.Metadata.KeyStart+report.Metadata.KeyRange,
+		report.Metadata.Seed,
+	)
+	b.WriteString(strings.Repeat("-", 78))
+	b.WriteByte('\n')
+	fmt.Fprintf(&b, "%-14s %d\n", "requests", report.Summary.Requests)
+	fmt.Fprintf(&b, "%-14s %d (%s)\n", "errors", report.Summary.Errors, formatRatio(report.Summary.ErrorRate))
+	fmt.Fprintf(&b, "%-14s %.1f rps\n", "throughput", report.Summary.ThroughputRPS)
+	fmt.Fprintf(&b, "%-14s p50=%s  p95=%s  p99=%s  p99.9=%s  max=%s\n",
+		"latency",
 		formatDuration(time.Duration(report.Summary.Latency.P50Micros)*time.Microsecond),
 		formatDuration(time.Duration(report.Summary.Latency.P95Micros)*time.Microsecond),
 		formatDuration(time.Duration(report.Summary.Latency.P99Micros)*time.Microsecond),
 		formatDuration(time.Duration(report.Summary.Latency.P999Micros)*time.Microsecond),
-		formatDuration(time.Duration(report.Summary.Latency.MaxMicros)*time.Microsecond))
+		formatDuration(time.Duration(report.Summary.Latency.MaxMicros)*time.Microsecond),
+	)
 	if report.Summary.LastError != "" {
-		b.WriteString("last_error=" + truncate(report.Summary.LastError, 120) + "\n")
+		fmt.Fprintf(&b, "%-14s %s\n", "last_error", truncate(report.Summary.LastError, 140))
 	}
+	b.WriteString(strings.Repeat("=", 78))
+	b.WriteByte('\n')
 
 	return b.String()
 }
@@ -838,12 +877,77 @@ func formatTargetRPS(rps float64) string {
 	return fmt.Sprintf("%.1f", rps)
 }
 
-func formatPhase(measuring bool) string {
-	if measuring {
-		return "measure"
+func formatRunState(cfg benchConfig, snap snapshot) string {
+	state := "measure"
+	if cfg.warmup > 0 && !snap.measuring {
+		state = "warmup"
+	}
+	if snap.lastError != "" && snap.windowCount == 0 && snap.totalCount == 0 {
+		state = "waiting/error"
 	}
 
-	return "warmup"
+	return fmt.Sprintf("%s, elapsed=%s", state, snap.elapsed.Truncate(time.Second))
+}
+
+func formatProgress(cfg benchConfig, elapsed time.Duration) string {
+	if cfg.duration == 0 {
+		return "manual stop"
+	}
+
+	total := cfg.warmup + cfg.duration
+	if total <= 0 {
+		return "complete"
+	}
+
+	ratio := float64(elapsed) / float64(total)
+	if ratio < 0 {
+		ratio = 0
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	remaining := total - elapsed
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return fmt.Sprintf("%s %5.1f%%, remaining=%s", progressBar(ratio, 28), ratio*100, remaining.Truncate(time.Second))
+}
+
+func progressBar(ratio float64, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	filled := int(math.Round(ratio * float64(width)))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+
+	return "[" + strings.Repeat("#", filled) + strings.Repeat(".", width-filled) + "]"
+}
+
+func errorRatio(requests, errors uint64) float64 {
+	if requests == 0 {
+		return 0
+	}
+
+	return float64(errors) / float64(requests)
+}
+
+func formatRatio(value float64) string {
+	return fmt.Sprintf("%.2f%%", value*100)
+}
+
+func formatFloatTarget(rps float64) string {
+	if rps == 0 {
+		return "unlimited"
+	}
+
+	return fmt.Sprintf("%.1f", rps)
 }
 
 //nolint:lll // ok

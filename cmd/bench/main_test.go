@@ -92,6 +92,35 @@ func TestWriteJSONReportToFile(t *testing.T) {
 	}
 }
 
+func TestRecordResultKeepsWarmupErrorForDiagnostics(t *testing.T) {
+	var measuredCount uint64
+	var measuredErrors uint64
+	var windowCount int
+	var windowErrors int
+	var windowLatencies []time.Duration
+	var measuredLatencies []time.Duration
+	var lastError string
+
+	recordResult(
+		result{err: os.ErrDeadlineExceeded, errText: "connect: refused"},
+		false,
+		&measuredCount,
+		&measuredErrors,
+		&windowCount,
+		&windowErrors,
+		&windowLatencies,
+		&measuredLatencies,
+		&lastError,
+	)
+
+	if measuredCount != 0 || measuredErrors != 0 || windowCount != 0 || windowErrors != 0 {
+		t.Fatalf("warmup result was counted: measured=%d/%d window=%d/%d", measuredCount, measuredErrors, windowCount, windowErrors)
+	}
+	if lastError != "connect: refused" {
+		t.Fatalf("last error = %q", lastError)
+	}
+}
+
 func TestNextKeyOffsetDistributions(t *testing.T) {
 	sequential := benchConfig{connections: 4, keyRange: 10, keyDistribution: "sequential"}
 	if got := nextKeyOffset(sequential, 2, 3, rand.New(rand.NewSource(1)), nil); got != 4 {
