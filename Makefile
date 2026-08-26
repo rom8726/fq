@@ -2,7 +2,7 @@ WAL_ROOT = $(PWD)/internal/database/storage/wal
 BIN_DIR = $(PWD)/bin
 
 .PHONY: build
-build: build-fq build-cli build-bench
+build: build-fq build-cli build-bench build-stress
 
 .PHONY: build-fq
 build-fq:
@@ -24,6 +24,13 @@ build-bench:
 	@mkdir -p $(BIN_DIR)
 	@go build -o $(BIN_DIR)/fq-bench ./cmd/bench
 	@echo "-> Binary built: $(BIN_DIR)/fq-bench"
+
+.PHONY: build-stress
+build-stress:
+	@echo "-> Building fq stress binary..."
+	@mkdir -p $(BIN_DIR)
+	@go build -o $(BIN_DIR)/fq-stress ./cmd/stress
+	@echo "-> Binary built: $(BIN_DIR)/fq-stress"
 
 .PHONY: run-server
 run-server:
@@ -73,6 +80,11 @@ bench-release-all:
 	@go run ./cmd/bench -profile ./benchmarks/profiles/release-fw.yml
 	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw.yml
 	@go run ./cmd/bench -profile ./benchmarks/profiles/release-tb.yml
+
+.PHONY: stress-smoke
+stress-smoke:
+	@echo "-> Running fq stress restart smoke scenario..."
+	@go run ./cmd/stress -scenario restart-smoke -duration 30s
 
 .PHONY: lint
 lint:

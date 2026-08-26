@@ -283,6 +283,16 @@ Included profiles:
 - `benchmarks/profiles/release-sw.yml`
 - `benchmarks/profiles/release-tb.yml`
 
+## Stress testing
+
+Run the restart smoke stress scenario:
+
+```shell
+go run ./cmd/stress -scenario restart-smoke -duration 30s
+```
+
+The stress harness starts an isolated fq server process with temporary WAL/dump directories, verifies readiness over TCP, writes data, kills and restarts the server, then verifies recovery. Use `-keep_data` to keep the generated stress directory and logs after a run.
+
 ## Persistence
 
 Persistence is controlled by `persistence.mode`:
