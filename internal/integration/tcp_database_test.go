@@ -67,16 +67,26 @@ func TestTCPDatabaseRejectsInvalidInputsWithoutMutatingState(t *testing.T) {
 
 	oversizedKey := strings.Repeat("k", 1025)
 	tests := []string{
+		"",
+		"   \t  \n  ",
 		"INCR stable not-a-window",
 		"INCR stable 0",
+		"INCR stable -1",
+		"INCR stable 4294967296",
 		"GET stable not-a-window",
 		"DEL stable not-a-window",
 		"MDEL stable 600 other",
 		"RLIMIT XX stable 2 600",
 		"RLIMIT FW stable bad-limit 600",
 		"RLIMIT FW stable 0 600",
+		"RLIMIT FW stable -1 600",
+		"RLIMIT FW stable 2147483648 600",
+		"RLIMIT FW stable 2 4294967296",
 		"RLIMIT TB stable 10 bad-refill 600",
 		"RLIMIT TB stable 10 0 600",
+		"RLIMIT TB stable 2147483648 1 600",
+		"RLIMIT TB stable 10 2147483648 600",
+		"RLIMIT TB stable 10 1 4294967296",
 		"INCR " + oversizedKey + " 600",
 	}
 
@@ -87,6 +97,32 @@ func TestTCPDatabaseRejectsInvalidInputsWithoutMutatingState(t *testing.T) {
 			app.RequireQuery("GET stable 600", "ok|1")
 		})
 	}
+}
+
+func TestTCPDatabaseAcceptsBoundaryInputs(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	maxKey := strings.Repeat("k", 1024)
+	app.RequireQuery("INCR "+maxKey+" 600", "ok|1")
+	app.RequireQuery("GET "+maxKey+" 600", "ok|1")
+
+	app.RequireQuery("INCR max_window 4294967295", "ok|1")
+	app.RequireQuery("GET max_window 4294967295", "ok|1")
+
+	app.RequireRateLimit("RLIMIT FW max_limit 2147483647 600", true, 1, 2147483646, 600)
+}
+
+func TestTCPDatabaseCommandsAreCaseInsensitive(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	app.RequireQuery("incr mixed_case 600", "ok|1")
+	app.RequireQuery("get mixed_case 600", "ok|1")
+	app.RequireRateLimit("rlimit fw lower_fw 2 600", true, 1, 1, 600)
+	app.RequireRateLimit("rlimit sw lower_sw 2 600", true, 1, 1, 600)
+	app.RequireRateLimit("rlimit tb lower_tb 2 1 600", true, 1, 1, 600)
+	app.RequireQuery("del mixed_case 600", "ok|1")
 }
 
 func TestTCPDatabaseMatchesReferenceModelForDeterministicSequence(t *testing.T) {

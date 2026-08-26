@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,8 +130,10 @@ func TestTCPServerRejectsOversizedFrame(t *testing.T) {
 	server, err := NewTCPServer(address, 10, maxMessageSize, time.Minute, &logger)
 	require.NoError(t, err)
 
+	var handled atomic.Bool
 	go func() {
 		require.NoError(t, server.HandleQueries(ctx, func(_ context.Context, buffer []byte) ([]byte, error) {
+			handled.Store(true)
 			return buffer, nil
 		}))
 	}()
@@ -144,6 +147,7 @@ func TestTCPServerRejectsOversizedFrame(t *testing.T) {
 
 	_, err = readFrame(connection, maxMessageSize)
 	require.Error(t, err)
+	require.False(t, handled.Load())
 }
 
 func TestReadFrameReturnsHeaderReadError(t *testing.T) {
