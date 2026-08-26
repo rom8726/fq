@@ -587,10 +587,14 @@ type testDatabaseApp struct {
 	client          *network.TCPClient
 	storage         *storage.Storage
 	dumper          *dumper.Dumper
+	walDir          string
 	cancel          context.CancelFunc
 	done            chan error
+	replicationAddr string
+	replicationStop context.CancelFunc
 	replicationDone chan error
 	master          *replication.Master
+	logger          *zerolog.Logger
 }
 
 func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
@@ -663,8 +667,10 @@ func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump
 		client:  client,
 		storage: strg,
 		dumper:  dumpStore,
+		walDir:  walDir,
 		cancel:  cancel,
 		done:    done,
+		logger:  &logger,
 	}
 }
 
@@ -680,11 +686,6 @@ func startTestDatabaseWithMasterReplication(t *testing.T, walDir, dumpDir, repli
 
 	walStore := newTestWAL(walDir, walStream, &logger)
 	dumpStore := dumper.New(engine, walStore, dumpDir)
-
-	replicationServer, err := network.NewTCPServer(replicationAddress, 5, 16<<20, time.Second, &logger)
-	require.NoError(t, err)
-	master, err := replication.NewMaster(replicationServer, walDir, dumpStore, &logger)
-	require.NoError(t, err)
 
 	strg, err := storage.NewStorage(
 		engine,
@@ -703,14 +704,11 @@ func startTestDatabaseWithMasterReplication(t *testing.T, walDir, dumpDir, repli
 	require.NoError(t, strg.LoadWAL(ctx, database.NoTx))
 	strg.Start(ctx)
 
-	replicationDone := make(chan error, 1)
-	go func() {
-		replicationDone <- master.Start(ctx)
-	}()
-
 	app := startQueryServer(t, ctx, cancel, strg, dumpStore, &logger)
-	app.replicationDone = replicationDone
-	app.master = master
+	app.walDir = walDir
+	app.replicationAddr = replicationAddress
+	app.logger = &logger
+	app.StartReplication()
 
 	return app
 }
@@ -798,6 +796,7 @@ func startQueryServer(
 		dumper:  dumpStore,
 		cancel:  cancel,
 		done:    done,
+		logger:  logger,
 	}
 }
 
@@ -920,6 +919,51 @@ func (a *testDatabaseApp) MinReplicaAckLSN() uint64 {
 	}
 
 	return lsn
+}
+
+func (a *testDatabaseApp) StartReplication() {
+	a.t.Helper()
+
+	require.NotEmpty(a.t, a.replicationAddr)
+	require.NotEmpty(a.t, a.walDir)
+	require.NotNil(a.t, a.dumper)
+	require.NotNil(a.t, a.logger)
+	require.Nil(a.t, a.replicationStop)
+
+	replicationServer, err := network.NewTCPServer(a.replicationAddr, 5, 16<<20, time.Second, a.logger)
+	require.NoError(a.t, err)
+	master, err := replication.NewMaster(replicationServer, a.walDir, a.dumper, a.logger)
+	require.NoError(a.t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- master.Start(ctx)
+	}()
+
+	a.master = master
+	a.replicationStop = cancel
+	a.replicationDone = done
+}
+
+func (a *testDatabaseApp) StopReplication() {
+	a.t.Helper()
+
+	if a.replicationStop == nil {
+		return
+	}
+
+	a.replicationStop()
+	a.replicationStop = nil
+
+	select {
+	case err := <-a.replicationDone:
+		require.NoError(a.t, err)
+	case <-time.After(time.Second):
+		a.t.Fatal("replication server did not stop")
+	}
+	a.replicationDone = nil
+	a.master = nil
 }
 
 type referenceModel struct {
@@ -1288,6 +1332,7 @@ func (a *testDatabaseApp) Close() {
 	a.t.Helper()
 
 	require.NoError(a.t, a.client.Close())
+	a.StopReplication()
 	a.cancel()
 	a.storage.Shutdown()
 
@@ -1298,14 +1343,6 @@ func (a *testDatabaseApp) Close() {
 		a.t.Fatal("server did not stop")
 	}
 
-	if a.replicationDone != nil {
-		select {
-		case err := <-a.replicationDone:
-			require.NoError(a.t, err)
-		case <-time.After(time.Second):
-			a.t.Fatal("replication server did not stop")
-		}
-	}
 }
 
 func freeLocalAddress(t *testing.T) string {
@@ -1338,6 +1375,26 @@ func connectEventuallyWithIdle(t *testing.T, address string, idleTimeout time.Du
 	}, time.Second, 10*time.Millisecond)
 
 	return client
+}
+
+func tryQuery(address, query string) (string, error) {
+	client, err := network.NewTCPClient(address, 64<<10, time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = client.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	response, err := client.Send(ctx, []byte(query))
+	if err != nil {
+		return "", err
+	}
+
+	return string(response), nil
 }
 
 func waitTCPAddress(t *testing.T, address string, maxMessageSize int) {

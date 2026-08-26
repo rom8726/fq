@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -379,6 +380,9 @@ func (s *Slave) isNetworkError(err error) bool {
 
 	// Check for connection closed errors
 	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if errors.Is(err, io.EOF) {
 		return true
 	}
 

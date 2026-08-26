@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,6 +142,53 @@ func TestSlaveSendsLastAppliedLSNInNextWALRequest(t *testing.T) {
 	require.Equal(t, uint64(7), client.requests[0].LastAppliedLSN)
 }
 
+func TestSlaveReconnectsAfterEOFAndAppliesWALChunk(t *testing.T) {
+	logger := zerolog.Nop()
+	walStream := make(chan wal.Chunk, 1)
+	reconnectedClient := newRecordingWALClient(t, WALResponse{
+		Succeed:           true,
+		SegmentName:       "wal_1.log",
+		SegmentOffset:     0,
+		NextSegmentOffset: 10,
+		SegmentData:       []byte("chunk"),
+	})
+	factory := &scriptedClientFactory{clients: []TCPClient{reconnectedClient}}
+	initialClient := &failingWALClient{err: io.EOF}
+	slave := &Slave{
+		clientFactory:     factory,
+		client:            initialClient,
+		replicaID:         "replica-1",
+		walReader:         scriptedWALReader{logs: []*wal.LogData{{LSN: 8}}},
+		walStream:         walStream,
+		walDirectory:      t.TempDir(),
+		lastSegmentName:   "wal_1.log",
+		lastSegmentOffset: 0,
+		lastAppliedLSN:    3,
+		closeCh:           make(chan struct{}),
+		logger:            &logger,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		result <- slave.synchronizeWAL(context.Background())
+	}()
+
+	chunk := requireWALChunk(t, walStream)
+	require.Len(t, chunk.Logs, 1)
+	require.Equal(t, uint64(8), chunk.Logs[0].LSN)
+	chunk.Applied <- nil
+
+	require.NoError(t, requireErrorResult(t, result))
+	require.True(t, initialClient.closed)
+	require.Len(t, factory.clients, 0)
+	require.Len(t, reconnectedClient.requests, 1)
+	require.Equal(t, "replica-1", reconnectedClient.requests[0].ReplicaID)
+	require.Equal(t, uint64(3), reconnectedClient.requests[0].LastAppliedLSN)
+	require.Equal(t, uint64(8), slave.lastAppliedLSN)
+	require.Equal(t, "wal_1.log", slave.lastSegmentName)
+	require.Equal(t, int64(10), slave.lastSegmentOffset)
+}
+
 func TestNewSlaveInitializesCursorOffsetFromLastLocalSegment(t *testing.T) {
 	logger := zerolog.Nop()
 	directory := t.TempDir()
@@ -255,6 +303,36 @@ func (c *recordingWALClient) Send(_ context.Context, data []byte) ([]byte, error
 
 func (c *recordingWALClient) Close() error {
 	return nil
+}
+
+type failingWALClient struct {
+	err    error
+	closed bool
+}
+
+func (c *failingWALClient) Send(context.Context, []byte) ([]byte, error) {
+	return nil, c.err
+}
+
+func (c *failingWALClient) Close() error {
+	c.closed = true
+
+	return nil
+}
+
+type scriptedClientFactory struct {
+	clients []TCPClient
+}
+
+func (f *scriptedClientFactory) Create() (TCPClient, error) {
+	if len(f.clients) == 0 {
+		return nil, errors.New("no scripted clients left")
+	}
+
+	client := f.clients[0]
+	f.clients = f.clients[1:]
+
+	return client, nil
 }
 
 type scriptedWALReader struct {
