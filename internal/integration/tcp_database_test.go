@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -171,6 +172,80 @@ func TestTCPDatabaseRecoversSeededModelSequenceAcrossRestarts(t *testing.T) {
 			app = startTestDatabase(t, walDir)
 			requireReferenceModelSamples(t, app, model, fmt.Sprintf("seed=%d after_op=%d", seed, i))
 		}
+	}
+}
+
+func TestTCPDatabaseWatchWakesOnIncr(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	watchClient := connectEventuallyWithIdle(t, app.address, 3*time.Second)
+	watch := sendQueryAsync(watchClient, "WATCH watched 600", 2*time.Second)
+
+	time.Sleep(150 * time.Millisecond)
+	app.RequireQuery("INCR watched 600", "ok|1")
+
+	requireAsyncResponse(t, watch, "ok|1")
+}
+
+func TestTCPDatabaseWatchWakesOnFixedWindowRateLimit(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	watchClient := connectEventuallyWithIdle(t, app.address, 3*time.Second)
+	watch := sendQueryAsync(watchClient, "WATCH limited_watch 600", 2*time.Second)
+
+	time.Sleep(150 * time.Millisecond)
+	app.RequireRateLimit("RLIMIT FW limited_watch 3 600", true, 1, 2, 600)
+
+	requireAsyncResponse(t, watch, "ok|1")
+}
+
+func TestTCPDatabaseWatchTimesOutWithoutChange(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	watchClient := connectEventuallyWithIdle(t, app.address, 3*time.Second)
+	watch := sendQueryAsync(watchClient, "WATCH unchanged 600", 250*time.Millisecond)
+
+	requireAsyncTimeout(t, watch)
+}
+
+func TestTCPDatabaseMultipleWatchersWakeOnOneChange(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	const watchers = 12
+	results := make([]<-chan asyncQueryResult, 0, watchers)
+	for i := 0; i < watchers; i++ {
+		client := connectEventuallyWithIdle(t, app.address, 3*time.Second)
+		results = append(results, sendQueryAsync(client, "WATCH watched_by_many 600", 2*time.Second))
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	app.RequireQuery("INCR watched_by_many 600", "ok|1")
+
+	for _, result := range results {
+		requireAsyncResponse(t, result, "ok|1")
+	}
+}
+
+func TestTCPDatabaseWatchersDoNotBlockUnrelatedWriters(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	const watchers = 16
+	results := make([]<-chan asyncQueryResult, 0, watchers)
+	for i := 0; i < watchers; i++ {
+		client := connectEventuallyWithIdle(t, app.address, 3*time.Second)
+		results = append(results, sendQueryAsync(client, fmt.Sprintf("WATCH idle_%02d 600", i), 300*time.Millisecond))
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	app.RequireQuery("INCR unrelated_writer 600", "ok|1")
+
+	for _, result := range results {
+		requireAsyncTimeout(t, result)
 	}
 }
 
@@ -882,6 +957,11 @@ type actualRateLimit struct {
 	resetAfter uint32
 }
 
+type asyncQueryResult struct {
+	response string
+	err      error
+}
+
 func newReferenceModel() *referenceModel {
 	return &referenceModel{
 		counters: make(map[referenceKey]int),
@@ -1157,6 +1237,53 @@ func parseRateLimitResponse(response string) (actualRateLimit, error) {
 	}, nil
 }
 
+func sendQueryAsync(client *network.TCPClient, query string, timeout time.Duration) <-chan asyncQueryResult {
+	result := make(chan asyncQueryResult, 1)
+	go func() {
+		defer close(result)
+		defer func() {
+			_ = client.Close()
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+
+		response, err := client.Send(ctx, []byte(query))
+		result <- asyncQueryResult{response: string(response), err: err}
+	}()
+
+	return result
+}
+
+func requireAsyncResponse(t *testing.T, result <-chan asyncQueryResult, expected string) {
+	t.Helper()
+
+	select {
+	case res := <-result:
+		require.NoError(t, res.err)
+		require.Equal(t, expected, res.response)
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for async response %q", expected)
+	}
+}
+
+func requireAsyncTimeout(t *testing.T, result <-chan asyncQueryResult) {
+	t.Helper()
+
+	select {
+	case res := <-result:
+		require.True(
+			t,
+			errors.Is(res.err, context.DeadlineExceeded) || errors.Is(res.err, network.ErrIdleTimeout),
+			"expected timeout, got response=%q err=%v",
+			res.response,
+			res.err,
+		)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for async timeout")
+	}
+}
+
 func (a *testDatabaseApp) Close() {
 	a.t.Helper()
 
@@ -1196,10 +1323,16 @@ func freeLocalAddress(t *testing.T) string {
 func connectEventually(t *testing.T, address string) *network.TCPClient {
 	t.Helper()
 
+	return connectEventuallyWithIdle(t, address, time.Second)
+}
+
+func connectEventuallyWithIdle(t *testing.T, address string, idleTimeout time.Duration) *network.TCPClient {
+	t.Helper()
+
 	var client *network.TCPClient
 	require.Eventually(t, func() bool {
 		var err error
-		client, err = network.NewTCPClient(address, 64<<10, time.Second)
+		client, err = network.NewTCPClient(address, 64<<10, idleTimeout)
 
 		return err == nil
 	}, time.Second, 10*time.Millisecond)
