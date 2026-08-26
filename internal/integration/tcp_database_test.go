@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -123,6 +124,53 @@ func TestTCPDatabaseMatchesReferenceModelForDeterministicSequence(t *testing.T) 
 		expected := model.Apply(t, query)
 		actual := app.RequireOK(query)
 		requireModelResponse(t, query, expected, actual)
+	}
+}
+
+func TestTCPDatabaseMatchesReferenceModelForSeededSequence(t *testing.T) {
+	const seed = int64(2026082601)
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	model := newReferenceModel()
+	rng := rand.New(rand.NewSource(seed))
+	for i := 0; i < 500; i++ {
+		query := randomModelQuery(rng)
+		expected := model.Apply(t, query)
+		actual := app.RequireOK(query)
+		requireModelResponse(t, fmt.Sprintf("seed=%d op=%d query=%s", seed, i, query), expected, actual)
+	}
+}
+
+func TestTCPDatabaseRecoversSeededModelSequenceAcrossRestarts(t *testing.T) {
+	const seed = int64(2026082602)
+	const operations = 240
+	const restartEvery = 40
+
+	walDir := t.TempDir()
+	app := startTestDatabase(t, walDir)
+	defer func() {
+		app.Close()
+	}()
+
+	model := newReferenceModel()
+	rng := rand.New(rand.NewSource(seed))
+	for i := 0; i < operations; i++ {
+		query := randomModelQuery(rng)
+		expected := model.Apply(t, query)
+		actual := app.RequireOK(query)
+		requireModelResponse(t, fmt.Sprintf("seed=%d op=%d query=%s", seed, i, query), expected, actual)
+
+		if (i+1)%restartEvery == 0 {
+			checkpointQuery := fmt.Sprintf("INCR recovery_checkpoint_%03d 1000000000", i)
+			expected = model.Apply(t, checkpointQuery)
+			actual = app.RequireOK(checkpointQuery)
+			requireModelResponse(t, fmt.Sprintf("seed=%d checkpoint_after_op=%d query=%s", seed, i, checkpointQuery), expected, actual)
+
+			app.Close()
+			app = startTestDatabase(t, walDir)
+			requireReferenceModelSamples(t, app, model, fmt.Sprintf("seed=%d after_op=%d", seed, i))
+		}
 	}
 }
 
@@ -801,7 +849,13 @@ func (a *testDatabaseApp) MinReplicaAckLSN() uint64 {
 
 type referenceModel struct {
 	counters map[referenceKey]int
-	buckets  map[referenceKey]int
+	sliding  map[referenceKey]int
+	buckets  map[referenceKey]referenceTokenBucket
+}
+
+type referenceTokenBucket struct {
+	used     int
+	capacity int
 }
 
 type referenceKey struct {
@@ -831,7 +885,8 @@ type actualRateLimit struct {
 func newReferenceModel() *referenceModel {
 	return &referenceModel{
 		counters: make(map[referenceKey]int),
-		buckets:  make(map[referenceKey]int),
+		sliding:  make(map[referenceKey]int),
+		buckets:  make(map[referenceKey]referenceTokenBucket),
 	}
 }
 
@@ -854,11 +909,13 @@ func (m *referenceModel) Apply(t *testing.T, query string) expectedResponse {
 	case "DEL":
 		key := referenceKey{key: parts[1], window: parts[2]}
 		_, counterFound := m.counters[key]
+		_, slidingFound := m.sliding[key]
 		_, bucketFound := m.buckets[key]
 		delete(m.counters, key)
+		delete(m.sliding, key)
 		delete(m.buckets, key)
 
-		if counterFound || bucketFound {
+		if counterFound || slidingFound || bucketFound {
 			return expectedResponse{raw: "ok|1"}
 		}
 
@@ -868,10 +925,12 @@ func (m *referenceModel) Apply(t *testing.T, query string) expectedResponse {
 		for i := 1; i < len(parts); i += 2 {
 			key := referenceKey{key: parts[i], window: parts[i+1]}
 			_, counterFound := m.counters[key]
+			_, slidingFound := m.sliding[key]
 			_, bucketFound := m.buckets[key]
 			delete(m.counters, key)
+			delete(m.sliding, key)
 			delete(m.buckets, key)
-			if counterFound || bucketFound {
+			if counterFound || slidingFound || bucketFound {
 				results = append(results, "1")
 			} else {
 				results = append(results, "0")
@@ -892,28 +951,35 @@ func (m *referenceModel) Apply(t *testing.T, query string) expectedResponse {
 		key := referenceKey{key: parts[2], window: window}
 
 		if algorithm == "TB" {
-			used := m.buckets[key]
-			if used >= limit {
+			bucket := m.buckets[key]
+			if bucket.capacity != limit {
+				bucket.capacity = limit
+			}
+			if bucket.used >= limit {
 				return expectedResponse{rateLimit: &expectedRateLimit{
 					allowed:   false,
-					current:   used,
+					current:   bucket.used,
 					remaining: 0,
 					window:    uint32(parsedWindow),
 				}}
 			}
 
-			used++
-			m.buckets[key] = used
+			bucket.used++
+			m.buckets[key] = bucket
 
 			return expectedResponse{rateLimit: &expectedRateLimit{
 				allowed:   true,
-				current:   used,
-				remaining: limit - used,
+				current:   bucket.used,
+				remaining: limit - bucket.used,
 				window:    uint32(parsedWindow),
 			}}
 		}
 
-		current := m.counters[key]
+		state := m.counters
+		if algorithm == "SW" {
+			state = m.sliding
+		}
+		current := state[key]
 		if current >= limit {
 			return expectedResponse{rateLimit: &expectedRateLimit{
 				allowed:   false,
@@ -924,7 +990,7 @@ func (m *referenceModel) Apply(t *testing.T, query string) expectedResponse {
 		}
 
 		current++
-		m.counters[key] = current
+		state[key] = current
 
 		return expectedResponse{rateLimit: &expectedRateLimit{
 			allowed:   true,
@@ -937,6 +1003,95 @@ func (m *referenceModel) Apply(t *testing.T, query string) expectedResponse {
 	}
 
 	return expectedResponse{}
+}
+
+func randomModelQuery(rng *rand.Rand) string {
+	const window = "1000000000"
+	switch rng.Intn(10) {
+	case 0, 1, 2:
+		return fmt.Sprintf("INCR %s %s", randomKey(rng, "counter"), window)
+	case 3:
+		return fmt.Sprintf("GET %s %s", randomReadableKey(rng), window)
+	case 4:
+		return fmt.Sprintf("DEL %s %s", randomAnyKey(rng), window)
+	case 5:
+		return fmt.Sprintf(
+			"MDEL %s %s %s %s",
+			randomAnyKey(rng),
+			window,
+			randomAnyKey(rng),
+			window,
+		)
+	case 6, 7:
+		return fmt.Sprintf("RLIMIT FW %s 5 %s", randomKey(rng, "fw"), window)
+	case 8:
+		return fmt.Sprintf("RLIMIT SW %s 5 %s", randomKey(rng, "sw"), window)
+	default:
+		return fmt.Sprintf("RLIMIT TB %s 5 1 %s", randomKey(rng, "tb"), window)
+	}
+}
+
+func randomReadableKey(rng *rand.Rand) string {
+	if rng.Intn(2) == 0 {
+		return randomKey(rng, "counter")
+	}
+
+	return randomKey(rng, "fw")
+}
+
+func randomAnyKey(rng *rand.Rand) string {
+	prefixes := []string{"counter", "fw", "sw", "tb"}
+
+	return randomKey(rng, prefixes[rng.Intn(len(prefixes))])
+}
+
+func randomKey(rng *rand.Rand, prefix string) string {
+	return fmt.Sprintf("%s_%02d", prefix, rng.Intn(12))
+}
+
+func requireReferenceModelSamples(t *testing.T, app *testDatabaseApp, model *referenceModel, label string) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		for key, value := range model.counters {
+			query := fmt.Sprintf("GET %s %s", key.key, key.window)
+			if app.Query(query) != fmt.Sprintf("ok|%d", value) {
+				return false
+			}
+		}
+
+		return true
+	}, time.Second, 10*time.Millisecond, label)
+
+	slidingQueries := make([]string, 0, len(model.sliding))
+	for key, value := range model.sliding {
+		if value == 0 {
+			continue
+		}
+		slidingQueries = append(slidingQueries, fmt.Sprintf("RLIMIT SW %s 5 %s", key.key, key.window))
+	}
+	for _, query := range slidingQueries {
+		expected := model.Apply(t, query)
+		actual := app.RequireOK(query)
+		requireModelResponse(t, label+" query="+query, expected, actual)
+	}
+
+	tokenBucketQueries := make([]string, 0, len(model.buckets))
+	for key, bucket := range model.buckets {
+		if bucket.used == 0 {
+			continue
+		}
+		capacity := bucket.capacity
+		if capacity == 0 {
+			capacity = 5
+		}
+		tokenBucketQueries = append(tokenBucketQueries, fmt.Sprintf("RLIMIT TB %s %d 1 %s", key.key, capacity, key.window))
+	}
+	for _, query := range tokenBucketQueries {
+		expected := model.Apply(t, query)
+		actual := app.RequireOK(query)
+		requireModelResponse(t, label+" query="+query, expected, actual)
+	}
 }
 
 func requireModelResponse(t *testing.T, query string, expected expectedResponse, actual string) {
