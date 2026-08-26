@@ -56,13 +56,23 @@ run-bench:
 bench-smoke:
 	@echo "-> Running fq benchmark smoke profile..."
 	@mkdir -p ./benchmarks/results
-	@go run ./cmd/bench -address :1945 -connections 100 -warmup 5s -duration 30s -key_range 10000 -key_distribution uniform -seed 42 -output json -output_file ./benchmarks/results/smoke.json
+	@go run ./cmd/bench -profile ./benchmarks/profiles/smoke.yml
 
 .PHONY: bench-release
 bench-release:
-	@echo "-> Running fq benchmark release profile..."
+	@echo "-> Running fq benchmark release profile (uniform counter)..."
 	@mkdir -p ./benchmarks/results
-	@go run ./cmd/bench -address :1945 -connections 500 -warmup 30s -duration 120s -key_range 100000 -key_distribution zipfian -seed 42 -output json -output_file ./benchmarks/results/release.json
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-uniform-counter.yml
+
+.PHONY: bench-release-all
+bench-release-all:
+	@echo "-> Running fq benchmark release profiles..."
+	@mkdir -p ./benchmarks/results
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-hot-counter.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-uniform-counter.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-fw.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-tb.yml
 
 .PHONY: lint
 lint:

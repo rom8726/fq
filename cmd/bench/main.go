@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/guptarohit/asciigraph"
+	"gopkg.in/yaml.v3"
 
 	"github.com/fq-db/fq/internal/network"
 	"github.com/fq-db/fq/internal/tools"
@@ -35,6 +37,7 @@ const (
 )
 
 type benchConfig struct {
+	profilePath     string
 	address         string
 	connections     int
 	warmup          time.Duration
@@ -48,6 +51,48 @@ type benchConfig struct {
 	keyDistribution string
 	keyStart        uint64
 	keyRange        uint64
+	batchSize       uint64
+	outputFormat    string
+	outputFile      string
+	seed            int64
+}
+
+type benchProfile struct {
+	Address         *string  `yaml:"address"`
+	Connections     *int     `yaml:"connections"`
+	Warmup          *string  `yaml:"warmup"`
+	Duration        *string  `yaml:"duration"`
+	RPS             *float64 `yaml:"rps"`
+	RequestTimeout  *string  `yaml:"request_timeout"`
+	IdleTimeout     *string  `yaml:"idle_timeout"`
+	MaxMessageSize  *string  `yaml:"max_message_size"`
+	Query           *string  `yaml:"query"`
+	KeyPrefix       *string  `yaml:"key_prefix"`
+	KeyDistribution *string  `yaml:"key_distribution"`
+	KeyStart        *uint64  `yaml:"key_start"`
+	KeyRange        *uint64  `yaml:"key_range"`
+	Batch           *uint64  `yaml:"batch"`
+	Output          *string  `yaml:"output"`
+	OutputFile      *string  `yaml:"output_file"`
+	Seed            *int64   `yaml:"seed"`
+}
+
+type flagValues struct {
+	profilePath     string
+	address         string
+	connections     int
+	warmup          time.Duration
+	duration        time.Duration
+	rps             float64
+	requestTimeout  time.Duration
+	idleTimeout     time.Duration
+	maxMessageSize  string
+	queryTemplate   string
+	keyPrefix       string
+	keyDistribution string
+	keyStart        uint64
+	keyRange        uint64
+	keys            uint64
 	batchSize       uint64
 	outputFormat    string
 	outputFile      string
@@ -87,6 +132,7 @@ type reportMetadata struct {
 	GOARCH          string    `json:"goarch"`
 	NumCPU          int       `json:"num_cpu"`
 	ConfigHash      string    `json:"config_hash"`
+	Profile         string    `json:"profile,omitempty"`
 	Address         string    `json:"address"`
 	Connections     int       `json:"connections"`
 	Warmup          string    `json:"warmup"`
@@ -123,7 +169,7 @@ type latencySummary struct {
 }
 
 func main() {
-	cfg, err := parseFlags()
+	cfg, err := parseArgs(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -156,81 +202,315 @@ func main() {
 	runReporter(ctx, cfg, results, done)
 }
 
-func parseFlags() (benchConfig, error) {
-	address := flag.String("address", ":1945", "fq server address")
-	connections := flag.Int("connections", 100, "number of concurrent TCP connections")
-	warmup := flag.Duration("warmup", 0, "warmup duration excluded from final reported metrics")
-	duration := flag.Duration("duration", 30*time.Second, "test duration; 0 means until Ctrl+C")
-	rps := flag.Float64("rps", 0, "target total requests per second; 0 means unlimited")
-	requestTimeout := flag.Duration("request_timeout", 5*time.Second, "timeout for one request")
-	idleTimeout := flag.Duration("idle_timeout", time.Minute, "TCP connection idle timeout")
-	maxMessageSizeStr := flag.String("max_message_size", "4KB", "max message size")
-	queryTemplate := flag.String("query", defaultQueryTemplate, "query template; supports {key}, {batch}, {worker}, {n}")
-	keyPrefix := flag.String("key_prefix", "bench", "key prefix for generated queries")
-	keyDistribution := flag.String("key_distribution", sequential, "key distribution: sequential, uniform, or zipfian")
-	keyStart := flag.Uint64("key_start", 0, "first generated key id")
-	keyRange := flag.Uint64("key_range", 1000, "number of distinct generated keys")
-	keys := flag.Uint64("keys", 0, "deprecated alias for key_range")
-	batchSize := flag.Uint64("batch", 600, "batch value for the default query template")
-	outputFormat := flag.String("output", "text", "final report format: text, json, or csv")
-	outputFile := flag.String("output_file", "", "write final report to file instead of stdout")
-	seed := flag.Int64("seed", 1, "benchmark seed recorded in report metadata")
-	flag.Parse()
+func parseArgs(args []string) (benchConfig, error) {
+	cfg := defaultBenchConfig()
+	values := flagValuesFromConfig(cfg)
+	flags := flag.NewFlagSet("fq-bench", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	defineFlags(flags, &values)
+	if err := flags.Parse(args); err != nil {
+		return benchConfig{}, err
+	}
 
-	if *connections <= 0 {
+	if values.profilePath != "" {
+		profile, err := loadProfile(values.profilePath)
+		if err != nil {
+			return benchConfig{}, err
+		}
+		if err := applyProfile(&cfg, profile); err != nil {
+			return benchConfig{}, err
+		}
+		cfg.profilePath = values.profilePath
+	}
+
+	explicit := explicitFlags(flags)
+	if err := applyFlagOverrides(&cfg, values, explicit); err != nil {
+		return benchConfig{}, err
+	}
+
+	return validateConfig(cfg)
+}
+
+func defaultBenchConfig() benchConfig {
+	return benchConfig{
+		address:         ":1945",
+		connections:     100,
+		warmup:          0,
+		duration:        30 * time.Second,
+		rps:             0,
+		requestTimeout:  5 * time.Second,
+		idleTimeout:     time.Minute,
+		maxMessageSize:  4 << 10,
+		queryTemplate:   defaultQueryTemplate,
+		keyPrefix:       "bench",
+		keyDistribution: sequential,
+		keyStart:        0,
+		keyRange:        1000,
+		batchSize:       600,
+		outputFormat:    "text",
+		outputFile:      "",
+		seed:            1,
+	}
+}
+
+func flagValuesFromConfig(cfg benchConfig) flagValues {
+	return flagValues{
+		address:         cfg.address,
+		connections:     cfg.connections,
+		warmup:          cfg.warmup,
+		duration:        cfg.duration,
+		rps:             cfg.rps,
+		requestTimeout:  cfg.requestTimeout,
+		idleTimeout:     cfg.idleTimeout,
+		maxMessageSize:  formatSize(cfg.maxMessageSize),
+		queryTemplate:   cfg.queryTemplate,
+		keyPrefix:       cfg.keyPrefix,
+		keyDistribution: cfg.keyDistribution,
+		keyStart:        cfg.keyStart,
+		keyRange:        cfg.keyRange,
+		keys:            0,
+		batchSize:       cfg.batchSize,
+		outputFormat:    cfg.outputFormat,
+		outputFile:      cfg.outputFile,
+		seed:            cfg.seed,
+	}
+}
+
+//nolint:lll // ok
+func defineFlags(flags *flag.FlagSet, values *flagValues) {
+	flags.StringVar(&values.profilePath, "profile", "", "load benchmark profile YAML file")
+	flags.StringVar(&values.address, "address", values.address, "fq server address")
+	flags.IntVar(&values.connections, "connections", values.connections, "number of concurrent TCP connections")
+	flags.DurationVar(&values.warmup, "warmup", values.warmup, "warmup duration excluded from final reported metrics")
+	flags.DurationVar(&values.duration, "duration", values.duration, "test duration; 0 means until Ctrl+C")
+	flags.Float64Var(&values.rps, "rps", values.rps, "target total requests per second; 0 means unlimited")
+	flags.DurationVar(&values.requestTimeout, "request_timeout", values.requestTimeout, "timeout for one request")
+	flags.DurationVar(&values.idleTimeout, "idle_timeout", values.idleTimeout, "TCP connection idle timeout")
+	flags.StringVar(&values.maxMessageSize, "max_message_size", values.maxMessageSize, "max message size")
+	flags.StringVar(&values.queryTemplate, "query", values.queryTemplate, "query template; supports {key}, {batch}, {worker}, {n}")
+	flags.StringVar(&values.keyPrefix, "key_prefix", values.keyPrefix, "key prefix for generated queries")
+	flags.StringVar(&values.keyDistribution, "key_distribution", values.keyDistribution, "key distribution: sequential, uniform, or zipfian")
+	flags.Uint64Var(&values.keyStart, "key_start", values.keyStart, "first generated key id")
+	flags.Uint64Var(&values.keyRange, "key_range", values.keyRange, "number of distinct generated keys")
+	flags.Uint64Var(&values.keys, "keys", values.keys, "deprecated alias for key_range")
+	flags.Uint64Var(&values.batchSize, "batch", values.batchSize, "batch value for the default query template")
+	flags.StringVar(&values.outputFormat, "output", values.outputFormat, "final report format: text, json, or csv")
+	flags.StringVar(&values.outputFile, "output_file", values.outputFile, "write final report to file instead of stdout")
+	flags.Int64Var(&values.seed, "seed", values.seed, "benchmark seed recorded in report metadata")
+}
+
+func explicitFlags(flags *flag.FlagSet) map[string]struct{} {
+	explicit := make(map[string]struct{})
+	flags.Visit(func(f *flag.Flag) {
+		explicit[f.Name] = struct{}{}
+	})
+
+	return explicit
+}
+
+func applyFlagOverrides(cfg *benchConfig, values flagValues, explicit map[string]struct{}) error {
+	if isExplicit(explicit, "address") {
+		cfg.address = values.address
+	}
+	if isExplicit(explicit, "connections") {
+		cfg.connections = values.connections
+	}
+	if isExplicit(explicit, "warmup") {
+		cfg.warmup = values.warmup
+	}
+	if isExplicit(explicit, "duration") {
+		cfg.duration = values.duration
+	}
+	if isExplicit(explicit, "rps") {
+		cfg.rps = values.rps
+	}
+	if isExplicit(explicit, "request_timeout") {
+		cfg.requestTimeout = values.requestTimeout
+	}
+	if isExplicit(explicit, "idle_timeout") {
+		cfg.idleTimeout = values.idleTimeout
+	}
+	if isExplicit(explicit, "max_message_size") {
+		maxMessageSize, err := tools.ParseSize(values.maxMessageSize)
+		if err != nil {
+			return fmt.Errorf("parse max_message_size: %w", err)
+		}
+		cfg.maxMessageSize = maxMessageSize
+	}
+	if isExplicit(explicit, "query") {
+		cfg.queryTemplate = values.queryTemplate
+	}
+	if isExplicit(explicit, "key_prefix") {
+		cfg.keyPrefix = values.keyPrefix
+	}
+	if isExplicit(explicit, "key_distribution") {
+		cfg.keyDistribution = strings.ToLower(values.keyDistribution)
+	}
+	if isExplicit(explicit, "key_start") {
+		cfg.keyStart = values.keyStart
+	}
+	if isExplicit(explicit, "key_range") {
+		cfg.keyRange = values.keyRange
+	}
+	if isExplicit(explicit, "keys") {
+		cfg.keyRange = values.keys
+	}
+	if isExplicit(explicit, "batch") {
+		cfg.batchSize = values.batchSize
+	}
+	if isExplicit(explicit, "output") {
+		cfg.outputFormat = strings.ToLower(values.outputFormat)
+	}
+	if isExplicit(explicit, "output_file") {
+		cfg.outputFile = values.outputFile
+	}
+	if isExplicit(explicit, "seed") {
+		cfg.seed = values.seed
+	}
+
+	return nil
+}
+
+func isExplicit(explicit map[string]struct{}, name string) bool {
+	_, ok := explicit[name]
+
+	return ok
+}
+
+func validateConfig(cfg benchConfig) (benchConfig, error) {
+	if cfg.connections <= 0 {
 		return benchConfig{}, fmt.Errorf("connections must be positive")
 	}
-	if *warmup < 0 {
+	if cfg.warmup < 0 {
 		return benchConfig{}, fmt.Errorf("warmup must be non-negative")
 	}
-	if *duration < 0 {
+	if cfg.duration < 0 {
 		return benchConfig{}, fmt.Errorf("duration must be non-negative")
 	}
-	if *rps < 0 {
+	if cfg.rps < 0 {
 		return benchConfig{}, fmt.Errorf("rps must be non-negative")
 	}
-	*outputFormat = strings.ToLower(*outputFormat)
-	if *outputFormat != "text" && *outputFormat != "json" && *outputFormat != "csv" {
+	cfg.outputFormat = strings.ToLower(cfg.outputFormat)
+	if cfg.outputFormat != "text" && cfg.outputFormat != "json" && cfg.outputFormat != "csv" {
 		return benchConfig{}, fmt.Errorf("output must be text, json, or csv")
 	}
-	*keyDistribution = strings.ToLower(*keyDistribution)
-	if *keyDistribution != sequential && *keyDistribution != uniform && *keyDistribution != zipfian {
+	cfg.keyDistribution = strings.ToLower(cfg.keyDistribution)
+	if cfg.keyDistribution != sequential && cfg.keyDistribution != uniform && cfg.keyDistribution != zipfian {
 		return benchConfig{}, fmt.Errorf("key_distribution must be sequential, uniform, or zipfian")
 	}
-	if *keys != 0 {
-		*keyRange = *keys
-	}
-	if *keyRange == 0 {
+	if cfg.keyRange == 0 {
 		return benchConfig{}, fmt.Errorf("key_range must be positive")
 	}
-	if *batchSize == 0 {
+	if cfg.batchSize == 0 {
 		return benchConfig{}, fmt.Errorf("batch must be positive")
 	}
 
-	maxMessageSize, err := tools.ParseSize(*maxMessageSizeStr)
+	return cfg, nil
+}
+
+func loadProfile(path string) (benchProfile, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return benchConfig{}, fmt.Errorf("parse max_message_size: %w", err)
+		return benchProfile{}, fmt.Errorf("read profile %q: %w", path, err)
 	}
 
-	return benchConfig{
-		address:         *address,
-		connections:     *connections,
-		warmup:          *warmup,
-		duration:        *duration,
-		rps:             *rps,
-		requestTimeout:  *requestTimeout,
-		idleTimeout:     *idleTimeout,
-		maxMessageSize:  maxMessageSize,
-		queryTemplate:   *queryTemplate,
-		keyPrefix:       *keyPrefix,
-		keyDistribution: *keyDistribution,
-		keyStart:        *keyStart,
-		keyRange:        *keyRange,
-		batchSize:       *batchSize,
-		outputFormat:    *outputFormat,
-		outputFile:      *outputFile,
-		seed:            *seed,
-	}, nil
+	var profile benchProfile
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&profile); err != nil {
+		return benchProfile{}, fmt.Errorf("parse profile %q: %w", path, err)
+	}
+
+	return profile, nil
+}
+
+func applyProfile(cfg *benchConfig, profile benchProfile) error {
+	if profile.Address != nil {
+		cfg.address = *profile.Address
+	}
+	if profile.Connections != nil {
+		cfg.connections = *profile.Connections
+	}
+	if profile.Warmup != nil {
+		duration, err := parseProfileDuration("warmup", *profile.Warmup)
+		if err != nil {
+			return err
+		}
+		cfg.warmup = duration
+	}
+	if profile.Duration != nil {
+		duration, err := parseProfileDuration("duration", *profile.Duration)
+		if err != nil {
+			return err
+		}
+		cfg.duration = duration
+	}
+	if profile.RPS != nil {
+		cfg.rps = *profile.RPS
+	}
+	if profile.RequestTimeout != nil {
+		duration, err := parseProfileDuration("request_timeout", *profile.RequestTimeout)
+		if err != nil {
+			return err
+		}
+		cfg.requestTimeout = duration
+	}
+	if profile.IdleTimeout != nil {
+		duration, err := parseProfileDuration("idle_timeout", *profile.IdleTimeout)
+		if err != nil {
+			return err
+		}
+		cfg.idleTimeout = duration
+	}
+	if profile.MaxMessageSize != nil {
+		size, err := tools.ParseSize(*profile.MaxMessageSize)
+		if err != nil {
+			return fmt.Errorf("parse profile max_message_size: %w", err)
+		}
+		cfg.maxMessageSize = size
+	}
+	if profile.Query != nil {
+		cfg.queryTemplate = *profile.Query
+	}
+	if profile.KeyPrefix != nil {
+		cfg.keyPrefix = *profile.KeyPrefix
+	}
+	if profile.KeyDistribution != nil {
+		cfg.keyDistribution = strings.ToLower(*profile.KeyDistribution)
+	}
+	if profile.KeyStart != nil {
+		cfg.keyStart = *profile.KeyStart
+	}
+	if profile.KeyRange != nil {
+		cfg.keyRange = *profile.KeyRange
+	}
+	if profile.Batch != nil {
+		cfg.batchSize = *profile.Batch
+	}
+	if profile.Output != nil {
+		cfg.outputFormat = strings.ToLower(*profile.Output)
+	}
+	if profile.OutputFile != nil {
+		cfg.outputFile = *profile.OutputFile
+	}
+	if profile.Seed != nil {
+		cfg.seed = *profile.Seed
+	}
+
+	return nil
+}
+
+func parseProfileDuration(name, value string) (time.Duration, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse profile %s: %w", name, err)
+	}
+
+	return duration, nil
+}
+
+func formatSize(size int) string {
+	return strconv.Itoa(size)
 }
 
 func runWorker(ctx context.Context, cfg benchConfig, workerID int, results chan<- result) {
@@ -630,6 +910,7 @@ func makeReport(
 			GOARCH:          runtime.GOARCH,
 			NumCPU:          runtime.NumCPU(),
 			ConfigHash:      configHash(cfg),
+			Profile:         cfg.profilePath,
 			Address:         cfg.address,
 			Connections:     cfg.connections,
 			Warmup:          cfg.warmup.String(),
@@ -719,6 +1000,9 @@ func writeReport(cfg benchConfig, report runReport) error {
 	}
 
 	if cfg.outputFile != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.outputFile), 0o750); err != nil {
+			return fmt.Errorf("create report directory: %w", err)
+		}
 		return os.WriteFile(cfg.outputFile, data, 0o644)
 	}
 
@@ -733,6 +1017,9 @@ func formatTextReport(report runReport) string {
 	b.WriteString(strings.Repeat("=", 78))
 	b.WriteByte('\n')
 	fmt.Fprintf(&b, "%-14s %s\n", "config_hash", report.Metadata.ConfigHash)
+	if report.Metadata.Profile != "" {
+		fmt.Fprintf(&b, "%-14s %s\n", "profile", report.Metadata.Profile)
+	}
 	fmt.Fprintf(&b, "%-14s %s/%s, %s, cpu=%d\n",
 		"runtime",
 		report.Metadata.GOOS,

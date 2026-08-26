@@ -68,7 +68,7 @@ func TestMakeReportComputesMeasuredSummary(t *testing.T) {
 }
 
 func TestWriteJSONReportToFile(t *testing.T) {
-	cfg := benchConfig{outputFormat: "json", outputFile: filepath.Join(t.TempDir(), "report.json")}
+	cfg := benchConfig{outputFormat: "json", outputFile: filepath.Join(t.TempDir(), "nested", "report.json")}
 	report := runReport{
 		Metadata: reportMetadata{ConfigHash: "abc"},
 		Summary:  reportSummary{Requests: 7},
@@ -118,6 +118,120 @@ func TestRecordResultKeepsWarmupErrorForDiagnostics(t *testing.T) {
 	}
 	if lastError != "connect: refused" {
 		t.Fatalf("last error = %q", lastError)
+	}
+}
+
+func TestParseArgsLoadsProfile(t *testing.T) {
+	profilePath := filepath.Join(t.TempDir(), "profile.yml")
+	err := os.WriteFile(profilePath, []byte(`
+address: ":2000"
+connections: 12
+warmup: 3s
+duration: 15s
+rps: 750
+request_timeout: 2s
+idle_timeout: 20s
+max_message_size: 8KB
+query: "RLIMIT FW {key} 100 {batch}"
+key_prefix: prof
+key_distribution: zipfian
+key_start: 10
+key_range: 1000
+batch: 7
+output: json
+output_file: benchmarks/results/profile.json
+seed: 99
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := parseArgs([]string{"-profile", profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.profilePath != profilePath {
+		t.Fatalf("profile path = %q", cfg.profilePath)
+	}
+	if cfg.address != ":2000" || cfg.connections != 12 || cfg.warmup != 3*time.Second || cfg.duration != 15*time.Second {
+		t.Fatalf("profile was not loaded: %+v", cfg)
+	}
+	if cfg.maxMessageSize != 8<<10 {
+		t.Fatalf("max message size = %d", cfg.maxMessageSize)
+	}
+	if cfg.queryTemplate != "RLIMIT FW {key} 100 {batch}" || cfg.keyDistribution != zipfian || cfg.batchSize != 7 {
+		t.Fatalf("workload fields were not loaded: %+v", cfg)
+	}
+	if cfg.outputFormat != "json" || cfg.outputFile != "benchmarks/results/profile.json" || cfg.seed != 99 {
+		t.Fatalf("output fields were not loaded: %+v", cfg)
+	}
+}
+
+func TestParseArgsLetsFlagsOverrideProfile(t *testing.T) {
+	profilePath := filepath.Join(t.TempDir(), "profile.yml")
+	err := os.WriteFile(profilePath, []byte(`
+connections: 12
+duration: 15s
+key_range: 1000
+output: json
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := parseArgs([]string{
+		"-profile", profilePath,
+		"-connections", "3",
+		"-duration", "1s",
+		"-key_range", "55",
+		"-output", "csv",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.connections != 3 {
+		t.Fatalf("connections = %d", cfg.connections)
+	}
+	if cfg.duration != time.Second {
+		t.Fatalf("duration = %s", cfg.duration)
+	}
+	if cfg.keyRange != 55 {
+		t.Fatalf("key range = %d", cfg.keyRange)
+	}
+	if cfg.outputFormat != "csv" {
+		t.Fatalf("output = %s", cfg.outputFormat)
+	}
+}
+
+func TestParseArgsRejectsUnknownProfileFields(t *testing.T) {
+	profilePath := filepath.Join(t.TempDir(), "profile.yml")
+	err := os.WriteFile(profilePath, []byte("key_distrubution: uniform\n"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := parseArgs([]string{"-profile", profilePath}); err == nil {
+		t.Fatal("expected unknown profile field error")
+	}
+}
+
+func TestRepositoryProfilesParse(t *testing.T) {
+	profiles, err := filepath.Glob(filepath.Join("..", "..", "benchmarks", "profiles", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) == 0 {
+		t.Fatal("no benchmark profiles found")
+	}
+
+	for _, profile := range profiles {
+		t.Run(filepath.Base(profile), func(t *testing.T) {
+			if _, err := parseArgs([]string{"-profile", profile}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
