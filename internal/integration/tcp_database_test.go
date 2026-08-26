@@ -22,6 +22,7 @@ import (
 	"github.com/fq-db/fq/internal/database/storage"
 	"github.com/fq-db/fq/internal/database/storage/dumper"
 	inmemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
+	"github.com/fq-db/fq/internal/database/storage/replication"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/network"
 )
@@ -275,6 +276,48 @@ func TestTCPDatabaseDumpDuringWriteLoadRecoversAllAcknowledgedWrites(t *testing.
 	second.RequireQuery("GET durable_hot 600", fmt.Sprintf("ok|%d", successful.Load()))
 }
 
+func TestTCPDatabaseSlaveEventuallyConvergesWithMaster(t *testing.T) {
+	masterWALDir := t.TempDir()
+	masterDumpDir := t.TempDir()
+	slaveWALDir := t.TempDir()
+	replicationAddress := freeLocalAddress(t)
+
+	masterApp := startTestDatabaseWithMasterReplication(t, masterWALDir, masterDumpDir, replicationAddress)
+	defer masterApp.Close()
+	waitTCPAddress(t, replicationAddress, 16<<20)
+
+	masterApp.RequireQuery("INCR replicated_counter 600", "ok|1")
+	masterApp.RequireQuery("INCR replicated_counter 600", "ok|2")
+	masterApp.RequireRateLimit("RLIMIT FW replicated_fw 2 600", true, 1, 1, 600)
+	masterApp.RequireRateLimit("RLIMIT FW replicated_fw 2 600", true, 2, 0, 600)
+	masterApp.RequireRateLimit("RLIMIT SW replicated_sw 2 600", true, 1, 1, 600)
+	masterApp.RequireRateLimit("RLIMIT SW replicated_sw 2 600", true, 2, 0, 600)
+	masterApp.RequireRateLimit("RLIMIT TB replicated_tb 3 1 600", true, 1, 2, 600)
+	masterApp.RequireRateLimit("RLIMIT TB replicated_tb 3 1 600", true, 2, 1, 600)
+
+	slave := startTestDatabaseWithSlaveReplication(t, slaveWALDir, replicationAddress)
+	slaveClosed := false
+	defer func() {
+		if !slaveClosed {
+			slave.Close()
+		}
+	}()
+
+	require.Eventually(t, func() bool {
+		return masterApp.MinReplicaAckLSN() >= 8
+	}, 5*time.Second, 25*time.Millisecond)
+
+	slave.RequireQuery("GET replicated_counter 600", "ok|2")
+	slave.RequireQuery("GET replicated_fw 600", "ok|2")
+	slave.RequireRateLimit("RLIMIT SW replicated_sw 2 600", false, 2, 0, 600)
+	slave.Close()
+	slaveClosed = true
+
+	recoveredFromReplicatedWAL := startTestDatabase(t, slaveWALDir)
+	defer recoveredFromReplicatedWAL.Close()
+	recoveredFromReplicatedWAL.RequireRateLimit("RLIMIT TB replicated_tb 3 1 600", true, 3, 0, 600)
+}
+
 func TestTCPDatabasePStreamFiltersLimitEventsByPrefix(t *testing.T) {
 	app := startTestDatabase(t, t.TempDir())
 	defer app.Close()
@@ -416,13 +459,15 @@ func TestTCPDatabaseRecoversFromTruncatedWALTailAfterRestart(t *testing.T) {
 }
 
 type testDatabaseApp struct {
-	t       *testing.T
-	address string
-	client  *network.TCPClient
-	storage *storage.Storage
-	dumper  *dumper.Dumper
-	cancel  context.CancelFunc
-	done    chan error
+	t               *testing.T
+	address         string
+	client          *network.TCPClient
+	storage         *storage.Storage
+	dumper          *dumper.Dumper
+	cancel          context.CancelFunc
+	done            chan error
+	replicationDone chan error
+	master          *replication.Master
 }
 
 func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
@@ -500,6 +545,139 @@ func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump
 	}
 }
 
+func startTestDatabaseWithMasterReplication(t *testing.T, walDir, dumpDir, replicationAddress string) *testDatabaseApp {
+	t.Helper()
+
+	logger := zerolog.Nop()
+	walStream := make(chan wal.Chunk, 8)
+	dumpStream := make(chan database.DumpChunk, 1)
+
+	engine, err := inmemory.NewEngine(inmemory.HashTableBuilder, 4, &logger, walStream, dumpStream)
+	require.NoError(t, err)
+
+	walStore := newTestWAL(walDir, walStream, &logger)
+	dumpStore := dumper.New(engine, walStore, dumpDir)
+
+	replicationServer, err := network.NewTCPServer(replicationAddress, 5, 16<<20, time.Second, &logger)
+	require.NoError(t, err)
+	master, err := replication.NewMaster(replicationServer, walDir, dumpStore, &logger)
+	require.NoError(t, err)
+
+	strg, err := storage.NewStorage(
+		engine,
+		walStore,
+		dumpStore,
+		nil,
+		&logger,
+		time.Hour,
+		time.Hour,
+		true,
+		config.DefaultLimitEventQueueCapacity,
+	)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, strg.LoadWAL(ctx, database.NoTx))
+	strg.Start(ctx)
+
+	replicationDone := make(chan error, 1)
+	go func() {
+		replicationDone <- master.Start(ctx)
+	}()
+
+	app := startQueryServer(t, ctx, cancel, strg, dumpStore, &logger)
+	app.replicationDone = replicationDone
+	app.master = master
+
+	return app
+}
+
+func startTestDatabaseWithSlaveReplication(t *testing.T, walDir, replicationAddress string) *testDatabaseApp {
+	t.Helper()
+
+	logger := zerolog.Nop()
+	walStream := make(chan wal.Chunk, 8)
+	dumpStream := make(chan database.DumpChunk, 1)
+
+	engine, err := inmemory.NewEngine(inmemory.HashTableBuilder, 4, &logger, walStream, dumpStream)
+	require.NoError(t, err)
+
+	walStore := newTestWAL(walDir, walStream, &logger)
+	clientFactory := replication.NewTCPClientFactory(replicationAddress, 16<<20, time.Second)
+	slave, err := replication.NewSlaveWithFactory(
+		clientFactory,
+		"replica-test",
+		wal.NewFSReader(walDir, &logger),
+		walStream,
+		dumpStream,
+		walDir,
+		10*time.Millisecond,
+		&logger,
+	)
+	require.NoError(t, err)
+
+	strg, err := storage.NewStorage(
+		engine,
+		walStore,
+		nil,
+		slave,
+		&logger,
+		time.Hour,
+		time.Hour,
+		true,
+		config.DefaultLimitEventQueueCapacity,
+	)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, strg.LoadWAL(ctx, database.NoTx))
+	strg.Start(ctx)
+
+	return startQueryServer(t, ctx, cancel, strg, nil, &logger)
+}
+
+func startQueryServer(
+	t *testing.T,
+	ctx context.Context,
+	cancel context.CancelFunc,
+	strg *storage.Storage,
+	dumpStore *dumper.Dumper,
+	logger *zerolog.Logger,
+) *testDatabaseApp {
+	t.Helper()
+
+	comp := compute.NewCompute(compute.NewParser(logger), compute.NewAnalyzer(logger), logger)
+	db := database.NewDatabase(comp, strg, logger, 64<<10)
+	address := freeLocalAddress(t)
+	server, err := network.NewTCPServer(address, 128, 64<<10, time.Second, logger)
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- server.HandleQueryStreams(ctx, func(
+			ctx context.Context,
+			query []byte,
+			write func([]byte) error,
+		) error {
+			return db.HandleQueryStream(ctx, string(query), func(response string) error {
+				return write([]byte(response))
+			})
+		})
+	}()
+
+	client := connectEventually(t, address)
+
+	return &testDatabaseApp{
+		t:       t,
+		address: address,
+		client:  client,
+		storage: strg,
+		dumper:  dumpStore,
+		cancel:  cancel,
+		done:    done,
+	}
+}
+
 func newTestWAL(directory string, stream chan<- wal.Chunk, logger *zerolog.Logger) *wal.WAL {
 	return wal.NewWAL(
 		wal.NewFSWriter(directory, 1<<20, logger),
@@ -540,12 +718,19 @@ func appendTruncatedWALBatch(t *testing.T, segmentPath string) {
 func (a *testDatabaseApp) RequireQuery(query, expected string) {
 	a.t.Helper()
 
+	require.Equal(a.t, expected, a.Query(query))
+}
+
+func (a *testDatabaseApp) Query(query string) string {
+	a.t.Helper()
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	response, err := a.client.Send(ctx, []byte(query))
 	require.NoError(a.t, err)
-	require.Equal(a.t, expected, string(response))
+
+	return string(response)
 }
 
 func (a *testDatabaseApp) RequireQueryPrefix(query, prefix string) string {
@@ -600,6 +785,18 @@ func (a *testDatabaseApp) RequireRateLimit(
 	require.NoError(a.t, err)
 	require.GreaterOrEqual(a.t, uint32(resetAfter), uint32(0))
 	require.LessOrEqual(a.t, uint32(resetAfter), window)
+}
+
+func (a *testDatabaseApp) MinReplicaAckLSN() uint64 {
+	a.t.Helper()
+
+	require.NotNil(a.t, a.master)
+	lsn, ok := a.master.MinReplicaAckLSN()
+	if !ok {
+		return 0
+	}
+
+	return lsn
 }
 
 type referenceModel struct {
@@ -818,6 +1015,15 @@ func (a *testDatabaseApp) Close() {
 	case <-time.After(time.Second):
 		a.t.Fatal("server did not stop")
 	}
+
+	if a.replicationDone != nil {
+		select {
+		case err := <-a.replicationDone:
+			require.NoError(a.t, err)
+		case <-time.After(time.Second):
+			a.t.Fatal("replication server did not stop")
+		}
+	}
 }
 
 func freeLocalAddress(t *testing.T) string {
@@ -844,4 +1050,16 @@ func connectEventually(t *testing.T, address string) *network.TCPClient {
 	}, time.Second, 10*time.Millisecond)
 
 	return client
+}
+
+func waitTCPAddress(t *testing.T, address string, maxMessageSize int) {
+	t.Helper()
+
+	var client *network.TCPClient
+	require.Eventually(t, func() bool {
+		var err error
+		client, err = network.NewTCPClient(address, maxMessageSize, time.Second)
+		return err == nil
+	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, client.Close())
 }
