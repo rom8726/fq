@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -17,8 +18,9 @@ import (
 )
 
 const (
-	frameHeaderSize     = 4
-	maxFramePayloadSize = 1<<32 - 1
+	frameHeaderSize          = 4
+	maxFramePayloadSize      = 1<<32 - 1
+	defaultFrameReadBuffSize = 32 << 10
 )
 
 var (
@@ -38,8 +40,10 @@ type TCPServer struct {
 }
 
 type frameBuffer struct {
-	header  [frameHeaderSize]byte
-	payload []byte
+	reader       *bufio.Reader
+	header       [frameHeaderSize]byte
+	payload      []byte
+	writeBuffers net.Buffers
 }
 
 func NewTCPServer(
@@ -260,7 +264,11 @@ func tokenEquals(token []byte, value string) bool {
 }
 
 func (b *frameBuffer) read(conn net.Conn, maxMessageSize int) ([]byte, error) {
-	messageSize, err := readFrameSize(conn, b.header[:], maxMessageSize)
+	if b.reader == nil {
+		b.reader = bufio.NewReaderSize(conn, defaultFrameReadBuffSize)
+	}
+
+	messageSize, err := readFrameSize(b.reader, b.header[:], maxMessageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -270,16 +278,24 @@ func (b *frameBuffer) read(conn net.Conn, maxMessageSize int) ([]byte, error) {
 	}
 
 	message := b.payload[:messageSize]
-	if _, err := io.ReadFull(conn, message); err != nil {
+	if _, err := io.ReadFull(b.reader, message); err != nil {
 		return nil, err
 	}
 
 	return message, nil
 }
 
-func readFrameInto(conn net.Conn, maxMessageSize int, buffer []byte) ([]byte, error) {
+func (b *frameBuffer) readInto(conn net.Conn, maxMessageSize int, buffer []byte) ([]byte, error) {
+	if b.reader == nil {
+		b.reader = bufio.NewReaderSize(conn, defaultFrameReadBuffSize)
+	}
+
+	return readFrameInto(b.reader, maxMessageSize, buffer)
+}
+
+func readFrameInto(reader io.Reader, maxMessageSize int, buffer []byte) ([]byte, error) {
 	var header [frameHeaderSize]byte
-	messageSize, err := readFrameSize(conn, header[:], maxMessageSize)
+	messageSize, err := readFrameSize(reader, header[:], maxMessageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -288,15 +304,15 @@ func readFrameInto(conn net.Conn, maxMessageSize int, buffer []byte) ([]byte, er
 	}
 
 	message := buffer[:messageSize]
-	if _, err := io.ReadFull(conn, message); err != nil {
+	if _, err := io.ReadFull(reader, message); err != nil {
 		return nil, err
 	}
 
 	return message, nil
 }
 
-func readFrameSize(conn net.Conn, header []byte, maxMessageSize int) (int, error) {
-	if _, err := io.ReadFull(conn, header); err != nil {
+func readFrameSize(reader io.Reader, header []byte, maxMessageSize int) (int, error) {
+	if _, err := io.ReadFull(reader, header); err != nil {
 		return 0, err
 	}
 
@@ -309,10 +325,24 @@ func readFrameSize(conn net.Conn, header []byte, maxMessageSize int) (int, error
 }
 
 func (b *frameBuffer) write(conn net.Conn, payload []byte) error {
-	return writeFrameWithHeader(conn, payload, b.header[:])
+	return b.writeWithHeader(conn, payload, b.header[:])
 }
 
-func writeFrameWithHeader(conn net.Conn, payload, header []byte) error {
+func (b *frameBuffer) writeWithHeader(conn net.Conn, payload, header []byte) error {
+	if cap(b.writeBuffers) < 2 {
+		b.writeBuffers = make(net.Buffers, 2)
+	} else {
+		b.writeBuffers = b.writeBuffers[:2]
+	}
+	defer func() {
+		b.writeBuffers[0] = nil
+		b.writeBuffers[1] = nil
+	}()
+
+	return writeFrameWithBuffers(conn, payload, header, b.writeBuffers)
+}
+
+func writeFrameWithBuffers(conn net.Conn, payload, header []byte, buffers net.Buffers) error {
 	if uint64(len(payload)) > maxFramePayloadSize {
 		return fmt.Errorf("%w: %d > %d", errFrameTooLarge, len(payload), maxFramePayloadSize)
 	}
@@ -322,25 +352,20 @@ func writeFrameWithHeader(conn net.Conn, payload, header []byte) error {
 
 	binary.BigEndian.PutUint32(header, uint32(len(payload)))
 
-	if err := writeAll(conn, header[:frameHeaderSize]); err != nil {
+	if cap(buffers) < 2 {
+		buffers = make(net.Buffers, 2)
+	} else {
+		buffers = buffers[:2]
+	}
+	buffers[0] = header[:frameHeaderSize]
+	buffers[1] = payload
+
+	written, err := buffers.WriteTo(conn)
+	if err != nil {
 		return err
 	}
-
-	return writeAll(conn, payload)
-}
-
-func writeAll(conn net.Conn, data []byte) error {
-	for len(data) > 0 {
-		n, err := conn.Write(data)
-		if err != nil {
-			return err
-		}
-
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-
-		data = data[n:]
+	if written != int64(frameHeaderSize+len(payload)) {
+		return io.ErrShortWrite
 	}
 
 	return nil

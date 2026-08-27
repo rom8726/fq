@@ -13,6 +13,7 @@ var ErrIdleTimeout = errors.New("idle timeout")
 
 type TCPClient struct {
 	connection     net.Conn
+	frames         frameBuffer
 	maxMessageSize int
 	idleTimeout    time.Duration
 	bufferPool     *bytesPool
@@ -64,8 +65,7 @@ func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]by
 		return c.normalizeTimeoutError(ctx, err)
 	}
 
-	var writeHeader [frameHeaderSize]byte
-	if err := writeFrameWithHeader(c.connection, request, writeHeader[:]); err != nil {
+	if err := c.frames.write(c.connection, request); err != nil {
 		return c.normalizeTimeoutError(ctx, err)
 	}
 
@@ -77,7 +77,7 @@ func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]by
 			return c.normalizeTimeoutError(ctx, err)
 		}
 
-		message, err := readFrameInto(c.connection, c.maxMessageSize, response)
+		message, err := c.frames.readInto(c.connection, c.maxMessageSize, response)
 		if err != nil {
 			return c.normalizeTimeoutError(ctx, err)
 		}

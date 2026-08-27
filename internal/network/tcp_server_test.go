@@ -51,15 +51,15 @@ func TestTCPServer(t *testing.T) {
 }
 
 func readFrame(conn net.Conn, maxMessageSize int) ([]byte, error) {
-	frames := frameBuffer{}
+	buffer := make([]byte, maxMessageSize)
 
-	return frames.read(conn, maxMessageSize)
+	return readFrameInto(conn, maxMessageSize, buffer)
 }
 
 func writeFrame(conn net.Conn, payload []byte) error {
-	var header [frameHeaderSize]byte
+	frames := frameBuffer{}
 
-	return writeFrameWithHeader(conn, payload, header[:])
+	return frames.write(conn, payload)
 }
 
 func TestTCPServerHandlesMultipleFrames(t *testing.T) {
@@ -221,7 +221,8 @@ func TestTCPServerRejectsOversizedFrame(t *testing.T) {
 
 	header := make([]byte, frameHeaderSize)
 	binary.BigEndian.PutUint32(header, uint32(maxMessageSize+1))
-	require.NoError(t, writeAll(connection, header))
+	_, err = connection.Write(header)
+	require.NoError(t, err)
 
 	_, err = readFrame(connection, maxMessageSize)
 	require.Error(t, err)
@@ -261,7 +262,7 @@ func TestReadFrameReturnsPayloadReadError(t *testing.T) {
 	go func() {
 		header := make([]byte, frameHeaderSize)
 		binary.BigEndian.PutUint32(header, 4)
-		if err := writeAll(client, header); err != nil {
+		if _, err := client.Write(header); err != nil {
 			errCh <- err
 
 			return
