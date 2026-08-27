@@ -152,9 +152,7 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 			query []byte,
 			write func([]byte) error,
 		) error {
-			return db.HandleQueryStream(ctx, string(query), func(response string) error {
-				return write([]byte(response))
-			})
+			return db.HandleQueryStream(ctx, string(query), write)
 		})
 
 	})

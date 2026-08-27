@@ -689,9 +689,7 @@ func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump
 			query []byte,
 			write func([]byte) error,
 		) error {
-			return db.HandleQueryStream(ctx, string(query), func(response string) error {
-				return write([]byte(response))
-			})
+			return db.HandleQueryStream(ctx, string(query), write)
 		})
 	}()
 
@@ -816,9 +814,7 @@ func startQueryServer(
 			query []byte,
 			write func([]byte) error,
 		) error {
-			return db.HandleQueryStream(ctx, string(query), func(response string) error {
-				return write([]byte(response))
-			})
+			return db.HandleQueryStream(ctx, string(query), write)
 		})
 	}()
 

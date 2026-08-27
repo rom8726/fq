@@ -31,6 +31,9 @@ var (
 	errLimitNotNumber        = errors.New("limit is not a number")
 	errInvalidLimit          = errors.New("invalid limit")
 	errInvalidRLimitAlgo     = errors.New("invalid rate limit algorithm")
+
+	okTrueMsg  = []byte("ok|1")
+	okFalseMsg = []byte("ok|0")
 )
 
 type computeLayer interface {
@@ -75,20 +78,20 @@ func NewDatabase(
 }
 
 func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
-	var response string
-	err := d.HandleQueryStream(ctx, queryStr, func(msg string) error {
+	var response []byte
+	err := d.HandleQueryStream(ctx, queryStr, func(msg []byte) error {
 		response = msg
 
 		return nil
 	})
 	if err != nil {
-		return makeErrorMsg(err)
+		return string(makeErrorMsg(err))
 	}
 
-	return response
+	return string(response)
 }
 
-func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write func(string) error) error {
+func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write func([]byte) error) error {
 	if d.logger.GetLevel() == zerolog.DebugLevel {
 		d.logger.Debug().
 			Str("query", queryStr).
@@ -105,7 +108,7 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		return write(makeErrorMsg(err))
 	}
 
-	var response string
+	var response []byte
 	switch query.CommandID() {
 	case compute.IncrCommandID:
 		response = d.handleIncrQuery(ctx, query)
@@ -134,7 +137,7 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	return write(response)
 }
 
-func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query) string {
+func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query) []byte {
 	arguments := query.Arguments()
 	key, err := makeBatchKey(arguments[0], arguments[1])
 	if err != nil {
@@ -149,7 +152,7 @@ func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query) str
 	return makeValueMsg(value)
 }
 
-func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) string {
+func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) []byte {
 	arguments := query.Arguments()
 	key, err := makeBatchKey(arguments[0], arguments[1])
 	if err != nil {
@@ -164,7 +167,7 @@ func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) stri
 	return makeValueMsg(value)
 }
 
-func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) string {
+func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) []byte {
 	arguments := query.Arguments()
 	key, err := makeBatchKey(arguments[0], arguments[1])
 	if err != nil {
@@ -179,7 +182,7 @@ func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) stri
 	return makeBoolMsg(value)
 }
 
-func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query) string {
+func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query) []byte {
 	arguments := query.Arguments()
 	keys, err := makeBatchKeys(arguments)
 	if err != nil {
@@ -194,11 +197,11 @@ func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query) str
 	return makeBoolsMsg(values)
 }
 
-func (d *Database) handleMsgSizeQuery() string {
+func (d *Database) handleMsgSizeQuery() []byte {
 	return makeValueMsg(ValueType(d.maxMessageSize))
 }
 
-func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) string {
+func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) []byte {
 	arguments := query.Arguments()
 	key, err := makeBatchKey(arguments[0], arguments[1])
 	if err != nil {
@@ -213,7 +216,7 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) st
 	return makeValueMsg(value)
 }
 
-func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, write func(string) error) error {
+func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, write func([]byte) error) error {
 	arguments := query.Arguments()
 	prefix, err := makeStreamPrefix(arguments[0])
 	if err != nil {
@@ -223,7 +226,7 @@ func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, 
 	return d.handleStreamQuery(ctx, prefix, write)
 }
 
-func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write func(string) error) error {
+func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write func([]byte) error) error {
 	events, unsubscribe := d.storageLayer.SubscribeLimitEvents(ctx, prefix)
 	defer unsubscribe()
 
@@ -254,7 +257,7 @@ func makeStreamPrefix(prefix string) (string, error) {
 	return prefix, nil
 }
 
-func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) string {
+func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) []byte {
 	arguments := query.Arguments()
 	algorithm := strings.ToUpper(arguments[0])
 	if algorithm != "FW" && algorithm != "SW" && algorithm != "TB" {
@@ -366,64 +369,82 @@ func makeLimit(limitStr string) (ValueType, error) {
 	return ValueType(limit), nil
 }
 
-func makeErrorMsg(err error) string {
-	return "err|" + err.Error()
+func makeErrorMsg(err error) []byte {
+	buf := makeResponseBuffer(len("err|") + len(err.Error()))
+	buf = append(buf, "err|"...)
+	buf = append(buf, err.Error()...)
+
+	return buf
 }
 
-func makeValueMsg(v ValueType) string {
-	return "ok|" + strconv.FormatUint(uint64(v), 10)
+func makeValueMsg(v ValueType) []byte {
+	buf := makeResponseBuffer(len("ok|18446744073709551615"))
+	buf = append(buf, "ok|"...)
+	buf = strconv.AppendUint(buf, uint64(v), 10)
+
+	return buf
 }
 
-func makeBoolMsg(v bool) string {
-	var str string
+func makeBoolMsg(v bool) []byte {
 	if v {
-		str = "1"
-	} else {
-		str = "0"
+		return okTrueMsg
 	}
 
-	return "ok|" + str
+	return okFalseMsg
 }
 
-func makeBoolsMsg(arr []bool) string {
-	var buff strings.Builder
-	buff.Grow(len(arr)*2 + 3)
-
-	buff.WriteString("ok")
-	buff.WriteByte('|')
+func makeBoolsMsg(arr []bool) []byte {
+	buf := makeResponseBuffer(len(arr)*2 + 3)
+	buf = append(buf, "ok|"...)
 
 	for i, v := range arr {
 		if v {
-			buff.WriteString("1")
+			buf = append(buf, '1')
 		} else {
-			buff.WriteString("0")
+			buf = append(buf, '0')
 		}
 
 		if i < len(arr)-1 {
-			buff.WriteString(";")
+			buf = append(buf, ';')
 		}
 	}
 
-	return buff.String()
+	return buf
 }
 
-func makeRateLimitMsg(result RateLimitResult) string {
-	allowed := "0"
+func makeRateLimitMsg(result RateLimitResult) []byte {
+	buf := makeResponseBuffer(len("ok|1;-2147483648;-2147483648;4294967295"))
+	buf = append(buf, "ok|"...)
 	if result.Allowed {
-		allowed = "1"
+		buf = append(buf, '1')
+	} else {
+		buf = append(buf, '0')
 	}
 
-	return "ok|" +
-		allowed + ";" +
-		strconv.FormatInt(int64(result.Current), 10) + ";" +
-		strconv.FormatInt(int64(result.Remaining), 10) + ";" +
-		strconv.FormatUint(uint64(result.ResetAfter), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendInt(buf, int64(result.Current), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendInt(buf, int64(result.Remaining), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendUint(buf, uint64(result.ResetAfter), 10)
+
+	return buf
 }
 
-func makeLimitEventMsg(event LimitEvent) string {
-	return "ok|" +
-		event.Key + ";" +
-		strconv.FormatUint(uint64(event.Window), 10) + ";" +
-		strconv.FormatInt(int64(event.Current), 10) + ";" +
-		strconv.FormatUint(uint64(event.ResetAfter), 10)
+func makeLimitEventMsg(event LimitEvent) []byte {
+	buf := makeResponseBuffer(len(event.Key) + len("ok|;-2147483648;4294967295;4294967295"))
+	buf = append(buf, "ok|"...)
+	buf = append(buf, event.Key...)
+	buf = append(buf, ';')
+	buf = strconv.AppendUint(buf, uint64(event.Window), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendInt(buf, int64(event.Current), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendUint(buf, uint64(event.ResetAfter), 10)
+
+	return buf
+}
+
+func makeResponseBuffer(capacity int) []byte {
+	return make([]byte, 0, capacity)
 }
