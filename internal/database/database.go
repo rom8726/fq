@@ -138,8 +138,7 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 }
 
 func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query) []byte {
-	arguments := query.Arguments()
-	key, err := makeBatchKey(arguments[0], arguments[1])
+	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
 		return makeErrorMsg(err)
 	}
@@ -153,8 +152,7 @@ func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query) []b
 }
 
 func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) []byte {
-	arguments := query.Arguments()
-	key, err := makeBatchKey(arguments[0], arguments[1])
+	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
 		return makeErrorMsg(err)
 	}
@@ -168,8 +166,7 @@ func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) []by
 }
 
 func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) []byte {
-	arguments := query.Arguments()
-	key, err := makeBatchKey(arguments[0], arguments[1])
+	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
 		return makeErrorMsg(err)
 	}
@@ -202,8 +199,7 @@ func (d *Database) handleMsgSizeQuery() []byte {
 }
 
 func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) []byte {
-	arguments := query.Arguments()
-	key, err := makeBatchKey(arguments[0], arguments[1])
+	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
 		return makeErrorMsg(err)
 	}
@@ -217,8 +213,7 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) []
 }
 
 func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, write func([]byte) error) error {
-	arguments := query.Arguments()
-	prefix, err := makeStreamPrefix(arguments[0])
+	prefix, err := makeStreamPrefix(query.Arg(0))
 	if err != nil {
 		return write(makeErrorMsg(err))
 	}
@@ -258,8 +253,7 @@ func makeStreamPrefix(prefix string) (string, error) {
 }
 
 func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) []byte {
-	arguments := query.Arguments()
-	algorithm := strings.ToUpper(arguments[0])
+	algorithm := strings.ToUpper(query.Arg(0))
 	if algorithm != "FW" && algorithm != "SW" && algorithm != "TB" {
 		return makeErrorMsg(errInvalidRLimitAlgo)
 	}
@@ -268,12 +262,12 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) [
 	if algorithm == "TB" {
 		windowArgIndex = 4
 	}
-	key, err := makeBatchKey(arguments[1], arguments[windowArgIndex])
+	key, err := makeBatchKey(query.Arg(1), query.Arg(windowArgIndex))
 	if err != nil {
 		return makeErrorMsg(err)
 	}
 
-	limit, err := makeLimit(arguments[2])
+	limit, err := makeLimit(query.Arg(2))
 	if err != nil {
 		return makeErrorMsg(err)
 	}
@@ -285,7 +279,7 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) [
 	case "SW":
 		result, err = d.storageLayer.RLimitSlidingWindow(ctx, key, limit)
 	case "TB":
-		refillAmount, parseErr := makeLimit(arguments[3])
+		refillAmount, parseErr := makeLimit(query.Arg(3))
 		if parseErr != nil {
 			return makeErrorMsg(parseErr)
 		}

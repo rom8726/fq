@@ -97,6 +97,65 @@ func TestParserCanParseConcurrently(t *testing.T) {
 	wg.Wait()
 }
 
+func TestParserParseAndAnalyzeQuery(t *testing.T) {
+	tests := map[string]struct {
+		query   string
+		command compute.CommandID
+		args    []string
+		err     error
+	}{
+		"empty query": {
+			query: "",
+			err:   compute.ErrInvalidCommand,
+		},
+		"invalid symbol": {
+			query: ".set#",
+			err:   compute.ErrInvalidSymbol,
+		},
+		"invalid command": {
+			query: "TRUNCATE key",
+			err:   compute.ErrInvalidCommand,
+		},
+		"invalid arguments": {
+			query: "INCR key",
+			err:   compute.ErrInvalidArguments,
+		},
+		"valid lowercase incr": {
+			query:   "incr key 60",
+			command: compute.IncrCommandID,
+			args:    []string{"key", "60"},
+		},
+		"valid mdel": {
+			query:   "MDEL key1 60 key2 60",
+			command: compute.MDelCommandID,
+			args:    []string{"key1", "60", "key2", "60"},
+		},
+		"valid token bucket rlimit": {
+			query:   "RLIMIT TB key 100 10 60",
+			command: compute.RLimitCommandID,
+			args:    []string{"TB", "key", "100", "10", "60"},
+		},
+	}
+
+	ctx := context.Background()
+	logger := zerolog.Nop()
+	parser := compute.NewParser(&logger)
+
+	for name, test := range tests {
+		test := test
+		t.Run(name, func(t *testing.T) {
+			query, err := parser.ParseAndAnalyzeQuery(ctx, test.query)
+			require.Equal(t, test.err, err)
+			if test.err != nil {
+				return
+			}
+
+			require.Equal(t, test.command, query.CommandID())
+			require.Equal(t, test.args, query.Arguments())
+		})
+	}
+}
+
 func BenchmarkParserParseQuery(b *testing.B) {
 	logger := zerolog.Nop()
 	parser := compute.NewParser(&logger)
@@ -111,6 +170,24 @@ func BenchmarkParserParseQuery(b *testing.B) {
 		}
 		if len(tokens) != 3 {
 			b.Fatalf("tokens = %d", len(tokens))
+		}
+	}
+}
+
+func BenchmarkParserParseAndAnalyzeQuery(b *testing.B) {
+	logger := zerolog.Nop()
+	parser := compute.NewParser(&logger)
+	ctx := context.Background()
+	queryStr := "INCR bench_key_123 600"
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		query, err := parser.ParseAndAnalyzeQuery(ctx, queryStr)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if query.CommandID() != compute.IncrCommandID || query.Arg(0) != "bench_key_123" || query.Arg(1) != "600" {
+			b.Fatalf("query = %+v", query)
 		}
 	}
 }
