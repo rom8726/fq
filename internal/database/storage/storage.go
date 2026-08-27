@@ -47,9 +47,13 @@ type WAL interface {
 	Start()
 	Shutdown()
 	Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
+	IncrAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey)
 	Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
+	DelAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey)
 	MDel(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) tools.FutureError
+	MDelAsync(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey)
 	RLimitSlidingWindow(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
+	RLimitSlidingWindowAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey)
 	RLimitTokenBucket(
 		ctx context.Context,
 		txCtx database.TxContext,
@@ -57,6 +61,13 @@ type WAL interface {
 		capacity database.ValueType,
 		refillAmount database.ValueType,
 	) tools.FutureError
+	RLimitTokenBucketAsync(
+		ctx context.Context,
+		txCtx database.TxContext,
+		key database.BatchKey,
+		capacity database.ValueType,
+		refillAmount database.ValueType,
+	)
 	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
@@ -205,13 +216,8 @@ func (s *Storage) Shutdown() {
 func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
 	txCtx := s.makeTxContext()
 
-	if s.wal != nil {
-		future := s.wal.Incr(ctx, txCtx, key)
-		if s.syncCommit {
-			if err := future.Get(); err != nil {
-				return 0, err
-			}
-		}
+	if err := s.writeIncrWAL(ctx, txCtx, key); err != nil {
+		return 0, err
 	}
 
 	return s.engine.Incr(txCtx, key), nil
@@ -225,16 +231,7 @@ func (s *Storage) RLimitFixedWindow(
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitFixedWindow(txCtx, key, limit, func() error {
-		if s.wal == nil {
-			return nil
-		}
-
-		future := s.wal.Incr(ctx, txCtx, key)
-		if s.syncCommit {
-			return future.Get()
-		}
-
-		return nil
+		return s.writeIncrWAL(ctx, txCtx, key)
 	})
 	if err != nil {
 		return database.RateLimitResult{}, err
@@ -253,16 +250,7 @@ func (s *Storage) RLimitSlidingWindow(
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitSlidingWindow(txCtx, key, limit, func() error {
-		if s.wal == nil {
-			return nil
-		}
-
-		future := s.wal.RLimitSlidingWindow(ctx, txCtx, key)
-		if s.syncCommit {
-			return future.Get()
-		}
-
-		return nil
+		return s.writeRLimitSlidingWindowWAL(ctx, txCtx, key)
 	})
 	if err != nil {
 		return database.RateLimitResult{}, err
@@ -282,16 +270,7 @@ func (s *Storage) RLimitTokenBucket(
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitTokenBucket(txCtx, key, capacity, refillAmount, func() error {
-		if s.wal == nil {
-			return nil
-		}
-
-		future := s.wal.RLimitTokenBucket(ctx, txCtx, key, capacity, refillAmount)
-		if s.syncCommit {
-			return future.Get()
-		}
-
-		return nil
+		return s.writeRLimitTokenBucketWAL(ctx, txCtx, key, capacity, refillAmount)
 	})
 	if err != nil {
 		return database.RateLimitResult{}, err
@@ -311,13 +290,8 @@ func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueT
 func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) {
 	txCtx := s.makeTxContext()
 
-	if s.wal != nil {
-		future := s.wal.Del(ctx, txCtx, key)
-		if s.syncCommit {
-			if err := future.Get(); err != nil {
-				return false, err
-			}
-		}
+	if err := s.writeDelWAL(ctx, txCtx, key); err != nil {
+		return false, err
 	}
 
 	return s.engine.Del(txCtx, key), nil
@@ -326,16 +300,96 @@ func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) 
 func (s *Storage) MDel(ctx context.Context, keys []database.BatchKey) ([]bool, error) {
 	txCtx := s.makeTxContext()
 
-	if s.wal != nil {
-		future := s.wal.MDel(ctx, txCtx, keys)
-		if s.syncCommit {
-			if err := future.Get(); err != nil {
-				return nil, err
-			}
-		}
+	if err := s.writeMDelWAL(ctx, txCtx, keys); err != nil {
+		return nil, err
 	}
 
 	return s.engine.MDel(txCtx, keys), nil
+}
+
+func (s *Storage) writeIncrWAL(ctx context.Context, txCtx database.TxContext, key database.BatchKey) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.Incr(ctx, txCtx, key)
+		return future.Get()
+	}
+
+	s.wal.IncrAsync(ctx, txCtx, key)
+
+	return nil
+}
+
+func (s *Storage) writeDelWAL(ctx context.Context, txCtx database.TxContext, key database.BatchKey) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.Del(ctx, txCtx, key)
+		return future.Get()
+	}
+
+	s.wal.DelAsync(ctx, txCtx, key)
+
+	return nil
+}
+
+func (s *Storage) writeMDelWAL(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.MDel(ctx, txCtx, keys)
+		return future.Get()
+	}
+
+	s.wal.MDelAsync(ctx, txCtx, keys)
+
+	return nil
+}
+
+func (s *Storage) writeRLimitSlidingWindowWAL(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.RLimitSlidingWindow(ctx, txCtx, key)
+		return future.Get()
+	}
+
+	s.wal.RLimitSlidingWindowAsync(ctx, txCtx, key)
+
+	return nil
+}
+
+func (s *Storage) writeRLimitTokenBucketWAL(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+	capacity database.ValueType,
+	refillAmount database.ValueType,
+) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.RLimitTokenBucket(ctx, txCtx, key, capacity, refillAmount)
+		return future.Get()
+	}
+
+	s.wal.RLimitTokenBucketAsync(ctx, txCtx, key, capacity, refillAmount)
+
+	return nil
 }
 
 func (s *Storage) Watch(ctx context.Context, key database.BatchKey) (database.ValueType, error) {

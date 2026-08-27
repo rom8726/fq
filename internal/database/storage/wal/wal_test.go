@@ -27,6 +27,19 @@ func TestWALFlushesPendingBatchOnShutdown(t *testing.T) {
 	require.Equal(t, []int{1}, writer.BatchSizes())
 }
 
+func TestWALAsyncFlushesPendingBatchOnShutdown(t *testing.T) {
+	writer := &recordingFSWriter{}
+	logger := zerolog.Nop()
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
+	wal.Start()
+
+	wal.IncrAsync(context.Background(), testTxContext(1), testBatchKey("key"))
+
+	wal.Shutdown()
+
+	require.Equal(t, []int{1}, writer.BatchSizes())
+}
+
 func TestWALShutdownClosesWriterAfterFlush(t *testing.T) {
 	writer := &closeRecordingFSWriter{
 		closed: make(chan struct{}),
@@ -57,6 +70,18 @@ func TestWALRejectsPushAfterShutdown(t *testing.T) {
 	require.Empty(t, writer.BatchSizes())
 }
 
+func TestWALAsyncRejectsPushAfterShutdown(t *testing.T) {
+	writer := &recordingFSWriter{}
+	logger := zerolog.Nop()
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
+	wal.Start()
+	wal.Shutdown()
+
+	wal.IncrAsync(context.Background(), testTxContext(1), testBatchKey("key"))
+
+	require.Empty(t, writer.BatchSizes())
+}
+
 func TestWALRejectsPushWithCanceledContext(t *testing.T) {
 	writer := &recordingFSWriter{}
 	logger := zerolog.Nop()
@@ -70,6 +95,21 @@ func TestWALRejectsPushWithCanceledContext(t *testing.T) {
 	future := wal.Incr(ctx, testTxContext(1), testBatchKey("key"))
 
 	requireFutureError(t, future, context.Canceled)
+	require.Empty(t, writer.BatchSizes())
+}
+
+func TestWALAsyncRejectsPushWithCanceledContext(t *testing.T) {
+	writer := &recordingFSWriter{}
+	logger := zerolog.Nop()
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
+	wal.Start()
+	defer wal.Shutdown()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	wal.IncrAsync(ctx, testTxContext(1), testBatchKey("key"))
+
 	require.Empty(t, writer.BatchSizes())
 }
 
@@ -98,6 +138,38 @@ func TestWALPushRespectsContextWhenBackpressured(t *testing.T) {
 
 	requireFutureError(t, first, nil)
 	requireFutureError(t, second, nil)
+}
+
+func TestWALAsyncPushRespectsContextWhenBackpressured(t *testing.T) {
+	writer := &blockingFSWriter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	logger := zerolog.Nop()
+	wal := NewWAL(writer, nil, nil, time.Hour, 1, 1, "", &logger)
+	wal.Start()
+
+	first := wal.Incr(context.Background(), testTxContext(1), testBatchKey("first"))
+	requireClosed(t, writer.started)
+
+	wal.IncrAsync(context.Background(), testTxContext(2), testBatchKey("second"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	pushDone := make(chan struct{})
+	go func() {
+		defer close(pushDone)
+
+		wal.IncrAsync(ctx, testTxContext(3), testBatchKey("third"))
+	}()
+	requireClosed(t, pushDone)
+
+	close(writer.release)
+	wal.Shutdown()
+
+	requireFutureError(t, first, nil)
+	require.Equal(t, []int{1, 1}, writer.BatchSizes())
 }
 
 func TestWALQueueCapacityCanExceedBatchSize(t *testing.T) {
@@ -241,9 +313,11 @@ func (w *notifyingFSWriter) WriteBatch(batch []Log) {
 }
 
 type blockingFSWriter struct {
-	started   chan struct{}
-	release   chan struct{}
-	startOnce sync.Once
+	mutex      sync.Mutex
+	batchSizes []int
+	started    chan struct{}
+	release    chan struct{}
+	startOnce  sync.Once
 }
 
 func (w *blockingFSWriter) WriteBatch(batch []Log) {
@@ -253,7 +327,21 @@ func (w *blockingFSWriter) WriteBatch(batch []Log) {
 
 	<-w.release
 
+	w.mutex.Lock()
+	w.batchSizes = append(w.batchSizes, len(batch))
+	w.mutex.Unlock()
+
 	acknowledgeBatch(batch, nil)
+}
+
+func (w *blockingFSWriter) BatchSizes() []int {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	result := make([]int, len(w.batchSizes))
+	copy(result, w.batchSizes)
+
+	return result
 }
 
 func acknowledgeBatch(batch []Log, err error) {
@@ -261,6 +349,30 @@ func acknowledgeBatch(batch []Log, err error) {
 		log.SetResult(err)
 		log.ReleaseLogData()
 	}
+}
+
+func BenchmarkNewLog(b *testing.B) {
+	b.Run("sync", func(b *testing.B) {
+		args := []string{"key", "1", "1"}
+
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			record := NewLog(uint64(i), 1, args)
+			record.SetResult(nil)
+			record.ReleaseLogData()
+		}
+	})
+
+	b.Run("async", func(b *testing.B) {
+		args := []string{"key", "1", "1"}
+
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			record := NewAsyncLog(uint64(i), 1, args)
+			record.SetResult(nil)
+			record.ReleaseLogData()
+		}
+	})
 }
 
 func testTxContext(tx database.Tx) database.TxContext {

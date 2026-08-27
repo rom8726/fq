@@ -219,10 +219,22 @@ func (w *WAL) Incr(ctx context.Context, txCtx database.TxContext, key database.B
 	return w.push(ctx, txCtx.Tx, compute.IncrCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
 }
 
+func (w *WAL) IncrAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.IncrCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
+}
+
 func (w *WAL) Del(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError {
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
 	return w.push(ctx, txCtx.Tx, compute.DelCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
+}
+
+func (w *WAL) DelAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.DelCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
 }
 
 func (w *WAL) MDel(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) tools.FutureError {
@@ -236,6 +248,17 @@ func (w *WAL) MDel(ctx context.Context, txCtx database.TxContext, keys []databas
 	return w.push(ctx, txCtx.Tx, compute.MDelCommandID, arr)
 }
 
+func (w *WAL) MDelAsync(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+	arr := make([]string, 0, len(keys)*2+1)
+	arr = append(arr, currTimeStr)
+	for _, key := range keys {
+		arr = append(arr, key.Key, key.BatchSizeStr)
+	}
+
+	w.pushAsync(ctx, txCtx.Tx, compute.MDelCommandID, arr)
+}
+
 func (w *WAL) RLimitSlidingWindow(
 	ctx context.Context,
 	txCtx database.TxContext,
@@ -244,6 +267,16 @@ func (w *WAL) RLimitSlidingWindow(
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
 	return w.push(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
+}
+
+func (w *WAL) RLimitSlidingWindowAsync(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
 }
 
 func (w *WAL) RLimitTokenBucket(
@@ -256,6 +289,24 @@ func (w *WAL) RLimitTokenBucket(
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
 	return w.push(ctx, txCtx.Tx, compute.RLimitTokenBucketCommandID, []string{
+		key.Key,
+		strconv.FormatInt(int64(capacity), 10),
+		strconv.FormatInt(int64(refillAmount), 10),
+		key.BatchSizeStr,
+		currTimeStr,
+	})
+}
+
+func (w *WAL) RLimitTokenBucketAsync(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+	capacity database.ValueType,
+	refillAmount database.ValueType,
+) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.RLimitTokenBucketCommandID, []string{
 		key.Key,
 		strconv.FormatInt(int64(capacity), 10),
 		strconv.FormatInt(int64(refillAmount), 10),
@@ -299,4 +350,34 @@ func (w *WAL) push(
 	}
 
 	return future
+}
+
+func (w *WAL) pushAsync(
+	ctx context.Context,
+	tx database.Tx,
+	commandID compute.CommandID,
+	args []string,
+) {
+	record := NewAsyncLog(uint64(tx), commandID, args)
+
+	if ctx.Err() != nil {
+		record.ReleaseLogData()
+
+		return
+	}
+
+	if w.closed.Load() {
+		record.ReleaseLogData()
+
+		return
+	}
+
+	select {
+	case <-ctx.Done():
+		record.ReleaseLogData()
+	case <-w.closeCh:
+		record.ReleaseLogData()
+	case w.records <- record:
+		observability.SetWALQueueDepth(len(w.records))
+	}
 }
