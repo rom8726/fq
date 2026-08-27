@@ -131,6 +131,10 @@ func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxT
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	if isExpired(e.lastTxAt, e.batchSize) {
+		return database.ErrorValue, 0, 0
+	}
+
 	if e.ver <= dumpTx {
 		return e.value, e.lastTxAt, e.ver
 	}

@@ -204,11 +204,10 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 		case <-ctx.Done():
 			return
 		default:
-			if isExpired(item.elem.lastTxAt, item.elem.batchSize) {
+			value, txAt, tx := item.elem.DumpValue(dumpTx)
+			if value == database.ErrorValue {
 				continue
 			}
-
-			value, txAt, tx := item.elem.DumpValue(dumpTx)
 
 			ch <- database.DumpElem{
 				Kind:      database.DumpElemKindCounter,
