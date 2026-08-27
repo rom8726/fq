@@ -1,5 +1,5 @@
 address: ":1945"
-connections: 500
+connections: 100
 warmup: 30s
 duration: 120s
 rps: 0
