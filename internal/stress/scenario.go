@@ -15,15 +15,19 @@ import (
 )
 
 const (
-	RestartSmokeScenario = "restart-smoke"
-	CrashLoopScenario    = "crash-loop"
-	DumpRecoveryScenario = "dump-recovery"
-	counterWindow        = 600
+	RestartSmokeScenario       = "restart-smoke"
+	CrashLoopScenario          = "crash-loop"
+	DumpRecoveryScenario       = "dump-recovery"
+	ReplicationStressScenario  = "replication-stress"
+	counterWindow              = 600
+	defaultConvergenceDeadline = 10 * time.Second
+	eventServerReady           = "server_ready"
 )
 
 type Result struct {
 	Scenario        string
 	Address         string
+	SlaveAddress    string
 	RootDir         string
 	ReportPath      string
 	Operations      int
@@ -50,6 +54,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return RunCrashLoop(ctx, opts)
 	case DumpRecoveryScenario:
 		return RunDumpRecovery(ctx, opts)
+	case ReplicationStressScenario:
+		return RunReplicationStress(ctx, opts)
 	default:
 		return Result{}, fmt.Errorf("unknown scenario %q", opts.Scenario)
 	}
@@ -74,7 +80,7 @@ func RunRestartSmoke(ctx context.Context, opts Options) (result Result, runErr e
 		return Result{}, err
 	}
 	defer func() { _ = server.Kill() }()
-	events.Add(Event{Kind: "server_ready"})
+	events.Add(Event{Kind: eventServerReady})
 
 	verifier := NewVerifier(env.Address, env.MaxMessageSize, env.IdleTimeout)
 	for i := 0; i < 10; i++ {
@@ -137,7 +143,7 @@ func RunCrashLoop(ctx context.Context, opts Options) (result Result, runErr erro
 		return Result{}, err
 	}
 	defer func() { _ = server.Kill() }()
-	events.Add(Event{Kind: "server_ready"})
+	events.Add(Event{Kind: eventServerReady})
 
 	var operations atomic.Int64
 	var transientErrors atomic.Int64
@@ -210,7 +216,7 @@ func RunDumpRecovery(ctx context.Context, opts Options) (result Result, runErr e
 		return Result{}, err
 	}
 	defer func() { _ = server.Kill() }()
-	events.Add(Event{Kind: "server_ready"})
+	events.Add(Event{Kind: eventServerReady})
 
 	var operations atomic.Int64
 	var transientErrors atomic.Int64
@@ -264,6 +270,80 @@ func RunDumpRecovery(ctx context.Context, opts Options) (result Result, runErr e
 	return result, nil
 }
 
+func RunReplicationStress(ctx context.Context, opts Options) (result Result, runErr error) {
+	if opts.Scenario == "" {
+		opts.Scenario = ReplicationStressScenario
+	}
+	opts = normalizeReplicationStressOptions(opts)
+	masterEnv, slaveEnv, err := NewReplicationEnvironment(opts)
+	if err != nil {
+		return Result{}, err
+	}
+	startedAt := time.Now()
+	events := NewEventLog(defaultEventLimit)
+
+	var expectedMu sync.Mutex
+	expected := make(map[string]uint64, opts.Keys)
+	defer func() {
+		runErr = finishScenario(opts, masterEnv, startedAt, &result, runErr, events, func() map[string]uint64 {
+			return expectedSnapshot(expected, &expectedMu)
+		})
+	}()
+
+	master, err := StartServer(ctx, masterEnv)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() { _ = master.Kill() }()
+	events.Add(Event{Kind: "master_ready"})
+
+	slave, err := StartServerWithReadyQuery(ctx, slaveEnv, "GET stress_ready 600")
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() { _ = slave.Kill() }()
+	events.Add(Event{Kind: "slave_ready"})
+
+	var operations atomic.Int64
+	var transientErrors atomic.Int64
+
+	workCtx, stopWork := context.WithTimeout(ctx, opts.Duration)
+	defer stopWork()
+
+	var wg sync.WaitGroup
+	for id := 0; id < opts.Workers; id++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			runCrashLoopWorker(workCtx, masterEnv, opts, workerID, expected, &expectedMu, &operations, &transientErrors, events)
+		}(id)
+	}
+
+	restarts, err := runSlaveReconnects(workCtx, ctx, slave, opts.KillInterval, events)
+	stopWork()
+	wg.Wait()
+	if err != nil {
+		return Result{}, err
+	}
+
+	if err := waitForReplicationConvergence(ctx, slaveEnv, expected, &expectedMu, events); err != nil {
+		return Result{}, err
+	}
+
+	result = Result{
+		Scenario:        ReplicationStressScenario,
+		Address:         masterEnv.Address,
+		SlaveAddress:    slaveEnv.Address,
+		RootDir:         masterEnv.RootDir,
+		ReportPath:      masterEnv.ReportPath,
+		Operations:      int(operations.Load()),
+		Restarts:        restarts,
+		TransientErrors: int(transientErrors.Load()),
+	}
+
+	return result, nil
+}
+
 func normalizeCrashLoopOptions(opts Options) Options {
 	if opts.Duration <= 0 {
 		opts.Duration = 30 * time.Second
@@ -291,6 +371,18 @@ func normalizeDumpRecoveryOptions(opts Options) Options {
 	}
 	if opts.KillInterval <= opts.DumpInterval {
 		opts.KillInterval = opts.DumpInterval * 3
+	}
+
+	return opts
+}
+
+func normalizeReplicationStressOptions(opts Options) Options {
+	opts = normalizeCrashLoopOptions(opts)
+	if opts.SyncInterval <= 0 {
+		opts.SyncInterval = 100 * time.Millisecond
+	}
+	if opts.KillInterval <= opts.SyncInterval {
+		opts.KillInterval = opts.SyncInterval * 3
 	}
 
 	return opts
@@ -348,6 +440,26 @@ func runCrashLoopRestarts(
 	interval time.Duration,
 	events *EventLog,
 ) (int, error) {
+	return runServerRestarts(workCtx, serverCtx, server, interval, events, "restart", "restart server")
+}
+
+func runSlaveReconnects(
+	workCtx, serverCtx context.Context,
+	slave *ServerProcess,
+	interval time.Duration,
+	events *EventLog,
+) (int, error) {
+	return runServerRestarts(workCtx, serverCtx, slave, interval, events, "slave_restart", "restart slave")
+}
+
+func runServerRestarts(
+	workCtx, serverCtx context.Context,
+	server *ServerProcess,
+	interval time.Duration,
+	events *EventLog,
+	eventPrefix string,
+	errorPrefix string,
+) (int, error) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -357,14 +469,14 @@ func runCrashLoopRestarts(
 		case <-workCtx.Done():
 			return restarts, nil
 		case <-ticker.C:
-			events.Add(Event{Kind: "restart_begin"})
+			events.Add(Event{Kind: eventPrefix + "_begin"})
 			if err := server.Restart(serverCtx); err != nil {
-				events.Add(Event{Kind: "restart_error", Error: err.Error()})
+				events.Add(Event{Kind: eventPrefix + "_error", Error: err.Error()})
 
-				return restarts, fmt.Errorf("restart server: %w", err)
+				return restarts, fmt.Errorf("%s: %w", errorPrefix, err)
 			}
 			restarts++
-			events.Add(Event{Kind: "restart_ok"})
+			events.Add(Event{Kind: eventPrefix + "_ok"})
 		}
 	}
 }
@@ -418,6 +530,33 @@ func waitForCompletedDump(ctx context.Context, env *Environment, events *EventLo
 
 			return 0, fmt.Errorf("wait for completed dump %s: %w", dumpPath, deadlineCtx.Err())
 		case <-ticker.C:
+		}
+	}
+}
+
+func waitForReplicationConvergence(
+	ctx context.Context,
+	slaveEnv *Environment,
+	expected map[string]uint64,
+	expectedMu *sync.Mutex,
+	events *EventLog,
+) error {
+	deadlineCtx, cancel := context.WithTimeout(ctx, defaultConvergenceDeadline)
+	defer cancel()
+
+	for {
+		err := verifyExpectedCounters(deadlineCtx, slaveEnv, expected, expectedMu, events)
+		if err == nil {
+			events.Add(Event{Kind: "replication_converged"})
+
+			return nil
+		}
+		events.Add(Event{Kind: "replication_not_converged", Error: err.Error()})
+
+		select {
+		case <-deadlineCtx.Done():
+			return fmt.Errorf("replication convergence: %w", err)
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }

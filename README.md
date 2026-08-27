@@ -303,7 +303,13 @@ Run a dump/recovery stress scenario with concurrent writes, dumps, and restarts:
 go run ./cmd/stress -scenario dump-recovery -duration 30s -workers 4 -keys 100 -kill_interval 2s -dump_interval 250ms -seed 42
 ```
 
-The stress harness starts an isolated fq server process with temporary WAL/dump directories, verifies readiness over TCP, writes data, kills and restarts the server, then verifies recovery. In `crash-loop`, workers continue writing while the harness repeatedly kills and restarts the server, and final verification checks that acknowledged writes were not lost. In `dump-recovery`, the generated server config uses a short dump interval, waits for a completed `current.dump`, restarts again, and verifies recovery from persisted state.
+Run a replication stress scenario with master writes, slave reconnects, and convergence verification:
+
+```shell
+go run ./cmd/stress -scenario replication-stress -duration 30s -workers 4 -keys 100 -kill_interval 2s -sync_interval 100ms -seed 42
+```
+
+The stress harness starts isolated fq server processes with temporary WAL/dump directories, verifies readiness over TCP, writes data, kills and restarts processes, then verifies recovery. In `crash-loop`, workers continue writing while the harness repeatedly kills and restarts the server, and final verification checks that acknowledged writes were not lost. In `dump-recovery`, the generated server config uses a short dump interval, waits for a completed `current.dump`, restarts again, and verifies recovery from persisted state. In `replication-stress`, workers write to the master while the slave repeatedly restarts and reconnects; after writes stop, sampled slave reads must converge to acknowledged master state.
 
 Each run writes a JSON stress report with the scenario config, result summary, generated config path, WAL/dump/log paths, expected counters, and the last stress events. Use `-report_file` to write it to a stable path and `-keep_data` to keep the generated stress directory after a successful run. Failed runs keep their generated directory automatically.
 

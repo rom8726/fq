@@ -119,3 +119,49 @@ func TestDumpRecoveryScenarioIntegration(t *testing.T) {
 		t.Fatalf("unexpected report status: %+v", report)
 	}
 }
+
+func TestReplicationStressScenarioIntegration(t *testing.T) {
+	if os.Getenv("FQ_STRESS_INTEGRATION") != "1" {
+		t.Skip("set FQ_STRESS_INTEGRATION=1 to run subprocess stress scenario")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	reportPath := filepath.Join(t.TempDir(), "replication-stress-report.json")
+
+	result, err := RunReplicationStress(ctx, Options{
+		Duration:       3 * time.Second,
+		Seed:           42,
+		Workers:        2,
+		Keys:           5,
+		KillInterval:   500 * time.Millisecond,
+		SyncInterval:   100 * time.Millisecond,
+		RequestTimeout: 200 * time.Millisecond,
+		RepositoryDir:  "../..",
+		ReportFile:     reportPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Operations == 0 {
+		t.Fatal("no operations were acknowledged")
+	}
+	if result.Restarts < 2 {
+		t.Fatalf("slave restarts = %d", result.Restarts)
+	}
+	if result.SlaveAddress == "" {
+		t.Fatal("slave address is empty")
+	}
+
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "passed" || report.Scenario != ReplicationStressScenario {
+		t.Fatalf("unexpected report status: %+v", report)
+	}
+}

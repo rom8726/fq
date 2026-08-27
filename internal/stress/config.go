@@ -22,6 +22,7 @@ type Options struct {
 	KillInterval   time.Duration `json:"kill_interval"`
 	DumpInterval   time.Duration `json:"dump_interval"`
 	RequestTimeout time.Duration `json:"request_timeout"`
+	SyncInterval   time.Duration `json:"sync_interval"`
 	ReportFile     string        `json:"report_file,omitempty"`
 	KeepData       bool          `json:"keep_data"`
 	WorkDir        string        `json:"workdir,omitempty"`
@@ -41,6 +42,10 @@ type Environment struct {
 	MaxMessageSize int
 	IdleTimeout    time.Duration
 	DumpInterval   time.Duration
+	ReplicaType    string
+	ReplicaID      string
+	MasterAddress  string
+	SyncInterval   time.Duration
 	RepositoryDir  string
 	FQBinary       string
 }
@@ -74,11 +79,15 @@ func NewEnvironment(opts Options) (*Environment, error) {
 		MaxMessageSize: defaultMaxMessageSize,
 		IdleTimeout:    defaultIdleTimeout,
 		DumpInterval:   opts.DumpInterval,
+		SyncInterval:   opts.SyncInterval,
 		RepositoryDir:  opts.RepositoryDir,
 		FQBinary:       opts.FQBinary,
 	}
 	if env.DumpInterval <= 0 {
 		env.DumpInterval = time.Hour
+	}
+	if env.SyncInterval <= 0 {
+		env.SyncInterval = time.Second
 	}
 	if env.ReportPath == "" {
 		env.ReportPath = filepath.Join(rootDir, "stress-result.json")
@@ -89,6 +98,57 @@ func NewEnvironment(opts Options) (*Environment, error) {
 	}
 
 	return env, nil
+}
+
+func NewReplicationEnvironment(opts Options) (master, slave *Environment, err error) {
+	rootDir := opts.WorkDir
+	if rootDir == "" {
+		rootDir, err = os.MkdirTemp("", fmt.Sprintf("fq-stress-replication-%d-*", opts.Seed))
+		if err != nil {
+			return nil, nil, fmt.Errorf("create replication stress temp dir: %w", err)
+		}
+	} else if err := os.MkdirAll(rootDir, 0o750); err != nil {
+		return nil, nil, fmt.Errorf("create replication stress work dir: %w", err)
+	}
+
+	replicationAddress, err := freeLocalAddress()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	masterOpts := opts
+	masterOpts.WorkDir = filepath.Join(rootDir, "master")
+	master, err = NewEnvironment(masterOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+	master.RootDir = rootDir
+	master.ReportPath = opts.ReportFile
+	if master.ReportPath == "" {
+		master.ReportPath = filepath.Join(rootDir, "stress-result.json")
+	}
+	master.ReplicaType = "master"
+	master.MasterAddress = replicationAddress
+	if err := master.WriteConfig(); err != nil {
+		return nil, nil, err
+	}
+
+	slaveOpts := opts
+	slaveOpts.WorkDir = filepath.Join(rootDir, "slave")
+	slave, err = NewEnvironment(slaveOpts)
+	if err != nil {
+		return nil, nil, err
+	}
+	slave.RootDir = rootDir
+	slave.ReportPath = master.ReportPath
+	slave.ReplicaType = "slave"
+	slave.ReplicaID = "stress-replica-1"
+	slave.MasterAddress = replicationAddress
+	if err := slave.WriteConfig(); err != nil {
+		return nil, nil, err
+	}
+
+	return master, slave, nil
 }
 
 func (env *Environment) WriteConfig() error {
@@ -122,10 +182,10 @@ engine:
 dump:
   interval: %s
   directory: %q
-replication: {}
+%s
 logging:
   level: error
-`, env.Address, env.WALDir, formatConfigDuration(env.dumpInterval()), env.DumpDir)
+`, env.Address, env.WALDir, formatConfigDuration(env.dumpInterval()), env.DumpDir, env.replicationConfig())
 
 	if err := os.WriteFile(env.ConfigPath, []byte(data), 0o644); err != nil {
 		return fmt.Errorf("write stress config: %w", err)
@@ -136,6 +196,25 @@ logging:
 
 func (env *Environment) dumpInterval() time.Duration {
 	return env.DumpInterval
+}
+
+func (env *Environment) replicationConfig() string {
+	if env.ReplicaType == "" {
+		return "replication: {}"
+	}
+
+	if env.ReplicaType == "master" {
+		return fmt.Sprintf(`replication:
+  replica_type: master
+  master_address: %q
+  sync_interval: %s`, env.MasterAddress, formatConfigDuration(env.SyncInterval))
+	}
+
+	return fmt.Sprintf(`replication:
+  replica_type: slave
+  replica_id: %q
+  master_address: %q
+  sync_interval: %s`, env.ReplicaID, env.MasterAddress, formatConfigDuration(env.SyncInterval))
 }
 
 func formatConfigDuration(duration time.Duration) string {

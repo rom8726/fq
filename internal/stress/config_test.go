@@ -64,6 +64,59 @@ func TestEnvironmentCleanupRemovesRootDir(t *testing.T) {
 	}
 }
 
+func TestNewReplicationEnvironmentWritesMasterAndSlaveConfigs(t *testing.T) {
+	rootDir := t.TempDir()
+	master, slave, err := NewReplicationEnvironment(Options{
+		Seed:         11,
+		WorkDir:      rootDir,
+		SyncInterval: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if master.RootDir != rootDir || slave.RootDir != rootDir {
+		t.Fatalf("root dirs = %q/%q, want %q", master.RootDir, slave.RootDir, rootDir)
+	}
+	if master.Address == slave.Address {
+		t.Fatalf("master and slave query addresses should differ: %q", master.Address)
+	}
+	if master.MasterAddress == "" || master.MasterAddress != slave.MasterAddress {
+		t.Fatalf("replication addresses = %q/%q", master.MasterAddress, slave.MasterAddress)
+	}
+
+	masterConfig, err := os.ReadFile(master.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slaveConfig, err := os.ReadFile(slave.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{
+			name: "master",
+			text: string(masterConfig),
+			want: []string{`replica_type: master`, `sync_interval: 50ms`, master.MasterAddress},
+		},
+		{
+			name: "slave",
+			text: string(slaveConfig),
+			want: []string{`replica_type: slave`, `replica_id: "stress-replica-1"`, `sync_interval: 50ms`, slave.MasterAddress},
+		},
+	} {
+		for _, want := range tc.want {
+			if !strings.Contains(tc.text, want) {
+				t.Fatalf("%s config does not contain %q:\n%s", tc.name, want, tc.text)
+			}
+		}
+	}
+}
+
 func TestRunRejectsUnknownScenario(t *testing.T) {
 	_, err := Run(t.Context(), Options{Scenario: "missing", Duration: time.Second})
 	if err == nil {
@@ -99,6 +152,17 @@ func TestNormalizeDumpRecoveryOptionsDefaults(t *testing.T) {
 	}
 	if opts.KillInterval <= opts.DumpInterval {
 		t.Fatalf("kill interval %s should be greater than dump interval %s", opts.KillInterval, opts.DumpInterval)
+	}
+}
+
+func TestNormalizeReplicationStressOptionsDefaults(t *testing.T) {
+	opts := normalizeReplicationStressOptions(Options{})
+
+	if opts.SyncInterval != 100*time.Millisecond {
+		t.Fatalf("sync interval = %s", opts.SyncInterval)
+	}
+	if opts.KillInterval <= opts.SyncInterval {
+		t.Fatalf("kill interval %s should be greater than sync interval %s", opts.KillInterval, opts.SyncInterval)
 	}
 }
 

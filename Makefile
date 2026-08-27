@@ -98,6 +98,12 @@ stress-dump-recovery:
 	@mkdir -p ./benchmarks/results
 	@go run ./cmd/stress -scenario dump-recovery -duration 30s -workers 4 -keys 100 -kill_interval 2s -dump_interval 250ms -seed 42 -report_file ./benchmarks/results/stress-dump-recovery.json
 
+.PHONY: stress-replication
+stress-replication:
+	@echo "-> Running fq stress replication scenario..."
+	@mkdir -p ./benchmarks/results
+	@go run ./cmd/stress -scenario replication-stress -duration 30s -workers 4 -keys 100 -kill_interval 2s -sync_interval 100ms -seed 42 -report_file ./benchmarks/results/stress-replication.json
+
 .PHONY: lint
 lint:
 	golangci-lint -v run

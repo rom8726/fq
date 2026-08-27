@@ -13,12 +13,17 @@ import (
 type ServerProcess struct {
 	env       *Environment
 	cmd       *exec.Cmd
+	ready     string
 	startedAt time.Time
 	stdout    *os.File
 	stderr    *os.File
 }
 
 func StartServer(ctx context.Context, env *Environment) (*ServerProcess, error) {
+	return StartServerWithReadyQuery(ctx, env, "INCR stress_ready 600")
+}
+
+func StartServerWithReadyQuery(ctx context.Context, env *Environment, readyQuery string) (*ServerProcess, error) {
 	cmd := serverCommand(ctx, env)
 	stdout, err := os.OpenFile(env.StdoutPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -43,6 +48,7 @@ func StartServer(ctx context.Context, env *Environment) (*ServerProcess, error) 
 	process := &ServerProcess{
 		env:       env,
 		cmd:       cmd,
+		ready:     readyQuery,
 		startedAt: time.Now(),
 		stdout:    stdout,
 		stderr:    stderr,
@@ -79,7 +85,7 @@ func (p *ServerProcess) WaitReady(ctx context.Context) error {
 	var lastErr error
 loop:
 	for deadlineCtx.Err() == nil {
-		err := verifier.ExpectOK(deadlineCtx, "INCR stress_ready 600")
+		err := verifier.ExpectOK(deadlineCtx, p.ready)
 		if err == nil {
 			return nil
 		}
@@ -101,7 +107,7 @@ func (p *ServerProcess) Restart(ctx context.Context) error {
 		return err
 	}
 
-	next, err := StartServer(ctx, p.env)
+	next, err := StartServerWithReadyQuery(ctx, p.env, p.ready)
 	if err != nil {
 		return err
 	}

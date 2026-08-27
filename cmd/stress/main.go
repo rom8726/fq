@@ -21,6 +21,7 @@ func main() {
 	flag.DurationVar(&opts.KillInterval, "kill_interval", 2*time.Second, "interval between crash-loop kills")
 	flag.DurationVar(&opts.DumpInterval, "dump_interval", 0, "dump interval for dump-recovery; 0 chooses scenario default")
 	flag.DurationVar(&opts.RequestTimeout, "request_timeout", time.Second, "timeout for one verification request")
+	flag.DurationVar(&opts.SyncInterval, "sync_interval", 0, "replication sync interval; 0 chooses scenario default")
 	flag.StringVar(&opts.ReportFile, "report_file", "", "stress JSON report path; empty means stress-result.json in workdir")
 	flag.BoolVar(&opts.KeepData, "keep_data", false, "keep generated stress data directory")
 	flag.StringVar(&opts.WorkDir, "workdir", "", "stress work directory; empty means temp dir")
@@ -35,9 +36,10 @@ func main() {
 	}
 
 	fmt.Printf(
-		"stress ok: scenario=%s address=%s operations=%d restarts=%d dumps=%d transient_errors=%d\n",
+		"stress ok: scenario=%s address=%s slave_address=%s operations=%d restarts=%d dumps=%d transient_errors=%d\n",
 		result.Scenario,
 		result.Address,
+		result.SlaveAddress,
 		result.Operations,
 		result.Restarts,
 		result.Dumps,
