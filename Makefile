@@ -2,7 +2,7 @@ WAL_ROOT = $(PWD)/internal/database/storage/wal
 BIN_DIR = $(PWD)/bin
 
 .PHONY: build
-build: build-fq build-cli build-bench build-stress
+build: build-fq build-cli build-bench build-stress build-results
 
 .PHONY: build-fq
 build-fq:
@@ -31,6 +31,13 @@ build-stress:
 	@mkdir -p $(BIN_DIR)
 	@go build -o $(BIN_DIR)/fq-stress ./cmd/stress
 	@echo "-> Binary built: $(BIN_DIR)/fq-stress"
+
+.PHONY: build-results
+build-results:
+	@echo "-> Building fq results capture binary..."
+	@mkdir -p $(BIN_DIR)
+	@go build -o $(BIN_DIR)/fq-results ./cmd/results
+	@echo "-> Binary built: $(BIN_DIR)/fq-results"
 
 .PHONY: run-server
 run-server:
@@ -103,6 +110,16 @@ stress-replication:
 	@echo "-> Running fq stress replication scenario..."
 	@mkdir -p ./benchmarks/results
 	@go run ./cmd/stress -scenario replication-stress -duration 30s -workers 4 -keys 100 -kill_interval 2s -sync_interval 100ms -seed 42 -report_file ./benchmarks/results/stress-replication.json
+
+.PHONY: results-plan
+results-plan:
+	@echo "-> Capturing fq release results metadata and command manifest..."
+	@go run ./cmd/results -mode release
+
+.PHONY: results-smoke
+results-smoke:
+	@echo "-> Running quick fq results smoke capture..."
+	@go run ./cmd/results -mode smoke -run -benchmarks=false
 
 .PHONY: lint
 lint:

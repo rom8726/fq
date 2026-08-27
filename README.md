@@ -313,6 +313,28 @@ The stress harness starts isolated fq server processes with temporary WAL/dump d
 
 Each run writes a JSON stress report with the scenario config, result summary, generated config path, WAL/dump/log paths, expected counters, and the last stress events. Use `-report_file` to write it to a stable path and `-keep_data` to keep the generated stress directory after a successful run. Failed runs keep their generated directory automatically.
 
+## Release results capture
+
+Create a timestamped results directory with hardware/runtime metadata, config/profile snapshots, and a command manifest without running heavy workloads:
+
+```shell
+make results-plan
+```
+
+Run a quick local smoke capture for stress scenarios only:
+
+```shell
+make results-smoke
+```
+
+For publication runs on fixed hardware, execute the release manifest explicitly:
+
+```shell
+go run ./cmd/results -mode release -run -confirm_release_run
+```
+
+Result runs are written to `benchmarks/results/runs/<timestamp>-<machine>-<commit>-<mode>/`. Benchmark commands expect a running fq server at `:1945` unless `-address` is overridden.
+
 ## Persistence
 
 Persistence is controlled by `persistence.mode`:
