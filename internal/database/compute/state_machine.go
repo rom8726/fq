@@ -1,9 +1,5 @@
 package compute
 
-import (
-	"strings"
-)
-
 const (
 	foundLetterEvent = iota
 	foundWhiteSpaceEvent
@@ -45,11 +41,12 @@ type compiledStateMachine struct {
 }
 
 type stateMachineRun struct {
-	machine *compiledStateMachine
-	state   int
-
-	tokens []string
-	sb     strings.Builder
+	machine    *compiledStateMachine
+	state      int
+	position   int
+	tokenStart int
+	tokens     []string
+	query      string
 }
 
 func newStateMachine() *compiledStateMachine {
@@ -74,8 +71,10 @@ func newStateMachine() *compiledStateMachine {
 
 func (sm *compiledStateMachine) parse(query string) ([]string, error) {
 	run := stateMachineRun{
-		machine: sm,
-		state:   initialState,
+		machine:    sm,
+		state:      initialState,
+		tokenStart: -1,
+		query:      query,
 	}
 
 	return run.parse(query)
@@ -84,31 +83,35 @@ func (sm *compiledStateMachine) parse(query string) ([]string, error) {
 func (run *stateMachineRun) parse(query string) ([]string, error) {
 	for i := 0; i < len(query); i++ {
 		symbol := query[i]
+		run.position = i
 		switch {
 		case isWhiteSpace(symbol):
-			run.processEvent(foundWhiteSpaceEvent, symbol)
+			run.processEvent(foundWhiteSpaceEvent)
 		case isLetter(symbol):
-			run.processEvent(foundLetterEvent, symbol)
+			run.processEvent(foundLetterEvent)
 		default:
 			return nil, ErrInvalidSymbol
 		}
 	}
 
-	run.processEvent(foundWhiteSpaceEvent, ' ')
+	run.position = len(query)
+	run.processEvent(foundWhiteSpaceEvent)
 
 	return run.tokens, nil
 }
 
-func (run *stateMachineRun) processEvent(event int, symbol byte) {
+func (run *stateMachineRun) processEvent(event int) {
 	ts := run.machine.transitions[run.state][event]
-	run.state = run.jump(ts.jump, symbol)
+	run.state = run.jump(ts.jump)
 	run.action(ts.action)
 }
 
-func (run *stateMachineRun) jump(jump jumpKind, symbol byte) int {
+func (run *stateMachineRun) jump(jump jumpKind) int {
 	switch jump {
 	case appendLetterJump:
-		run.sb.WriteByte(symbol)
+		if run.tokenStart < 0 {
+			run.tokenStart = run.position
+		}
 
 		return wordState
 	case skipWhiteSpaceJump:
@@ -120,7 +123,7 @@ func (run *stateMachineRun) jump(jump jumpKind, symbol byte) int {
 
 func (run *stateMachineRun) action(action actionKind) {
 	if action == addTokenAction {
-		run.tokens = append(run.tokens, run.sb.String())
-		run.sb.Reset()
+		run.tokens = append(run.tokens, run.query[run.tokenStart:run.position])
+		run.tokenStart = -1
 	}
 }
