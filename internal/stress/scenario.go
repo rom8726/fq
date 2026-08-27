@@ -2,6 +2,7 @@ package stress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -21,6 +22,7 @@ type Result struct {
 	Scenario        string
 	Address         string
 	RootDir         string
+	ReportPath      string
 	Operations      int
 	Restarts        int
 	TransientErrors int
@@ -47,63 +49,90 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 }
 
-func RunRestartSmoke(ctx context.Context, opts Options) (Result, error) {
+func RunRestartSmoke(ctx context.Context, opts Options) (result Result, runErr error) {
+	if opts.Scenario == "" {
+		opts.Scenario = RestartSmokeScenario
+	}
 	env, err := NewEnvironment(opts)
 	if err != nil {
 		return Result{}, err
 	}
-	if !opts.KeepData {
-		defer func() { _ = env.Cleanup() }()
-	}
+	startedAt := time.Now()
+	events := NewEventLog(defaultEventLimit)
+	defer func() {
+		runErr = finishScenario(opts, env, startedAt, &result, runErr, events, nil)
+	}()
 
 	server, err := StartServer(ctx, env)
 	if err != nil {
 		return Result{}, err
 	}
 	defer func() { _ = server.Kill() }()
+	events.Add(Event{Kind: "server_ready"})
 
 	verifier := NewVerifier(env.Address, env.MaxMessageSize, env.IdleTimeout)
 	for i := 0; i < 10; i++ {
-		if err := verifier.ExpectOK(ctx, "INCR stress_counter 600"); err != nil {
+		query := "INCR stress_counter 600"
+		if err := verifier.ExpectOK(ctx, query); err != nil {
+			events.Add(Event{Kind: "write_error", Query: query, Error: err.Error()})
+
 			return Result{}, fmt.Errorf("write before restart: %w", err)
 		}
+		events.Add(Event{Kind: "write_ok", Key: "stress_counter", Query: query})
 	}
 
 	if err := server.Restart(ctx); err != nil {
+		events.Add(Event{Kind: "restart_error", Error: err.Error()})
+
 		return Result{}, fmt.Errorf("restart server: %w", err)
 	}
+	events.Add(Event{Kind: "restart_ok"})
 
 	verifier = NewVerifier(env.Address, env.MaxMessageSize, env.IdleTimeout)
 	if err := verifier.ExpectValue(ctx, "stress_counter", 600, 10); err != nil {
+		events.Add(Event{Kind: "verify_error", Key: "stress_counter", Error: err.Error()})
+
 		return Result{}, fmt.Errorf("verify after restart: %w", err)
 	}
 
-	return Result{
+	result = Result{
 		Scenario:   RestartSmokeScenario,
 		Address:    env.Address,
 		RootDir:    env.RootDir,
+		ReportPath: env.ReportPath,
 		Operations: 10,
-	}, nil
+	}
+
+	return result, nil
 }
 
-func RunCrashLoop(ctx context.Context, opts Options) (Result, error) {
+func RunCrashLoop(ctx context.Context, opts Options) (result Result, runErr error) {
+	if opts.Scenario == "" {
+		opts.Scenario = CrashLoopScenario
+	}
 	opts = normalizeCrashLoopOptions(opts)
 	env, err := NewEnvironment(opts)
 	if err != nil {
 		return Result{}, err
 	}
-	if !opts.KeepData {
-		defer func() { _ = env.Cleanup() }()
-	}
+	startedAt := time.Now()
+	events := NewEventLog(defaultEventLimit)
+
+	var expectedMu sync.Mutex
+	expected := make(map[string]uint64, opts.Keys)
+	defer func() {
+		runErr = finishScenario(opts, env, startedAt, &result, runErr, events, func() map[string]uint64 {
+			return expectedSnapshot(expected, &expectedMu)
+		})
+	}()
 
 	server, err := StartServer(ctx, env)
 	if err != nil {
 		return Result{}, err
 	}
 	defer func() { _ = server.Kill() }()
+	events.Add(Event{Kind: "server_ready"})
 
-	var expectedMu sync.Mutex
-	expected := make(map[string]uint64, opts.Keys)
 	var operations atomic.Int64
 	var transientErrors atomic.Int64
 
@@ -115,11 +144,11 @@ func RunCrashLoop(ctx context.Context, opts Options) (Result, error) {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			runCrashLoopWorker(workCtx, env, opts, workerID, expected, &expectedMu, &operations, &transientErrors)
+			runCrashLoopWorker(workCtx, env, opts, workerID, expected, &expectedMu, &operations, &transientErrors, events)
 		}(id)
 	}
 
-	restarts, err := runCrashLoopRestarts(workCtx, ctx, server, opts.KillInterval)
+	restarts, err := runCrashLoopRestarts(workCtx, ctx, server, opts.KillInterval, events)
 	stopWork()
 	wg.Wait()
 	if err != nil {
@@ -127,20 +156,27 @@ func RunCrashLoop(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	if err := server.Restart(ctx); err != nil {
+		events.Add(Event{Kind: "final_restart_error", Error: err.Error()})
+
 		return Result{}, fmt.Errorf("final restart server: %w", err)
 	}
-	if err := verifyExpectedCounters(ctx, env, expected, &expectedMu); err != nil {
+	events.Add(Event{Kind: "final_restart_ok"})
+
+	if err := verifyExpectedCounters(ctx, env, expected, &expectedMu, events); err != nil {
 		return Result{}, err
 	}
 
-	return Result{
+	result = Result{
 		Scenario:        CrashLoopScenario,
 		Address:         env.Address,
 		RootDir:         env.RootDir,
+		ReportPath:      env.ReportPath,
 		Operations:      int(operations.Load()),
 		Restarts:        restarts + 1,
 		TransientErrors: int(transientErrors.Load()),
-	}, nil
+	}
+
+	return result, nil
 }
 
 func normalizeCrashLoopOptions(opts Options) Options {
@@ -172,17 +208,20 @@ func runCrashLoopWorker(
 	expectedMu *sync.Mutex,
 	operations *atomic.Int64,
 	transientErrors *atomic.Int64,
+	events *EventLog,
 ) {
 	rng := rand.New(rand.NewSource(opts.Seed + int64(workerID)*7919)) //nolint:gosec // deterministic stress seed.
 
 	for ctx.Err() == nil {
 		key := fmt.Sprintf("stress_counter_%03d", rng.Intn(opts.Keys))
+		query := fmt.Sprintf("INCR %s %d", key, counterWindow)
 		requestCtx, cancel := context.WithTimeout(ctx, opts.RequestTimeout)
 		response, err := NewVerifier(env.Address, env.MaxMessageSize, env.IdleTimeout).
-			Query(requestCtx, fmt.Sprintf("INCR %s %d", key, counterWindow))
+			Query(requestCtx, query)
 		cancel()
 		if err != nil {
 			transientErrors.Add(1)
+			events.Add(Event{Kind: "write_transient_error", Worker: workerID, Key: key, Query: query, Error: err.Error()})
 			sleepOrDone(ctx, 10*time.Millisecond)
 
 			continue
@@ -191,6 +230,7 @@ func runCrashLoopWorker(
 		value, ok := parseOKUint(response)
 		if !ok {
 			transientErrors.Add(1)
+			events.Add(Event{Kind: "write_bad_response", Worker: workerID, Key: key, Query: query, Response: response})
 
 			continue
 		}
@@ -201,6 +241,7 @@ func runCrashLoopWorker(
 		}
 		expectedMu.Unlock()
 		operations.Add(1)
+		events.Add(Event{Kind: "write_ok", Worker: workerID, Key: key, Value: value, Query: query, Response: response})
 	}
 }
 
@@ -208,6 +249,7 @@ func runCrashLoopRestarts(
 	workCtx, serverCtx context.Context,
 	server *ServerProcess,
 	interval time.Duration,
+	events *EventLog,
 ) (int, error) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -218,10 +260,14 @@ func runCrashLoopRestarts(
 		case <-workCtx.Done():
 			return restarts, nil
 		case <-ticker.C:
+			events.Add(Event{Kind: "restart_begin"})
 			if err := server.Restart(serverCtx); err != nil {
+				events.Add(Event{Kind: "restart_error", Error: err.Error()})
+
 				return restarts, fmt.Errorf("restart server: %w", err)
 			}
 			restarts++
+			events.Add(Event{Kind: "restart_ok"})
 		}
 	}
 }
@@ -231,19 +277,85 @@ func verifyExpectedCounters(
 	env *Environment,
 	expected map[string]uint64,
 	expectedMu *sync.Mutex,
+	events *EventLog,
 ) error {
-	expectedMu.Lock()
-	snapshot := make(map[string]uint64, len(expected))
-	for key, value := range expected {
-		snapshot[key] = value
-	}
-	expectedMu.Unlock()
+	snapshot := expectedSnapshot(expected, expectedMu)
 
 	verifier := NewVerifier(env.Address, env.MaxMessageSize, env.IdleTimeout)
 	for key, want := range snapshot {
 		if err := verifier.ExpectValueAtLeast(ctx, key, counterWindow, want); err != nil {
+			events.Add(Event{Kind: "verify_error", Key: key, Value: want, Error: err.Error()})
+
 			return fmt.Errorf("verify expected counter %s: %w", key, err)
 		}
+		events.Add(Event{Kind: "verify_ok", Key: key, Value: want})
+	}
+
+	return nil
+}
+
+func expectedSnapshot(expected map[string]uint64, expectedMu *sync.Mutex) map[string]uint64 {
+	expectedMu.Lock()
+	defer expectedMu.Unlock()
+
+	snapshot := make(map[string]uint64, len(expected))
+	for key, value := range expected {
+		snapshot[key] = value
+	}
+
+	return snapshot
+}
+
+func finishScenario(
+	opts Options,
+	env *Environment,
+	startedAt time.Time,
+	result *Result,
+	runErr error,
+	events *EventLog,
+	expected func() map[string]uint64,
+) error {
+	finishedAt := time.Now()
+	status := "passed"
+	failure := ""
+	if runErr != nil {
+		status = "failed"
+		failure = runErr.Error()
+	}
+	if result.Scenario == "" {
+		result.Scenario = opts.Scenario
+	}
+	result.Address = env.Address
+	result.RootDir = env.RootDir
+	result.ReportPath = env.ReportPath
+
+	var expectedCounters map[string]uint64
+	if expected != nil {
+		expectedCounters = expected()
+	}
+
+	report := Report{
+		Scenario:         result.Scenario,
+		Status:           status,
+		StartedAt:        startedAt,
+		FinishedAt:       finishedAt,
+		DurationMillis:   finishedAt.Sub(startedAt).Milliseconds(),
+		Options:          opts,
+		Result:           *result,
+		Failure:          failure,
+		Environment:      ReportEnvironmentFrom(env),
+		ExpectedCounters: expectedCounters,
+		LastEvents:       events.Snapshot(),
+	}
+	if err := WriteReport(report); err != nil {
+		runErr = errors.Join(runErr, err)
+	}
+	if runErr != nil {
+		return fmt.Errorf("%w (stress report: %s)", runErr, env.ReportPath)
+	}
+
+	if !opts.KeepData {
+		_ = env.Cleanup()
 	}
 
 	return nil

@@ -10,6 +10,7 @@ import (
 	"github.com/fq-db/fq/internal/stress"
 )
 
+//nolint:lll // ok
 func main() {
 	opts := stress.Options{}
 	flag.StringVar(&opts.Scenario, "scenario", stress.RestartSmokeScenario, "stress scenario")
@@ -19,6 +20,7 @@ func main() {
 	flag.IntVar(&opts.Keys, "keys", 100, "number of generated counter keys")
 	flag.DurationVar(&opts.KillInterval, "kill_interval", 2*time.Second, "interval between crash-loop kills")
 	flag.DurationVar(&opts.RequestTimeout, "request_timeout", time.Second, "timeout for one verification request")
+	flag.StringVar(&opts.ReportFile, "report_file", "", "stress JSON report path; empty means stress-result.json in workdir")
 	flag.BoolVar(&opts.KeepData, "keep_data", false, "keep generated stress data directory")
 	flag.StringVar(&opts.WorkDir, "workdir", "", "stress work directory; empty means temp dir")
 	flag.StringVar(&opts.FQBinary, "fq_binary", "", "fq server binary; empty means go run ./cmd/fq")
@@ -41,5 +43,8 @@ func main() {
 	)
 	if opts.KeepData {
 		fmt.Printf("stress data: %s\n", result.RootDir)
+	}
+	if opts.ReportFile != "" || opts.KeepData {
+		fmt.Printf("stress report: %s\n", result.ReportPath)
 	}
 }

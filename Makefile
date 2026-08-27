@@ -89,7 +89,8 @@ stress-smoke:
 .PHONY: stress-crash-loop
 stress-crash-loop:
 	@echo "-> Running fq stress crash-loop scenario..."
-	@go run ./cmd/stress -scenario crash-loop -duration 30s -workers 4 -keys 100 -kill_interval 2s -seed 42
+	@mkdir -p ./benchmarks/results
+	@go run ./cmd/stress -scenario crash-loop -duration 30s -workers 4 -keys 100 -kill_interval 2s -seed 42 -report_file ./benchmarks/results/stress-crash-loop.json
 
 .PHONY: lint
 lint:

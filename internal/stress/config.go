@@ -14,17 +14,18 @@ const (
 )
 
 type Options struct {
-	Scenario       string
-	Duration       time.Duration
-	Seed           int64
-	Workers        int
-	Keys           int
-	KillInterval   time.Duration
-	RequestTimeout time.Duration
-	KeepData       bool
-	WorkDir        string
-	FQBinary       string
-	RepositoryDir  string
+	Scenario       string        `json:"scenario"`
+	Duration       time.Duration `json:"duration"`
+	Seed           int64         `json:"seed"`
+	Workers        int           `json:"workers"`
+	Keys           int           `json:"keys"`
+	KillInterval   time.Duration `json:"kill_interval"`
+	RequestTimeout time.Duration `json:"request_timeout"`
+	ReportFile     string        `json:"report_file,omitempty"`
+	KeepData       bool          `json:"keep_data"`
+	WorkDir        string        `json:"workdir,omitempty"`
+	FQBinary       string        `json:"fq_binary,omitempty"`
+	RepositoryDir  string        `json:"repo,omitempty"`
 }
 
 type Environment struct {
@@ -34,6 +35,7 @@ type Environment struct {
 	DumpDir        string
 	StdoutPath     string
 	StderrPath     string
+	ReportPath     string
 	Address        string
 	MaxMessageSize int
 	IdleTimeout    time.Duration
@@ -65,11 +67,15 @@ func NewEnvironment(opts Options) (*Environment, error) {
 		DumpDir:        filepath.Join(rootDir, "dump"),
 		StdoutPath:     filepath.Join(rootDir, "stdout.log"),
 		StderrPath:     filepath.Join(rootDir, "stderr.log"),
+		ReportPath:     opts.ReportFile,
 		Address:        address,
 		MaxMessageSize: defaultMaxMessageSize,
 		IdleTimeout:    defaultIdleTimeout,
 		RepositoryDir:  opts.RepositoryDir,
 		FQBinary:       opts.FQBinary,
+	}
+	if env.ReportPath == "" {
+		env.ReportPath = filepath.Join(rootDir, "stress-result.json")
 	}
 
 	if err := env.WriteConfig(); err != nil {

@@ -297,7 +297,9 @@ Run a crash-loop stress scenario with concurrent writes:
 go run ./cmd/stress -scenario crash-loop -duration 30s -workers 4 -keys 100 -kill_interval 2s -seed 42
 ```
 
-The stress harness starts an isolated fq server process with temporary WAL/dump directories, verifies readiness over TCP, writes data, kills and restarts the server, then verifies recovery. In `crash-loop`, workers continue writing while the harness repeatedly kills and restarts the server, and final verification checks that acknowledged writes were not lost. Use `-keep_data` to keep the generated stress directory and logs after a run.
+The stress harness starts an isolated fq server process with temporary WAL/dump directories, verifies readiness over TCP, writes data, kills and restarts the server, then verifies recovery. In `crash-loop`, workers continue writing while the harness repeatedly kills and restarts the server, and final verification checks that acknowledged writes were not lost.
+
+Each run writes a JSON stress report with the scenario config, result summary, generated config path, WAL/dump/log paths, expected counters, and the last stress events. Use `-report_file` to write it to a stable path and `-keep_data` to keep the generated stress directory after a successful run. Failed runs keep their generated directory automatically.
 
 ## Persistence
 

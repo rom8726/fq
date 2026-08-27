@@ -2,7 +2,9 @@ package stress
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -35,6 +37,7 @@ func TestCrashLoopScenarioIntegration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
+	reportPath := filepath.Join(t.TempDir(), "crash-loop-report.json")
 
 	result, err := RunCrashLoop(ctx, Options{
 		Duration:       2 * time.Second,
@@ -44,6 +47,7 @@ func TestCrashLoopScenarioIntegration(t *testing.T) {
 		KillInterval:   300 * time.Millisecond,
 		RequestTimeout: 200 * time.Millisecond,
 		RepositoryDir:  "../..",
+		ReportFile:     reportPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,5 +57,19 @@ func TestCrashLoopScenarioIntegration(t *testing.T) {
 	}
 	if result.Restarts < 2 {
 		t.Fatalf("restarts = %d", result.Restarts)
+	}
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "passed" || report.Scenario != CrashLoopScenario {
+		t.Fatalf("unexpected report status: %+v", report)
+	}
+	if len(report.LastEvents) == 0 {
+		t.Fatal("report has no events")
 	}
 }
