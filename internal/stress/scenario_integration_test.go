@@ -73,3 +73,49 @@ func TestCrashLoopScenarioIntegration(t *testing.T) {
 		t.Fatal("report has no events")
 	}
 }
+
+func TestDumpRecoveryScenarioIntegration(t *testing.T) {
+	if os.Getenv("FQ_STRESS_INTEGRATION") != "1" {
+		t.Skip("set FQ_STRESS_INTEGRATION=1 to run subprocess stress scenario")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	reportPath := filepath.Join(t.TempDir(), "dump-recovery-report.json")
+
+	result, err := RunDumpRecovery(ctx, Options{
+		Duration:       2 * time.Second,
+		Seed:           42,
+		Workers:        2,
+		Keys:           5,
+		KillInterval:   400 * time.Millisecond,
+		DumpInterval:   100 * time.Millisecond,
+		RequestTimeout: 200 * time.Millisecond,
+		RepositoryDir:  "../..",
+		ReportFile:     reportPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Operations == 0 {
+		t.Fatal("no operations were acknowledged")
+	}
+	if result.Restarts < 2 {
+		t.Fatalf("restarts = %d", result.Restarts)
+	}
+	if result.Dumps == 0 {
+		t.Fatal("no completed dump was observed")
+	}
+
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "passed" || report.Scenario != DumpRecoveryScenario {
+		t.Fatalf("unexpected report status: %+v", report)
+	}
+}

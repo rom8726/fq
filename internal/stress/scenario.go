@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 const (
 	RestartSmokeScenario = "restart-smoke"
 	CrashLoopScenario    = "crash-loop"
+	DumpRecoveryScenario = "dump-recovery"
 	counterWindow        = 600
 )
 
@@ -25,6 +28,7 @@ type Result struct {
 	ReportPath      string
 	Operations      int
 	Restarts        int
+	Dumps           int
 	TransientErrors int
 }
 
@@ -44,6 +48,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return RunRestartSmoke(ctx, opts)
 	case CrashLoopScenario:
 		return RunCrashLoop(ctx, opts)
+	case DumpRecoveryScenario:
+		return RunDumpRecovery(ctx, opts)
 	default:
 		return Result{}, fmt.Errorf("unknown scenario %q", opts.Scenario)
 	}
@@ -179,6 +185,85 @@ func RunCrashLoop(ctx context.Context, opts Options) (result Result, runErr erro
 	return result, nil
 }
 
+func RunDumpRecovery(ctx context.Context, opts Options) (result Result, runErr error) {
+	if opts.Scenario == "" {
+		opts.Scenario = DumpRecoveryScenario
+	}
+	opts = normalizeDumpRecoveryOptions(opts)
+	env, err := NewEnvironment(opts)
+	if err != nil {
+		return Result{}, err
+	}
+	startedAt := time.Now()
+	events := NewEventLog(defaultEventLimit)
+
+	var expectedMu sync.Mutex
+	expected := make(map[string]uint64, opts.Keys)
+	defer func() {
+		runErr = finishScenario(opts, env, startedAt, &result, runErr, events, func() map[string]uint64 {
+			return expectedSnapshot(expected, &expectedMu)
+		})
+	}()
+
+	server, err := StartServer(ctx, env)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() { _ = server.Kill() }()
+	events.Add(Event{Kind: "server_ready"})
+
+	var operations atomic.Int64
+	var transientErrors atomic.Int64
+
+	workCtx, stopWork := context.WithTimeout(ctx, opts.Duration)
+	defer stopWork()
+
+	var wg sync.WaitGroup
+	for id := 0; id < opts.Workers; id++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			runCrashLoopWorker(workCtx, env, opts, workerID, expected, &expectedMu, &operations, &transientErrors, events)
+		}(id)
+	}
+
+	restarts, err := runCrashLoopRestarts(workCtx, ctx, server, opts.KillInterval, events)
+	stopWork()
+	wg.Wait()
+	if err != nil {
+		return Result{}, err
+	}
+
+	dumps, err := waitForCompletedDump(ctx, env, events)
+	if err != nil {
+		return Result{}, err
+	}
+
+	if err := server.Restart(ctx); err != nil {
+		events.Add(Event{Kind: "final_restart_error", Error: err.Error()})
+
+		return Result{}, fmt.Errorf("final restart server: %w", err)
+	}
+	events.Add(Event{Kind: "final_restart_ok"})
+
+	if err := verifyExpectedCounters(ctx, env, expected, &expectedMu, events); err != nil {
+		return Result{}, err
+	}
+
+	result = Result{
+		Scenario:        DumpRecoveryScenario,
+		Address:         env.Address,
+		RootDir:         env.RootDir,
+		ReportPath:      env.ReportPath,
+		Operations:      int(operations.Load()),
+		Restarts:        restarts + 1,
+		Dumps:           dumps,
+		TransientErrors: int(transientErrors.Load()),
+	}
+
+	return result, nil
+}
+
 func normalizeCrashLoopOptions(opts Options) Options {
 	if opts.Duration <= 0 {
 		opts.Duration = 30 * time.Second
@@ -194,6 +279,18 @@ func normalizeCrashLoopOptions(opts Options) Options {
 	}
 	if opts.RequestTimeout <= 0 {
 		opts.RequestTimeout = time.Second
+	}
+
+	return opts
+}
+
+func normalizeDumpRecoveryOptions(opts Options) Options {
+	opts = normalizeCrashLoopOptions(opts)
+	if opts.DumpInterval <= 0 {
+		opts.DumpInterval = 250 * time.Millisecond
+	}
+	if opts.KillInterval <= opts.DumpInterval {
+		opts.KillInterval = opts.DumpInterval * 3
 	}
 
 	return opts
@@ -292,6 +389,37 @@ func verifyExpectedCounters(
 	}
 
 	return nil
+}
+
+func waitForCompletedDump(ctx context.Context, env *Environment, events *EventLog) (int, error) {
+	dumpPath := filepath.Join(env.DumpDir, "current.dump")
+	deadlineCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		info, err := os.Stat(dumpPath)
+		if err == nil && info.Size() > 0 {
+			events.Add(Event{Kind: "dump_seen", Query: dumpPath, Value: uint64(info.Size())})
+
+			return 1, nil
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			events.Add(Event{Kind: "dump_stat_error", Query: dumpPath, Error: err.Error()})
+
+			return 0, fmt.Errorf("stat dump file: %w", err)
+		}
+
+		select {
+		case <-deadlineCtx.Done():
+			events.Add(Event{Kind: "dump_wait_timeout", Query: dumpPath, Error: deadlineCtx.Err().Error()})
+
+			return 0, fmt.Errorf("wait for completed dump %s: %w", dumpPath, deadlineCtx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func expectedSnapshot(expected map[string]uint64, expectedMu *sync.Mutex) map[string]uint64 {

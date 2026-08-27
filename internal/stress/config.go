@@ -20,6 +20,7 @@ type Options struct {
 	Workers        int           `json:"workers"`
 	Keys           int           `json:"keys"`
 	KillInterval   time.Duration `json:"kill_interval"`
+	DumpInterval   time.Duration `json:"dump_interval"`
 	RequestTimeout time.Duration `json:"request_timeout"`
 	ReportFile     string        `json:"report_file,omitempty"`
 	KeepData       bool          `json:"keep_data"`
@@ -39,6 +40,7 @@ type Environment struct {
 	Address        string
 	MaxMessageSize int
 	IdleTimeout    time.Duration
+	DumpInterval   time.Duration
 	RepositoryDir  string
 	FQBinary       string
 }
@@ -71,8 +73,12 @@ func NewEnvironment(opts Options) (*Environment, error) {
 		Address:        address,
 		MaxMessageSize: defaultMaxMessageSize,
 		IdleTimeout:    defaultIdleTimeout,
+		DumpInterval:   opts.DumpInterval,
 		RepositoryDir:  opts.RepositoryDir,
 		FQBinary:       opts.FQBinary,
+	}
+	if env.DumpInterval <= 0 {
+		env.DumpInterval = time.Hour
 	}
 	if env.ReportPath == "" {
 		env.ReportPath = filepath.Join(rootDir, "stress-result.json")
@@ -114,18 +120,26 @@ engine:
   clean_interval: 1s
   limit_event_queue_capacity: 16
 dump:
-  interval: 1h
+  interval: %s
   directory: %q
 replication: {}
 logging:
   level: error
-`, env.Address, env.WALDir, env.DumpDir)
+`, env.Address, env.WALDir, formatConfigDuration(env.dumpInterval()), env.DumpDir)
 
 	if err := os.WriteFile(env.ConfigPath, []byte(data), 0o644); err != nil {
 		return fmt.Errorf("write stress config: %w", err)
 	}
 
 	return nil
+}
+
+func (env *Environment) dumpInterval() time.Duration {
+	return env.DumpInterval
+}
+
+func formatConfigDuration(duration time.Duration) string {
+	return duration.String()
 }
 
 func (env *Environment) Cleanup() error {

@@ -91,6 +91,17 @@ func TestNormalizeCrashLoopOptionsDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeDumpRecoveryOptionsDefaults(t *testing.T) {
+	opts := normalizeDumpRecoveryOptions(Options{})
+
+	if opts.DumpInterval != 250*time.Millisecond {
+		t.Fatalf("dump interval = %s", opts.DumpInterval)
+	}
+	if opts.KillInterval <= opts.DumpInterval {
+		t.Fatalf("kill interval %s should be greater than dump interval %s", opts.KillInterval, opts.DumpInterval)
+	}
+}
+
 func TestParseOKUint(t *testing.T) {
 	value, ok := parseOKUint("ok|42")
 	if !ok || value != 42 {
@@ -101,5 +112,29 @@ func TestParseOKUint(t *testing.T) {
 		if _, ok := parseOKUint(response); ok {
 			t.Fatalf("parsed invalid response %q", response)
 		}
+	}
+}
+
+func TestWaitForCompletedDump(t *testing.T) {
+	env, err := NewEnvironment(Options{WorkDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dumpPath := filepath.Join(env.DumpDir, "current.dump")
+	if err := os.WriteFile(dumpPath, []byte("dump"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	events := NewEventLog(10)
+	dumps, err := waitForCompletedDump(t.Context(), env, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dumps != 1 {
+		t.Fatalf("dumps = %d", dumps)
+	}
+	if got := events.Snapshot(); len(got) != 1 || got[0].Kind != "dump_seen" {
+		t.Fatalf("unexpected events: %+v", got)
 	}
 }
