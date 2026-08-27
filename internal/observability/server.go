@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -12,14 +13,16 @@ import (
 )
 
 type Server struct {
-	address string
-	logger  *zerolog.Logger
+	address      string
+	pprofEnabled bool
+	logger       *zerolog.Logger
 }
 
-func NewServer(address string, logger *zerolog.Logger) *Server {
+func NewServer(address string, pprofEnabled bool, logger *zerolog.Logger) *Server {
 	return &Server{
-		address: address,
-		logger:  logger,
+		address:      address,
+		pprofEnabled: pprofEnabled,
+		logger:       logger,
 	}
 }
 
@@ -30,6 +33,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
+	if s.pprofEnabled {
+		registerPprofHandlers(mux)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -72,4 +78,12 @@ func (s *Server) Start(ctx context.Context) error {
 
 		return nil
 	}
+}
+
+func registerPprofHandlers(mux *http.ServeMux) {
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 }

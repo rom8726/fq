@@ -7,6 +7,7 @@ persistence:
   mode: wal_and_dump
 observability:
   address: ":2112"
+  pprof: false
 wal:
   sync_commit: off
   flushing_batch_length: 8192

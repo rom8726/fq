@@ -89,7 +89,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		dumpStream:     dumpStream,
 		cfg:            cfg,
 		maxMessageSize: maxMessageSize,
-		observability:  observability.NewServer(cfg.Observability.Address, logger),
+		observability:  observability.NewServer(cfg.Observability.Address, cfg.Observability.Pprof, logger),
 	}
 
 	initializer.initializeReplication(replica)

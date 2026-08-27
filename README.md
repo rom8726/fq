@@ -429,12 +429,28 @@ Health and metrics endpoints are enabled when `observability.address` is set:
 ```yaml
 observability:
   address: ":2112"
+  pprof: false
 ```
 
 Endpoints:
 
 - `GET /healthz`: liveness check
 - `GET /metrics`: Prometheus metrics
+
+CPU/heap profiling can be enabled explicitly:
+
+```yaml
+observability:
+  address: "127.0.0.1:2112"
+  pprof: true
+```
+
+Then capture profiles during a benchmark run:
+
+```shell
+go tool pprof "http://127.0.0.1:2112/debug/pprof/profile?seconds=30"
+go tool pprof "http://127.0.0.1:2112/debug/pprof/heap"
+```
 
 Available metrics include:
 

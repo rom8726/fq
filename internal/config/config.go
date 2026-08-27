@@ -82,6 +82,7 @@ type LoggingConfig struct {
 
 type ObservabilityConfig struct {
 	Address string `yaml:"address"`
+	Pprof   bool   `yaml:"pprof"`
 }
 
 type EngineConfig struct {
