@@ -34,6 +34,11 @@ type TCPServer struct {
 	logger      *zerolog.Logger
 }
 
+type frameBuffer struct {
+	header  [frameHeaderSize]byte
+	payload []byte
+}
+
 func NewTCPServer(
 	address string,
 	maxConnectionsNumber int,
@@ -139,6 +144,7 @@ func (s *TCPServer) Start(ctx context.Context, handler func(context.Context, []b
 
 func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, handler TCPStreamHandler) {
 	stopClose := make(chan struct{})
+	frames := frameBuffer{}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -155,7 +161,7 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 
-		request, err := readFrame(connection, s.messageSize)
+		request, err := frames.read(connection, s.messageSize)
 		if err != nil {
 			if errors.Is(err, errFrameTooLarge) {
 				s.logger.Warn().
@@ -179,7 +185,7 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 				return errFrameTooLarge
 			}
 
-			if err := writeFrame(connection, response); err != nil {
+			if err := frames.write(connection, response); err != nil {
 				s.logger.Warn().Err(err).Msg("failed to write")
 
 				return err
@@ -202,14 +208,17 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 	}
 }
 
-func readFrame(conn net.Conn, maxMessageSize int) ([]byte, error) {
-	header := make([]byte, frameHeaderSize)
-	messageSize, err := readFrameSize(conn, header, maxMessageSize)
+func (b *frameBuffer) read(conn net.Conn, maxMessageSize int) ([]byte, error) {
+	messageSize, err := readFrameSize(conn, b.header[:], maxMessageSize)
 	if err != nil {
 		return nil, err
 	}
 
-	message := make([]byte, messageSize)
+	if cap(b.payload) < messageSize {
+		b.payload = make([]byte, messageSize)
+	}
+
+	message := b.payload[:messageSize]
 	if _, err := io.ReadFull(conn, message); err != nil {
 		return nil, err
 	}
@@ -218,10 +227,13 @@ func readFrame(conn net.Conn, maxMessageSize int) ([]byte, error) {
 }
 
 func readFrameInto(conn net.Conn, maxMessageSize int, buffer []byte) ([]byte, error) {
-	header := make([]byte, frameHeaderSize)
-	messageSize, err := readFrameSize(conn, header, maxMessageSize)
+	var header [frameHeaderSize]byte
+	messageSize, err := readFrameSize(conn, header[:], maxMessageSize)
 	if err != nil {
 		return nil, err
+	}
+	if messageSize > len(buffer) {
+		return nil, fmt.Errorf("%w: %d > %d", errFrameTooLarge, messageSize, len(buffer))
 	}
 
 	message := buffer[:messageSize]
@@ -245,15 +257,21 @@ func readFrameSize(conn net.Conn, header []byte, maxMessageSize int) (int, error
 	return int(messageSize), nil
 }
 
-func writeFrame(conn net.Conn, payload []byte) error {
+func (b *frameBuffer) write(conn net.Conn, payload []byte) error {
+	return writeFrameWithHeader(conn, payload, b.header[:])
+}
+
+func writeFrameWithHeader(conn net.Conn, payload, header []byte) error {
 	if uint64(len(payload)) > maxFramePayloadSize {
 		return fmt.Errorf("%w: %d > %d", errFrameTooLarge, len(payload), maxFramePayloadSize)
 	}
+	if len(header) < frameHeaderSize {
+		return fmt.Errorf("frame header buffer too small: %d < %d", len(header), frameHeaderSize)
+	}
 
-	header := make([]byte, frameHeaderSize)
 	binary.BigEndian.PutUint32(header, uint32(len(payload)))
 
-	if err := writeAll(conn, header); err != nil {
+	if err := writeAll(conn, header[:frameHeaderSize]); err != nil {
 		return err
 	}
 

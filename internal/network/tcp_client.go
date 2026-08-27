@@ -64,7 +64,8 @@ func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]by
 		return c.normalizeTimeoutError(ctx, err)
 	}
 
-	if err := writeFrame(c.connection, request); err != nil {
+	var writeHeader [frameHeaderSize]byte
+	if err := writeFrameWithHeader(c.connection, request, writeHeader[:]); err != nil {
 		return c.normalizeTimeoutError(ctx, err)
 	}
 

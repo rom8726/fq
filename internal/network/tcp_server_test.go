@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"io"
@@ -47,6 +48,18 @@ func TestTCPServer(t *testing.T) {
 	buffer, err := readFrame(connection, maxMessageSize)
 	require.NoError(t, err)
 	require.True(t, reflect.DeepEqual([]byte(response), buffer))
+}
+
+func readFrame(conn net.Conn, maxMessageSize int) ([]byte, error) {
+	frames := frameBuffer{}
+
+	return frames.read(conn, maxMessageSize)
+}
+
+func writeFrame(conn net.Conn, payload []byte) error {
+	var header [frameHeaderSize]byte
+
+	return writeFrameWithHeader(conn, payload, header[:])
 }
 
 func TestTCPServerHandlesMultipleFrames(t *testing.T) {
@@ -201,6 +214,73 @@ func TestReadFrameReturnsPayloadReadError(t *testing.T) {
 	_, err := readFrame(server, 2048)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	require.NoError(t, <-errCh)
+}
+
+func TestReadFrameIntoRejectsSmallBuffer(t *testing.T) {
+	t.Parallel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		header := make([]byte, frameHeaderSize)
+		binary.BigEndian.PutUint32(header, 5)
+		_, err := client.Write(header)
+		errCh <- err
+		_ = client.Close()
+	}()
+
+	_, err := readFrameInto(server, 2048, make([]byte, 4))
+	require.ErrorIs(t, err, errFrameTooLarge)
+	require.NoError(t, <-errCh)
+}
+
+func BenchmarkFrameBufferRoundTrip(b *testing.B) {
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
+
+	payload := []byte("INCR bench_key_123 600")
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(errCh)
+		frames := frameBuffer{}
+		for i := 0; i < b.N; i++ {
+			message, err := frames.read(server, 2048)
+			if err != nil {
+				errCh <- err
+
+				return
+			}
+			if err := frames.write(server, message); err != nil {
+				errCh <- err
+
+				return
+			}
+		}
+	}()
+
+	frames := frameBuffer{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := frames.write(client, payload); err != nil {
+			b.Fatal(err)
+		}
+		message, err := frames.read(client, 2048)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !bytes.Equal(message, payload) {
+			b.Fatalf("message = %q", message)
+		}
+	}
+	b.StopTimer()
+
+	if err := <-errCh; err != nil {
+		b.Fatal(err)
+	}
 }
 
 func freeTCPAddress(t *testing.T) string {
