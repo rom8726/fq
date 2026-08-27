@@ -64,3 +64,20 @@ func (v *Verifier) ExpectValue(ctx context.Context, key string, window, want uin
 
 	return nil
 }
+
+func (v *Verifier) ExpectValueAtLeast(ctx context.Context, key string, window, minValue uint64) error {
+	response, err := v.Query(ctx, fmt.Sprintf("GET %s %d", key, window))
+	if err != nil {
+		return err
+	}
+
+	value, ok := parseOKUint(response)
+	if !ok {
+		return fmt.Errorf("GET %s %d response = %q, want ok|uint", key, window, response)
+	}
+	if value < minValue {
+		return fmt.Errorf("GET %s %d response = %q, want at least ok|%d", key, window, response, minValue)
+	}
+
+	return nil
+}

@@ -70,3 +70,36 @@ func TestRunRejectsUnknownScenario(t *testing.T) {
 		t.Fatal("expected unknown scenario error")
 	}
 }
+
+func TestNormalizeCrashLoopOptionsDefaults(t *testing.T) {
+	opts := normalizeCrashLoopOptions(Options{})
+
+	if opts.Duration != 30*time.Second {
+		t.Fatalf("duration = %s", opts.Duration)
+	}
+	if opts.Workers != 4 {
+		t.Fatalf("workers = %d", opts.Workers)
+	}
+	if opts.Keys != 100 {
+		t.Fatalf("keys = %d", opts.Keys)
+	}
+	if opts.KillInterval != 2*time.Second {
+		t.Fatalf("kill interval = %s", opts.KillInterval)
+	}
+	if opts.RequestTimeout != time.Second {
+		t.Fatalf("request timeout = %s", opts.RequestTimeout)
+	}
+}
+
+func TestParseOKUint(t *testing.T) {
+	value, ok := parseOKUint("ok|42")
+	if !ok || value != 42 {
+		t.Fatalf("parse ok value = %d/%v", value, ok)
+	}
+
+	for _, response := range []string{"err|bad", "ok|", "ok|nope"} {
+		if _, ok := parseOKUint(response); ok {
+			t.Fatalf("parsed invalid response %q", response)
+		}
+	}
+}

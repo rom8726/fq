@@ -14,13 +14,17 @@ const (
 )
 
 type Options struct {
-	Scenario      string
-	Duration      time.Duration
-	Seed          int64
-	KeepData      bool
-	WorkDir       string
-	FQBinary      string
-	RepositoryDir string
+	Scenario       string
+	Duration       time.Duration
+	Seed           int64
+	Workers        int
+	Keys           int
+	KillInterval   time.Duration
+	RequestTimeout time.Duration
+	KeepData       bool
+	WorkDir        string
+	FQBinary       string
+	RepositoryDir  string
 }
 
 type Environment struct {

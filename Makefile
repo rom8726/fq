@@ -86,6 +86,11 @@ stress-smoke:
 	@echo "-> Running fq stress restart smoke scenario..."
 	@go run ./cmd/stress -scenario restart-smoke -duration 30s
 
+.PHONY: stress-crash-loop
+stress-crash-loop:
+	@echo "-> Running fq stress crash-loop scenario..."
+	@go run ./cmd/stress -scenario crash-loop -duration 30s -workers 4 -keys 100 -kill_interval 2s -seed 42
+
 .PHONY: lint
 lint:
 	golangci-lint -v run

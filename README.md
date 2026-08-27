@@ -291,7 +291,13 @@ Run the restart smoke stress scenario:
 go run ./cmd/stress -scenario restart-smoke -duration 30s
 ```
 
-The stress harness starts an isolated fq server process with temporary WAL/dump directories, verifies readiness over TCP, writes data, kills and restarts the server, then verifies recovery. Use `-keep_data` to keep the generated stress directory and logs after a run.
+Run a crash-loop stress scenario with concurrent writes:
+
+```shell
+go run ./cmd/stress -scenario crash-loop -duration 30s -workers 4 -keys 100 -kill_interval 2s -seed 42
+```
+
+The stress harness starts an isolated fq server process with temporary WAL/dump directories, verifies readiness over TCP, writes data, kills and restarts the server, then verifies recovery. In `crash-loop`, workers continue writing while the harness repeatedly kills and restarts the server, and final verification checks that acknowledged writes were not lost. Use `-keep_data` to keep the generated stress directory and logs after a run.
 
 ## Persistence
 

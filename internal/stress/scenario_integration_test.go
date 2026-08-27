@@ -27,3 +27,31 @@ func TestRestartSmokeScenarioIntegration(t *testing.T) {
 		t.Fatalf("operations = %d", result.Operations)
 	}
 }
+
+func TestCrashLoopScenarioIntegration(t *testing.T) {
+	if os.Getenv("FQ_STRESS_INTEGRATION") != "1" {
+		t.Skip("set FQ_STRESS_INTEGRATION=1 to run subprocess stress scenario")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+
+	result, err := RunCrashLoop(ctx, Options{
+		Duration:       2 * time.Second,
+		Seed:           42,
+		Workers:        2,
+		Keys:           5,
+		KillInterval:   300 * time.Millisecond,
+		RequestTimeout: 200 * time.Millisecond,
+		RepositoryDir:  "../..",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Operations == 0 {
+		t.Fatal("no operations were acknowledged")
+	}
+	if result.Restarts < 2 {
+		t.Fatalf("restarts = %d", result.Restarts)
+	}
+}
