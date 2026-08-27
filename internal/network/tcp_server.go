@@ -21,7 +21,10 @@ const (
 	maxFramePayloadSize = 1<<32 - 1
 )
 
-var errFrameTooLarge = errors.New("frame exceeds maximum message size")
+var (
+	errFrameTooLarge                    = errors.New("frame exceeds maximum message size")
+	noCancel         context.CancelFunc = func() {}
+)
 
 type TCPHandler = func(context.Context, []byte) ([]byte, error)
 type TCPStreamHandler = func(context.Context, []byte, func([]byte) error) error
@@ -174,7 +177,7 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 			break
 		}
 
-		requestCtx, requestCancel := context.WithTimeout(ctx, s.idleTimeout)
+		requestCtx, requestCancel := s.requestContext(ctx, request)
 		err = handler(requestCtx, request, func(response []byte) error {
 			if len(response) > s.messageSize {
 				s.logger.Error().
@@ -206,6 +209,54 @@ func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, h
 	if err := connection.Close(); err != nil {
 		s.logger.Warn().Err(err).Msg("failed to close connection")
 	}
+}
+
+func (s *TCPServer) requestContext(ctx context.Context, request []byte) (context.Context, context.CancelFunc) {
+	if requestNeedsTimeout(request) {
+		return context.WithTimeout(ctx, s.idleTimeout)
+	}
+
+	return ctx, noCancel
+}
+
+func requestNeedsTimeout(request []byte) bool {
+	command := firstToken(request)
+
+	return tokenEquals(command, "WATCH") ||
+		tokenEquals(command, "STREAM") ||
+		tokenEquals(command, "PSTREAM")
+}
+
+func firstToken(request []byte) []byte {
+	start := 0
+	for start < len(request) && isTokenSpace(request[start]) {
+		start++
+	}
+
+	end := start
+	for end < len(request) && !isTokenSpace(request[end]) {
+		end++
+	}
+
+	return request[start:end]
+}
+
+func isTokenSpace(ch byte) bool {
+	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+}
+
+func tokenEquals(token []byte, value string) bool {
+	if len(token) != len(value) {
+		return false
+	}
+
+	for i := range token {
+		if token[i] != value[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (b *frameBuffer) read(conn net.Conn, maxMessageSize int) ([]byte, error) {

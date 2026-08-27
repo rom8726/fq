@@ -131,6 +131,71 @@ func TestTCPServerHandlesStreamedResponses(t *testing.T) {
 	require.Equal(t, []byte("second"), second)
 }
 
+func TestTCPServerCreatesRequestTimeoutOnlyForBlockingCommands(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	address := freeTCPAddress(t)
+	maxMessageSize := 2048
+	logger := zerolog.Nop()
+	server, err := NewTCPServer(address, 10, maxMessageSize, time.Minute, &logger)
+	require.NoError(t, err)
+
+	deadlineByRequest := make(chan bool, 3)
+	go func() {
+		require.NoError(t, server.HandleQueries(ctx, func(ctx context.Context, buffer []byte) ([]byte, error) {
+			_, hasDeadline := ctx.Deadline()
+			deadlineByRequest <- hasDeadline
+
+			return buffer, nil
+		}))
+	}()
+
+	connection := dialEventually(t, address)
+	defer func() { _ = connection.Close() }()
+
+	for _, request := range []string{"INCR key 1", "WATCH key 1", " STREAM"} {
+		require.NoError(t, writeFrame(connection, []byte(request)))
+
+		response, err := readFrame(connection, maxMessageSize)
+		require.NoError(t, err)
+		require.Equal(t, []byte(request), response)
+	}
+
+	require.False(t, <-deadlineByRequest)
+	require.True(t, <-deadlineByRequest)
+	require.True(t, <-deadlineByRequest)
+}
+
+func TestRequestNeedsTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		request string
+		want    bool
+	}{
+		{name: "empty", request: "", want: false},
+		{name: "whitespace", request: " \t\n", want: false},
+		{name: "incr", request: "INCR key 1", want: false},
+		{name: "watch", request: "WATCH key 1", want: true},
+		{name: "stream", request: "STREAM", want: true},
+		{name: "pstream", request: "\tPSTREAM tenant-", want: true},
+		{name: "lowercase stays nonblocking", request: "watch key 1", want: false},
+		{name: "prefix is not command", request: "WATCHED key 1", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, requestNeedsTimeout([]byte(tt.request)))
+		})
+	}
+}
+
 func TestTCPServerRejectsOversizedFrame(t *testing.T) {
 	t.Parallel()
 
@@ -281,6 +346,37 @@ func BenchmarkFrameBufferRoundTrip(b *testing.B) {
 	if err := <-errCh; err != nil {
 		b.Fatal(err)
 	}
+}
+
+func BenchmarkTCPServerRequestContext(b *testing.B) {
+	server := TCPServer{idleTimeout: time.Minute}
+	ctx := context.Background()
+
+	b.Run("incr", func(b *testing.B) {
+		request := []byte("INCR bench_key_123 600")
+
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			requestCtx, cancel := server.requestContext(ctx, request)
+			if requestCtx != ctx {
+				b.Fatal("request context should be reused")
+			}
+			cancel()
+		}
+	})
+
+	b.Run("watch", func(b *testing.B) {
+		request := []byte("WATCH bench_key_123 600")
+
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			requestCtx, cancel := server.requestContext(ctx, request)
+			if requestCtx == ctx {
+				b.Fatal("blocking request should use a timeout context")
+			}
+			cancel()
+		}
+	})
 }
 
 func freeTCPAddress(t *testing.T) string {
