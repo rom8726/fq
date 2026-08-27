@@ -21,79 +21,106 @@ const (
 )
 
 type transition struct {
-	jump   func(byte) int
-	action func()
+	jump   jumpKind
+	action actionKind
 }
 
-type stateMachine struct {
+type jumpKind int
+
+const (
+	noJump jumpKind = iota
+	appendLetterJump
+	skipWhiteSpaceJump
+)
+
+type actionKind int
+
+const (
+	noAction actionKind = iota
+	addTokenAction
+)
+
+type compiledStateMachine struct {
 	transitions [statesNumber][eventsNumber]transition
-	state       int
+}
+
+type stateMachineRun struct {
+	machine *compiledStateMachine
+	state   int
 
 	tokens []string
 	sb     strings.Builder
 }
 
-func newStateMachine() *stateMachine {
-	machine := &stateMachine{
-		state: initialState,
+func newStateMachine() *compiledStateMachine {
+	return &compiledStateMachine{
+		transitions: [statesNumber][eventsNumber]transition{
+			initialState: {
+				foundLetterEvent:     transition{jump: appendLetterJump},
+				foundWhiteSpaceEvent: transition{jump: skipWhiteSpaceJump},
+			},
+			wordState: {
+				foundLetterEvent:     transition{jump: appendLetterJump},
+				foundWhiteSpaceEvent: transition{jump: skipWhiteSpaceJump, action: addTokenAction},
+			},
+			whiteSpaceState: {
+				foundLetterEvent:     transition{jump: appendLetterJump},
+				foundWhiteSpaceEvent: transition{jump: skipWhiteSpaceJump},
+			},
+			invalidState: {},
+		},
 	}
-
-	machine.transitions = [statesNumber][eventsNumber]transition{
-		initialState: {
-			foundLetterEvent:     transition{jump: machine.appendLetterJump},
-			foundWhiteSpaceEvent: transition{jump: machine.skipWhiteSpaceJump},
-		},
-		wordState: {
-			foundLetterEvent:     transition{jump: machine.appendLetterJump},
-			foundWhiteSpaceEvent: transition{jump: machine.skipWhiteSpaceJump, action: machine.addTokenAction},
-		},
-		whiteSpaceState: {
-			foundLetterEvent:     transition{jump: machine.appendLetterJump},
-			foundWhiteSpaceEvent: transition{jump: machine.skipWhiteSpaceJump},
-		},
-		invalidState: {},
-	}
-
-	return machine
 }
 
-func (sm *stateMachine) parse(query string) ([]string, error) {
+func (sm *compiledStateMachine) parse(query string) ([]string, error) {
+	run := stateMachineRun{
+		machine: sm,
+		state:   initialState,
+	}
+
+	return run.parse(query)
+}
+
+func (run *stateMachineRun) parse(query string) ([]string, error) {
 	for i := 0; i < len(query); i++ {
 		symbol := query[i]
 		switch {
 		case isWhiteSpace(symbol):
-			sm.processEvent(foundWhiteSpaceEvent, symbol)
+			run.processEvent(foundWhiteSpaceEvent, symbol)
 		case isLetter(symbol):
-			sm.processEvent(foundLetterEvent, symbol)
+			run.processEvent(foundLetterEvent, symbol)
 		default:
 			return nil, ErrInvalidSymbol
 		}
 	}
 
-	sm.processEvent(foundWhiteSpaceEvent, ' ')
+	run.processEvent(foundWhiteSpaceEvent, ' ')
 
-	return sm.tokens, nil
+	return run.tokens, nil
 }
 
-func (sm *stateMachine) processEvent(event int, symbol byte) {
-	ts := sm.transitions[sm.state][event]
-	sm.state = ts.jump(symbol)
-	if ts.action != nil {
-		ts.action()
+func (run *stateMachineRun) processEvent(event int, symbol byte) {
+	ts := run.machine.transitions[run.state][event]
+	run.state = run.jump(ts.jump, symbol)
+	run.action(ts.action)
+}
+
+func (run *stateMachineRun) jump(jump jumpKind, symbol byte) int {
+	switch jump {
+	case appendLetterJump:
+		run.sb.WriteByte(symbol)
+
+		return wordState
+	case skipWhiteSpaceJump:
+		return whiteSpaceState
+	default:
+		return invalidState
 	}
 }
 
-func (sm *stateMachine) appendLetterJump(letter byte) int {
-	sm.sb.WriteByte(letter)
-
-	return wordState
-}
-
-func (sm *stateMachine) skipWhiteSpaceJump(byte) int {
-	return whiteSpaceState
-}
-
-func (sm *stateMachine) addTokenAction() {
-	sm.tokens = append(sm.tokens, sm.sb.String())
-	sm.sb.Reset()
+func (run *stateMachineRun) action(action actionKind) {
+	if action == addTokenAction {
+		run.tokens = append(run.tokens, run.sb.String())
+		run.sb.Reset()
+	}
 }

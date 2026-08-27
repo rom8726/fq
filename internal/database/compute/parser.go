@@ -7,18 +7,19 @@ import (
 )
 
 type Parser struct {
-	logger *zerolog.Logger
+	logger  *zerolog.Logger
+	machine *compiledStateMachine
 }
 
 func NewParser(logger *zerolog.Logger) *Parser {
 	return &Parser{
-		logger: logger,
+		logger:  logger,
+		machine: newStateMachine(),
 	}
 }
 
 func (p *Parser) ParseQuery(_ context.Context, query string) ([]string, error) {
-	machine := newStateMachine()
-	tokens, err := machine.parse(query)
+	tokens, err := p.machine.parse(query)
 	if err != nil {
 		return nil, err
 	}
