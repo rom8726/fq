@@ -147,7 +147,7 @@ func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.
 
 // RLimitFixedWindow ...
 //
-//nolint:dupl // ok
+//nolint:dupl,gocritic // ok
 func (e *Engine) RLimitFixedWindow(
 	txCtx database.TxContext,
 	key database.BatchKey,
