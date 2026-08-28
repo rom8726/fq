@@ -6,12 +6,12 @@ rps: 0
 request_timeout: 5s
 idle_timeout: 1m
 max_message_size: 4KB
-query: "RLIMIT TB {key} 100 10 {batch}"
+query: "RLIMIT TB {key} 10000 10 {batch}"
 key_prefix: bench_tb
 key_distribution: zipfian
 key_start: 0
 key_range: 100000
-batch: 600
+batch: 10
 output: json
 output_file: benchmarks/results/release-tb.json
 seed: 42
