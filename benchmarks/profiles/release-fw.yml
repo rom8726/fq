@@ -6,7 +6,7 @@ rps: 0
 request_timeout: 5s
 idle_timeout: 1m
 max_message_size: 4KB
-query: "RLIMIT FW {key} 100 {batch}"
+query: "RLIMIT FW {key} {batch}"
 key_prefix: bench_fw
 key_distribution: zipfian
 key_start: 0
