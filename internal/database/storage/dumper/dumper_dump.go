@@ -83,9 +83,7 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 
 	if d.wal != nil {
 		cleanupLSN := d.walCleanupLSN(uint64(dumpTx))
-		if err := d.wal.RemovePastSegments(ctx, cleanupLSN); err != nil {
-			return fmt.Errorf("remove past WAL segments: %w", err)
-		}
+		d.scheduleWALCleanup(cleanupLSN)
 	}
 
 	return nil
