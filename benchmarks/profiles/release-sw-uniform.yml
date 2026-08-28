@@ -8,10 +8,10 @@ idle_timeout: 1m
 max_message_size: 4KB
 query: "RLIMIT SW {key} 10000 {batch}"
 key_prefix: bench_sw
-key_distribution: zipfian
+key_distribution: uniform
 key_start: 0
 key_range: 100000
 batch: 10
 output: json
-output_file: benchmarks/results/release-sw.json
+output_file: benchmarks/results/release-sw-uniform.json
 seed: 42
