@@ -53,8 +53,8 @@ func TestBuildCommandsReleaseIncludesAllProfiles(t *testing.T) {
 		StressDir: filepath.Join("runs", "release", "stress"),
 	})
 
-	if len(commands) != 8 {
-		t.Fatalf("commands = %d, want 8", len(commands))
+	if len(commands) != 9 {
+		t.Fatalf("commands = %d, want 9", len(commands))
 	}
 	if commands[0].Name != "bench-release-hot-counter" {
 		t.Fatalf("first command = %q", commands[0].Name)
