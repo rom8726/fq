@@ -261,7 +261,8 @@ func benchmarkProfiles(mode string) []string {
 		"benchmarks/profiles/release-hot-counter.yml",
 		"benchmarks/profiles/release-uniform-counter.yml",
 		"benchmarks/profiles/release-fw.yml",
-		"benchmarks/profiles/release-sw.yml",
+		"benchmarks/profiles/release-sw-uniform.yml",
+		"benchmarks/profiles/release-sw-zipfian.yml",
 		"benchmarks/profiles/release-tb.yml",
 	}
 }
