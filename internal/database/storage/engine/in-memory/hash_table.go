@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 var HashTableBuilder = func() hashTable {
 	return NewHashTable()
 }
+
+const (
+	cleanChunkSize       = 1024
+	cleanChunkTimeBudget = 2 * time.Millisecond
+)
 
 type hashTableKey struct {
 	key       string
@@ -131,35 +137,158 @@ func (s *HashTable) Del(key database.BatchKey) bool {
 }
 
 func (s *HashTable) Clean(ctx context.Context) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	now := database.TxTime(time.Now().Unix())
 
-	keysToDelete := make([]hashTableKey, 0, len(s.m)/10) // Pre-allocate for ~10% deletions
+	counterItems, slidingWindowItems := s.cleanSnapshot(ctx)
+	if ctx.Err() != nil {
+		return
+	}
 
-	for k, v := range s.m {
+	counterKeysToDelete := make([]cleanCounterItem, 0, len(counterItems)/10)
+	for _, item := range counterItems {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			if isExpiredWithDelta(v.lastTxAt, v.batchSize) {
-				keysToDelete = append(keysToDelete, k)
-			}
+		}
+
+		if item.elem.ExpiredWithDelta(now) {
+			counterKeysToDelete = append(counterKeysToDelete, item)
 		}
 	}
 
-	for _, k := range keysToDelete {
-		delete(s.m, k)
+	s.deleteExpiredCounters(ctx, counterKeysToDelete, now)
+	if ctx.Err() != nil {
+		return
 	}
 
-	now := database.TxTime(time.Now().Unix())
-	for k, v := range s.sw {
+	slidingWindowKeysToDelete := make([]cleanSlidingWindowItem, 0, len(slidingWindowItems)/10)
+	for _, item := range slidingWindowItems {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			if v.Clean(now) {
-				delete(s.sw, k)
+		}
+
+		if item.elem.Clean(now) {
+			slidingWindowKeysToDelete = append(slidingWindowKeysToDelete, item)
+		}
+	}
+
+	s.deleteEmptySlidingWindows(ctx, slidingWindowKeysToDelete, now)
+}
+
+type cleanCounterItem struct {
+	key  hashTableKey
+	elem *FqElem
+}
+
+type cleanSlidingWindowItem struct {
+	key  hashTableKey
+	elem *SlidingWindowElem
+}
+
+func (s *HashTable) cleanSnapshot(ctx context.Context) ([]cleanCounterItem, []cleanSlidingWindowItem) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	counterItems := make([]cleanCounterItem, 0, len(s.m))
+	for k, v := range s.m {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		default:
+		}
+
+		counterItems = append(counterItems, cleanCounterItem{key: k, elem: v})
+	}
+
+	slidingWindowItems := make([]cleanSlidingWindowItem, 0, len(s.sw))
+	for k, v := range s.sw {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		default:
+		}
+
+		slidingWindowItems = append(slidingWindowItems, cleanSlidingWindowItem{key: k, elem: v})
+	}
+
+	return counterItems, slidingWindowItems
+}
+
+//nolint:dupl // ok
+func (s *HashTable) deleteExpiredCounters(ctx context.Context, items []cleanCounterItem, now database.TxTime) {
+	for start := 0; start < len(items); {
+		startedAt := time.Now()
+		processed := 0
+
+		s.mu.Lock()
+		for ; start < len(items); start++ {
+			if processed >= cleanChunkSize {
+				break
 			}
+			if processed > 0 && time.Since(startedAt) >= cleanChunkTimeBudget {
+				break
+			}
+
+			item := items[start]
+			if current := s.m[item.key]; current == item.elem && current.ExpiredWithDelta(now) {
+				delete(s.m, item.key)
+			}
+			processed++
+		}
+		s.mu.Unlock()
+
+		if start >= len(items) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
+//nolint:dupl // ok
+func (s *HashTable) deleteEmptySlidingWindows(
+	ctx context.Context,
+	items []cleanSlidingWindowItem,
+	now database.TxTime,
+) {
+	for start := 0; start < len(items); {
+		startedAt := time.Now()
+		processed := 0
+
+		s.mu.Lock()
+		for ; start < len(items); start++ {
+			if processed >= cleanChunkSize {
+				break
+			}
+			if processed > 0 && time.Since(startedAt) >= cleanChunkTimeBudget {
+				break
+			}
+
+			item := items[start]
+			if current := s.sw[item.key]; current == item.elem && current.Clean(now) {
+				delete(s.sw, item.key)
+			}
+			processed++
+		}
+		s.mu.Unlock()
+
+		if start >= len(items) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			runtime.Gosched()
 		}
 	}
 }

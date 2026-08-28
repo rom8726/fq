@@ -2,12 +2,14 @@ package initialization
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/config"
+	inmemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
 )
 
 func TestNewInitializerHonorsDumpOnlyPersistence(t *testing.T) {
@@ -57,11 +59,25 @@ func TestNewInitializerHonorsMemoryPersistence(t *testing.T) {
 	strg.Shutdown()
 }
 
+func TestCreateEngineUsesConfiguredPartitions(t *testing.T) {
+	cfg := testInitializerConfig()
+	cfg.Engine.Partitions = 32
+
+	initializer, err := NewInitializer(cfg)
+	require.NoError(t, err)
+
+	engine, ok := initializer.engine.(*inmemory.Engine)
+	require.True(t, ok)
+	partitions := reflect.ValueOf(engine).Elem().FieldByName("partitions")
+	require.Equal(t, 32, partitions.Len())
+}
+
 func testInitializerConfig() config.Config {
 	return config.Config{
 		Engine: config.EngineConfig{
 			Type:          "in_memory",
 			CleanInterval: time.Minute,
+			Partitions:    config.DefaultEnginePartitions,
 		},
 		Persistence: config.PersistenceConfig{
 			Mode: config.PersistenceModeWALAndDump,

@@ -9,19 +9,11 @@ import (
 )
 
 func (w *WAL) RemovePastSegments(ctx context.Context, lsn uint64) error {
-	files, err := os.ReadDir(w.directory)
+	filenames, err := walSegmentNames(w.directory)
 	if err != nil {
-		return fmt.Errorf("failed to scan WAL directory: %w", err)
+		return err
 	}
 
-	filenames := make([]string, 0, len(files))
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		filenames = append(filenames, file.Name())
-	}
 	sort.Strings(filenames)
 	if len(filenames) == 0 {
 		return nil
@@ -34,27 +26,46 @@ func (w *WAL) RemovePastSegments(ctx context.Context, lsn uint64) error {
 		}
 
 		filePath := filepath.Join(w.directory, filename)
-		logs, err := w.fsReader.ReadSegment(ctx, filePath)
+		maxLSN, err := w.segmentMaxLSN(ctx, filePath)
 		if err != nil {
-			return fmt.Errorf("failed to read segment %s: %w", filePath, err)
+			return err
 		}
 
-		if len(logs) == 0 {
-			continue
-		}
-
-		sort.Slice(logs, func(i, j int) bool {
-			return logs[i].LSN < logs[j].LSN
-		})
-
-		if logs[len(logs)-1].LSN < lsn {
+		if maxLSN < lsn {
 			w.logger.Debug().Msg(fmt.Sprintf("removing segment %s", filePath))
 
-			if err := os.Remove(filePath); err != nil {
+			if err := removeSegmentAndMetadata(filePath); err != nil {
 				return fmt.Errorf("failed to remove segment %s: %w", filePath, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+func (w *WAL) segmentMaxLSN(ctx context.Context, filePath string) (uint64, error) {
+	meta, err := readSegmentMetadata(filePath)
+	if err == nil {
+		return meta.MaxLSN, nil
+	}
+	if !os.IsNotExist(err) && w.logger != nil {
+		w.logger.Warn().
+			Err(err).
+			Str("segment_path", filePath).
+			Msg("failed to read WAL segment metadata, falling back to segment scan")
+	}
+
+	logs, err := w.fsReader.ReadSegment(ctx, filePath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read segment %s: %w", filePath, err)
+	}
+
+	var maxLSN uint64
+	for _, log := range logs {
+		if log.LSN > maxLSN {
+			maxLSN = log.LSN
+		}
+	}
+
+	return maxLSN, nil
 }

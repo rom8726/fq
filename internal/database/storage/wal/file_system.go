@@ -1,24 +1,11 @@
 package wal
 
-import (
-	"fmt"
-	"os"
-	"sort"
-)
+import "sort"
 
 func SegmentUpperBound(directory, lastSegmentName string) (string, error) {
-	files, err := os.ReadDir(directory)
+	filenames, err := walSegmentNames(directory)
 	if err != nil {
-		return "", fmt.Errorf("failed to scan WAL directory: %w", err)
-	}
-
-	filenames := make([]string, 0, len(files))
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		filenames = append(filenames, file.Name())
+		return "", err
 	}
 
 	sort.Strings(filenames)
@@ -31,24 +18,17 @@ func SegmentUpperBound(directory, lastSegmentName string) (string, error) {
 }
 
 func SegmentLast(directory string) (string, error) {
-	files, err := os.ReadDir(directory)
+	filenames, err := walSegmentNames(directory)
 	if err != nil {
-		return "", fmt.Errorf("failed to scan WAL directory: %w", err)
+		return "", err
 	}
 
-	filename := ""
-	for i := len(files) - 1; i >= 0; i-- {
-		file := files[i]
-		if file.IsDir() {
-			continue
-		}
-
-		filename = file.Name()
-
-		break
+	if len(filenames) == 0 {
+		return "", nil
 	}
+	sort.Strings(filenames)
 
-	return filename, nil
+	return filenames[len(filenames)-1], nil
 }
 
 func upperBound(array []string, target string) int {

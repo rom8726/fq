@@ -536,10 +536,6 @@ func isSlidingWindowEventExpired(currTime, window database.TxTime) bool {
 	return currTime+window <= database.TxTime(time.Now().Unix())
 }
 
-func isExpiredWithDelta(currTime, batchSize database.TxTime) bool {
-	return database.TxTime(time.Now().Unix()) > (endOfBatch(currTime, batchSize) + expireDelta)
-}
-
 func startOfBatch(currTime, batchSize database.TxTime) database.TxTime {
 	return currTime / batchSize * batchSize
 }

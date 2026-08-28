@@ -4,7 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -18,7 +21,9 @@ func TestDumperWALCleanupUsesDumpTxWithoutProvider(t *testing.T) {
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
 
-	require.Equal(t, []uint64{100}, wal.lsns)
+	require.Eventually(t, func() bool {
+		return wal.equalLSNs([]uint64{100})
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestDumperCreatesMissingDumpDirectory(t *testing.T) {
@@ -40,7 +45,9 @@ func TestDumperWALCleanupIsCappedByReplicaAck(t *testing.T) {
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
 
-	require.Equal(t, []uint64{40}, wal.lsns)
+	require.Eventually(t, func() bool {
+		return wal.equalLSNs([]uint64{40})
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestDumperWALCleanupUsesDumpTxWhenReplicaAckIsAhead(t *testing.T) {
@@ -51,7 +58,9 @@ func TestDumperWALCleanupUsesDumpTxWhenReplicaAckIsAhead(t *testing.T) {
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
 
-	require.Equal(t, []uint64{100}, wal.lsns)
+	require.Eventually(t, func() bool {
+		return wal.equalLSNs([]uint64{100})
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestDumperWALCleanupKeepsWALWhenReplicaAckIsZero(t *testing.T) {
@@ -62,7 +71,48 @@ func TestDumperWALCleanupKeepsWALWhenReplicaAckIsZero(t *testing.T) {
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
 
-	require.Equal(t, []uint64{0}, wal.lsns)
+	require.Eventually(t, func() bool {
+		return wal.equalLSNs([]uint64{0})
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestDumperDoesNotWaitForWALCleanup(t *testing.T) {
+	wal := &blockingWAL{release: make(chan struct{})}
+	d := New(emptyDumpEngine{}, wal, t.TempDir())
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.Eventually(t, func() bool {
+		return wal.startedCleanup()
+	}, time.Second, 10*time.Millisecond)
+
+	close(wal.release)
+	d.Shutdown()
+	require.True(t, wal.equalLSNs([]uint64{100}))
+}
+
+func TestDumperShutdownCancelsRunningWALCleanup(t *testing.T) {
+	wal := &blockingWAL{release: make(chan struct{})}
+	d := New(emptyDumpEngine{}, wal, t.TempDir())
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.Eventually(t, func() bool {
+		return wal.startedCleanup()
+	}, time.Second, 10*time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		d.Shutdown()
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
 }
 
 type emptyDumpEngine struct{}
@@ -82,13 +132,51 @@ func (e emptyDumpEngine) RestoreDumpElem(context.Context, database.DumpElem) err
 }
 
 type recordingWAL struct {
+	mu   sync.Mutex
 	lsns []uint64
 }
 
 func (w *recordingWAL) RemovePastSegments(_ context.Context, lsn uint64) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	w.lsns = append(w.lsns, lsn)
 
 	return nil
+}
+
+func (w *recordingWAL) equalLSNs(expected []uint64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return slices.Equal(w.lsns, expected)
+}
+
+type blockingWAL struct {
+	recordingWAL
+	release chan struct{}
+	started bool
+}
+
+func (w *blockingWAL) RemovePastSegments(ctx context.Context, lsn uint64) error {
+	w.mu.Lock()
+	w.started = true
+	w.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.release:
+	}
+
+	return w.recordingWAL.RemovePastSegments(ctx, lsn)
+}
+
+func (w *blockingWAL) startedCleanup() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.started
 }
 
 type staticCleanupLSNProvider struct {

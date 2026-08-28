@@ -317,7 +317,7 @@ func TestElem_DumpValue(t *testing.T) {
 	require.Equal(t, database.Tx(1000), tx)
 
 	v, lastTime, tx = e.DumpValue(999)
-	require.Equal(t, database.ValueType(0), v)
+	require.Equal(t, database.ErrorValue, v)
 	require.Equal(t, database.TxTime(0), lastTime)
 	require.Equal(t, database.Tx(0), tx)
 

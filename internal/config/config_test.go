@@ -23,6 +23,22 @@ func TestEngineLimitEventQueueCapacityDefaults(t *testing.T) {
 	require.Equal(t, DefaultLimitEventQueueCapacity, cfg.Engine.LimitEventQueueCapacityValue())
 }
 
+func TestEnginePartitionsDefaults(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.Partitions = 0
+
+	require.NoError(t, validate(&cfg))
+	require.Equal(t, DefaultEnginePartitions, cfg.Engine.PartitionsValue())
+}
+
+func TestEnginePartitionsUsesConfiguredValue(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.Partitions = 32
+
+	require.NoError(t, validate(&cfg))
+	require.Equal(t, 32, cfg.Engine.PartitionsValue())
+}
+
 func TestEngineLimitEventQueueCapacityUsesConfiguredValue(t *testing.T) {
 	cfg := validConfig()
 	cfg.Engine.LimitEventQueueCapacity = 64
@@ -124,6 +140,13 @@ func TestValidateRejectsInvalidNetworkConfig(t *testing.T) {
 func TestValidateRejectsInvalidEngineConfig(t *testing.T) {
 	cfg := validConfig()
 	cfg.Engine.LimitEventQueueCapacity = -1
+
+	require.Error(t, validate(&cfg))
+}
+
+func TestValidateRejectsInvalidEnginePartitions(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.Partitions = -1
 
 	require.Error(t, validate(&cfg))
 }
@@ -301,6 +324,7 @@ func validConfig() Config {
 		Engine: EngineConfig{
 			Type:          "in_memory",
 			CleanInterval: time.Minute,
+			Partitions:    DefaultEnginePartitions,
 		},
 		Persistence: PersistenceConfig{
 			Mode: PersistenceModeWALAndDump,

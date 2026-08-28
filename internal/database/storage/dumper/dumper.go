@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	dumpBatchSize       = 1000
-	currentDumpFileName = "current.dump"
+	dumpBatchSize        = 1000
+	currentDumpFileName  = "current.dump"
+	walCleanupRetryDelay = time.Second
 )
 
 type WAL interface {
@@ -33,6 +34,14 @@ type Dumper struct {
 	dir    string
 
 	walCleanupLSNProvider WALCleanupLSNProvider
+	walCleanupMu          sync.Mutex
+	pendingWALCleanupLSN  uint64
+	walCleanupRequested   bool
+	walCleanupNotify      chan struct{}
+	walCleanupStop        chan struct{}
+	walCleanupDone        chan struct{}
+	walCleanupCtx         context.Context
+	walCleanupCancel      context.CancelFunc
 
 	sessions       map[string]readSession
 	sessMu         sync.Mutex
@@ -46,20 +55,27 @@ type Dumper struct {
 }
 
 func New(engine Engine, wal WAL, dir string) *Dumper {
+	walCleanupCtx, walCleanupCancel := context.WithCancel(context.Background())
 	d := &Dumper{
-		engine:         engine,
-		wal:            wal,
-		dir:            dir,
-		sessions:       make(map[string]readSession),
-		dumpVersion:    0,
-		sessionTTL:     30 * time.Minute, // default session TTL
-		cleanupStop:    make(chan struct{}),
-		maxSessions:    10, // default max concurrent sessions
-		activeSessions: 0,
+		engine:           engine,
+		wal:              wal,
+		dir:              dir,
+		sessions:         make(map[string]readSession),
+		dumpVersion:      0,
+		sessionTTL:       30 * time.Minute, // default session TTL
+		cleanupStop:      make(chan struct{}),
+		walCleanupNotify: make(chan struct{}, 1),
+		walCleanupStop:   make(chan struct{}),
+		walCleanupDone:   make(chan struct{}),
+		walCleanupCtx:    walCleanupCtx,
+		walCleanupCancel: walCleanupCancel,
+		maxSessions:      10, // default max concurrent sessions
+		activeSessions:   0,
 	}
 
 	// Start periodic session cleanup
 	d.startSessionCleanup()
+	d.startWALCleanup()
 
 	return d
 }
@@ -70,6 +86,81 @@ func (d *Dumper) currentDumpFilePath() string {
 
 func (d *Dumper) SetWALCleanupLSNProvider(provider WALCleanupLSNProvider) {
 	d.walCleanupLSNProvider = provider
+}
+
+func (d *Dumper) scheduleWALCleanup(lsn uint64) {
+	if d.wal == nil {
+		return
+	}
+
+	d.walCleanupMu.Lock()
+	if !d.walCleanupRequested || lsn > d.pendingWALCleanupLSN {
+		d.pendingWALCleanupLSN = lsn
+	}
+	d.walCleanupRequested = true
+	d.walCleanupMu.Unlock()
+
+	select {
+	case d.walCleanupNotify <- struct{}{}:
+	default:
+	}
+}
+
+func (d *Dumper) startWALCleanup() {
+	if d.wal == nil {
+		close(d.walCleanupDone)
+
+		return
+	}
+
+	go func() {
+		defer close(d.walCleanupDone)
+
+		for {
+			select {
+			case <-d.walCleanupStop:
+				return
+			case <-d.walCleanupNotify:
+				d.runPendingWALCleanups()
+			}
+		}
+	}()
+}
+
+func (d *Dumper) runPendingWALCleanups() {
+	for {
+		d.walCleanupMu.Lock()
+		if !d.walCleanupRequested {
+			d.walCleanupMu.Unlock()
+
+			return
+		}
+		lsn := d.pendingWALCleanupLSN
+		d.walCleanupRequested = false
+		d.walCleanupMu.Unlock()
+
+		if err := d.wal.RemovePastSegments(d.walCleanupCtx, lsn); err != nil {
+			d.walCleanupMu.Lock()
+			if !d.walCleanupRequested || lsn > d.pendingWALCleanupLSN {
+				d.pendingWALCleanupLSN = lsn
+			}
+			d.walCleanupRequested = true
+			d.walCleanupMu.Unlock()
+
+			select {
+			case <-d.walCleanupStop:
+				return
+			case <-time.After(walCleanupRetryDelay):
+			}
+
+			select {
+			case d.walCleanupNotify <- struct{}{}:
+			default:
+			}
+
+			return
+		}
+	}
 }
 
 // invalidateAllSessions invalidates all active dump read sessions
@@ -120,4 +211,7 @@ func (d *Dumper) Shutdown() {
 		d.cleanupTicker.Stop()
 	}
 	close(d.cleanupStop)
+	d.walCleanupCancel()
+	close(d.walCleanupStop)
+	<-d.walCleanupDone
 }

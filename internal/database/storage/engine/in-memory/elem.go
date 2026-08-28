@@ -127,6 +127,13 @@ func (e *FqElem) Value() database.ValueType {
 	return e.value
 }
 
+func (e *FqElem) ExpiredWithDelta(now database.TxTime) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return now > (endOfBatch(e.lastTxAt, e.batchSize) + expireDelta)
+}
+
 func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxTime, database.Tx) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -139,7 +146,7 @@ func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxT
 		return e.value, e.lastTxAt, e.ver
 	}
 
-	if e.dumpVer <= dumpTx {
+	if e.dumpVer != database.NoTx && e.dumpVer <= dumpTx {
 		return e.dumpValue, e.dumpLastTxAt, e.dumpVer
 	}
 
