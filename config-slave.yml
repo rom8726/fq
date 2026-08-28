@@ -22,7 +22,7 @@ engine:
   limit_event_queue_capacity: 16
 dump:
   interval: 1m
-  directory: ./app/data-slave/
+  directory: ./fq_data-slave/
 replication:
   replica_type: slave
   replica_id: "replica-1"
