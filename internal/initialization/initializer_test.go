@@ -72,12 +72,26 @@ func TestCreateEngineUsesConfiguredPartitions(t *testing.T) {
 	require.Equal(t, 32, partitions.Len())
 }
 
+func TestCreateEngineUsesConfiguredWALApplyWorkers(t *testing.T) {
+	cfg := testInitializerConfig()
+	cfg.Engine.WALApplyWorkers = 4
+
+	initializer, err := NewInitializer(cfg)
+	require.NoError(t, err)
+
+	engine, ok := initializer.engine.(*inmemory.Engine)
+	require.True(t, ok)
+	workers := reflect.ValueOf(engine).Elem().FieldByName("walApplyWorkers")
+	require.Equal(t, int64(4), workers.Int())
+}
+
 func testInitializerConfig() config.Config {
 	return config.Config{
 		Engine: config.EngineConfig{
-			Type:          "in_memory",
-			CleanInterval: time.Minute,
-			Partitions:    config.DefaultEnginePartitions,
+			Type:            "in_memory",
+			CleanInterval:   time.Minute,
+			Partitions:      config.DefaultEnginePartitions,
+			WALApplyWorkers: config.DefaultEngineWALApplyWorkers,
 		},
 		Persistence: config.PersistenceConfig{
 			Mode: config.PersistenceModeWALAndDump,

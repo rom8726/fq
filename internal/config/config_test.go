@@ -39,6 +39,22 @@ func TestEnginePartitionsUsesConfiguredValue(t *testing.T) {
 	require.Equal(t, 32, cfg.Engine.PartitionsValue())
 }
 
+func TestEngineWALApplyWorkersDefaults(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.WALApplyWorkers = 0
+
+	require.NoError(t, validate(&cfg))
+	require.Equal(t, DefaultEngineWALApplyWorkers, cfg.Engine.WALApplyWorkersValue())
+}
+
+func TestEngineWALApplyWorkersUsesConfiguredValue(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.WALApplyWorkers = 4
+
+	require.NoError(t, validate(&cfg))
+	require.Equal(t, 4, cfg.Engine.WALApplyWorkersValue())
+}
+
 func TestEngineLimitEventQueueCapacityUsesConfiguredValue(t *testing.T) {
 	cfg := validConfig()
 	cfg.Engine.LimitEventQueueCapacity = 64
@@ -147,6 +163,13 @@ func TestValidateRejectsInvalidEngineConfig(t *testing.T) {
 func TestValidateRejectsInvalidEnginePartitions(t *testing.T) {
 	cfg := validConfig()
 	cfg.Engine.Partitions = -1
+
+	require.Error(t, validate(&cfg))
+}
+
+func TestValidateRejectsInvalidEngineWALApplyWorkers(t *testing.T) {
+	cfg := validConfig()
+	cfg.Engine.WALApplyWorkers = -1
 
 	require.Error(t, validate(&cfg))
 }
@@ -322,9 +345,10 @@ func TestValidateAllowsDefaultReplicationFields(t *testing.T) {
 func validConfig() Config {
 	return Config{
 		Engine: EngineConfig{
-			Type:          "in_memory",
-			CleanInterval: time.Minute,
-			Partitions:    DefaultEnginePartitions,
+			Type:            "in_memory",
+			CleanInterval:   time.Minute,
+			Partitions:      DefaultEnginePartitions,
+			WALApplyWorkers: DefaultEngineWALApplyWorkers,
 		},
 		Persistence: PersistenceConfig{
 			Mode: PersistenceModeWALAndDump,

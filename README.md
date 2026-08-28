@@ -391,6 +391,17 @@ engine:
 
 Higher values reduce per-partition lock contention and make dump/clean snapshots smaller, at the cost of more partition objects. If omitted or set to `0`, fq uses `10`.
 
+### WAL Apply Workers
+
+`engine.wal_apply_workers` controls how many goroutines can apply one WAL chunk into the in-memory engine:
+
+```yaml
+engine:
+  wal_apply_workers: 4
+```
+
+Single-key WAL logs such as `INCR`, `DEL`, and rate-limit events are applied in their original order inside the same in-memory partition, while different partitions can be filled concurrently. `MDEL` is applied as a barrier between partition batches. The replica sends ack only after the whole WAL chunk is applied. If omitted or set to `0`, fq uses `1`.
+
 ## Replication
 
 fq supports async master-slave replication:

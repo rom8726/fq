@@ -33,5 +33,12 @@ func CreateEngine(
 		}
 	}
 
-	return inMemory.NewEngine(inMemory.HashTableBuilder, cfg.PartitionsValue(), logger, walStream, dumpStream)
+	return inMemory.NewEngineWithWALApplyWorkers(
+		inMemory.HashTableBuilder,
+		cfg.PartitionsValue(),
+		logger,
+		walStream,
+		dumpStream,
+		cfg.WALApplyWorkersValue(),
+	)
 }

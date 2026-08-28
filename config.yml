@@ -18,6 +18,7 @@ wal:
 engine:
   type: in_memory
   partitions: 10
+  wal_apply_workers: 1
   clean_interval: 5m
   limit_event_queue_capacity: 16
 dump:

@@ -30,6 +30,7 @@ const (
 
 	DefaultLimitEventQueueCapacity = 16
 	DefaultEnginePartitions        = 10
+	DefaultEngineWALApplyWorkers   = 1
 )
 
 type Config struct {
@@ -90,6 +91,7 @@ type EngineConfig struct {
 	Type                    string        `yaml:"type"`
 	CleanInterval           time.Duration `yaml:"clean_interval"`
 	Partitions              int           `yaml:"partitions"`
+	WALApplyWorkers         int           `yaml:"wal_apply_workers"`
 	LimitEventQueueCapacity int           `yaml:"limit_event_queue_capacity"`
 }
 
@@ -107,6 +109,14 @@ func (cfg EngineConfig) LimitEventQueueCapacityValue() int {
 	}
 
 	return cfg.LimitEventQueueCapacity
+}
+
+func (cfg EngineConfig) WALApplyWorkersValue() int {
+	if cfg.WALApplyWorkers == 0 {
+		return DefaultEngineWALApplyWorkers
+	}
+
+	return cfg.WALApplyWorkers
 }
 
 type WALConfig struct {
@@ -187,6 +197,7 @@ func validate(cfg *Config) error {
 		validation.Field(&cfg.Engine.Type, validation.Required, validation.In("in_memory")),
 		validation.Field(&cfg.Engine.CleanInterval, validation.Required, positiveDurationRule),
 		validation.Field(&cfg.Engine.Partitions, validation.Min(0)),
+		validation.Field(&cfg.Engine.WALApplyWorkers, validation.Min(0)),
 		validation.Field(&cfg.Engine.LimitEventQueueCapacity, validation.Min(0)),
 	)
 	if err != nil {

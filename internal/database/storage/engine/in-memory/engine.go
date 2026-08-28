@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -60,8 +61,9 @@ type hashTable interface {
 }
 
 type Engine struct {
-	partitions []hashTable
-	logger     *zerolog.Logger
+	partitions      []hashTable
+	logger          *zerolog.Logger
+	walApplyWorkers int
 }
 
 func NewEngine(
@@ -70,6 +72,17 @@ func NewEngine(
 	logger *zerolog.Logger,
 	walStream <-chan wal.Chunk,
 	dumpStream <-chan database.DumpChunk,
+) (*Engine, error) {
+	return NewEngineWithWALApplyWorkers(tableBuilder, partitionsNumber, logger, walStream, dumpStream, 1)
+}
+
+func NewEngineWithWALApplyWorkers(
+	tableBuilder func() hashTable,
+	partitionsNumber int,
+	logger *zerolog.Logger,
+	walStream <-chan wal.Chunk,
+	dumpStream <-chan database.DumpChunk,
+	walApplyWorkers int,
 ) (*Engine, error) {
 	if tableBuilder == nil {
 		return nil, ErrInvalidArgument
@@ -83,6 +96,10 @@ func NewEngine(
 		return nil, ErrInvalidArgument
 	}
 
+	if walApplyWorkers <= 0 {
+		return nil, ErrInvalidArgument
+	}
+
 	partitions := make([]hashTable, partitionsNumber)
 	for i := 0; i < partitionsNumber; i++ {
 		if partition := tableBuilder(); partition != nil {
@@ -93,8 +110,9 @@ func NewEngine(
 	}
 
 	engine := &Engine{
-		partitions: partitions,
-		logger:     logger,
+		partitions:      partitions,
+		logger:          logger,
+		walApplyWorkers: walApplyWorkers,
 	}
 
 	if walStream != nil {
@@ -334,21 +352,94 @@ func (e *Engine) partitionIdx(key string) int {
 	return int(hash) % len(e.partitions)
 }
 
-//nolint:gocritic
 func (e *Engine) applyLogs(logs []*wal.LogData) {
+	if e.walApplyWorkers <= 1 || len(logs) <= 1 {
+		e.applyLogsSequentially(logs)
+		return
+	}
+
+	e.applyLogsConcurrently(logs)
+}
+
+//nolint:gocritic
+func (e *Engine) applyLogsSequentially(logs []*wal.LogData) {
 	for _, log := range logs {
-		switch compute.CommandID(log.CommandId) {
-		case compute.IncrCommandID:
-			e.applyIncrFromLog(log)
-		case compute.DelCommandID:
-			e.applyDelFromLog(log)
-		case compute.MDelCommandID:
-			e.applyMDelFromLog(log)
-		case compute.RLimitSlidingWindowCommandID:
-			e.applySlidingWindowEventFromLog(log)
-		case compute.RLimitTokenBucketCommandID:
-			e.applyTokenBucketEventFromLog(log)
+		e.applyLog(log)
+	}
+}
+
+func (e *Engine) applyLogsConcurrently(logs []*wal.LogData) {
+	pending := make([][]*wal.LogData, len(e.partitions))
+
+	flush := func() {
+		workers := e.walApplyWorkers
+		if workers > len(e.partitions) {
+			workers = len(e.partitions)
 		}
+
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+		for idx := range pending {
+			partitionLogs := pending[idx]
+			if len(partitionLogs) == 0 {
+				continue
+			}
+
+			pending[idx] = nil
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(logs []*wal.LogData) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				e.applyLogsSequentially(logs)
+			}(partitionLogs)
+		}
+		wg.Wait()
+	}
+
+	for _, log := range logs {
+		idx, ok := e.walLogPartitionIdx(log)
+		if !ok {
+			flush()
+			e.applyLog(log)
+			continue
+		}
+
+		pending[idx] = append(pending[idx], log)
+	}
+	flush()
+}
+
+//nolint:gocritic
+func (e *Engine) applyLog(log *wal.LogData) {
+	switch compute.CommandID(log.CommandId) {
+	case compute.IncrCommandID:
+		e.applyIncrFromLog(log)
+	case compute.DelCommandID:
+		e.applyDelFromLog(log)
+	case compute.MDelCommandID:
+		e.applyMDelFromLog(log)
+	case compute.RLimitSlidingWindowCommandID:
+		e.applySlidingWindowEventFromLog(log)
+	case compute.RLimitTokenBucketCommandID:
+		e.applyTokenBucketEventFromLog(log)
+	}
+}
+
+func (e *Engine) walLogPartitionIdx(log *wal.LogData) (int, bool) {
+	switch compute.CommandID(log.CommandId) {
+	case compute.IncrCommandID,
+		compute.DelCommandID,
+		compute.RLimitSlidingWindowCommandID,
+		compute.RLimitTokenBucketCommandID:
+		if len(log.Arguments) == 0 {
+			return 0, false
+		}
+
+		return e.partitionIdx(log.Arguments[0]), true
+	default:
+		return 0, false
 	}
 }
 

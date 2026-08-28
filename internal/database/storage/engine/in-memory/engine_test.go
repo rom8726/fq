@@ -1,6 +1,7 @@
 package inmemory
 
 import (
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/storage/wal"
 )
 
 func TestEngineAcknowledgesDumpChunkAfterApply(t *testing.T) {
@@ -41,6 +44,62 @@ func TestEngineAcknowledgesDumpChunkAfterApply(t *testing.T) {
 	value, found := engine.Get(key)
 	require.True(t, found)
 	require.Equal(t, database.ValueType(42), value)
+}
+
+func TestEngineAppliesWALChunkConcurrentlyBeforeAck(t *testing.T) {
+	walStream := make(chan wal.Chunk, 1)
+	logger := zerolog.Nop()
+	engine, err := NewEngineWithWALApplyWorkers(HashTableBuilder, 4, &logger, walStream, nil, 4)
+	require.NoError(t, err)
+	defer close(walStream)
+
+	keyA, keyB := requireKeysFromDifferentPartitions(t, engine)
+	now := strconv.FormatInt(time.Now().Unix(), 16)
+	applied := make(chan error, 1)
+
+	walStream <- wal.Chunk{
+		Logs: []*wal.LogData{
+			{
+				LSN:       1,
+				CommandId: uint32(compute.IncrCommandID),
+				Arguments: []string{keyA.Key, keyA.BatchSizeStr, now},
+			},
+			{
+				LSN:       2,
+				CommandId: uint32(compute.IncrCommandID),
+				Arguments: []string{keyB.Key, keyB.BatchSizeStr, now},
+			},
+			{
+				LSN:       3,
+				CommandId: uint32(compute.MDelCommandID),
+				Arguments: []string{now, keyA.Key, keyA.BatchSizeStr, keyB.Key, keyB.BatchSizeStr},
+			},
+			{
+				LSN:       4,
+				CommandId: uint32(compute.IncrCommandID),
+				Arguments: []string{keyB.Key, keyB.BatchSizeStr, now},
+			},
+			{
+				LSN:       5,
+				CommandId: uint32(compute.DelCommandID),
+				Arguments: []string{keyB.Key, keyB.BatchSizeStr, now},
+			},
+			{
+				LSN:       6,
+				CommandId: uint32(compute.IncrCommandID),
+				Arguments: []string{keyB.Key, keyB.BatchSizeStr, now},
+			},
+		},
+		Applied: applied,
+	}
+
+	require.NoError(t, requireAck(t, applied))
+
+	_, found := engine.Get(keyA)
+	require.False(t, found)
+	value, found := engine.Get(keyB)
+	require.True(t, found)
+	require.Equal(t, database.ValueType(1), value)
 }
 
 func TestEngineRLimitFixedWindowDoesNotExceedLimitConcurrently(t *testing.T) {
@@ -166,6 +225,10 @@ func TestEngineRLimitTokenBucketDoesNotExceedCapacityConcurrently(t *testing.T) 
 }
 
 func requireDumpAck(t *testing.T, applied <-chan error) error {
+	return requireAck(t, applied)
+}
+
+func requireAck(t *testing.T, applied <-chan error) error {
 	t.Helper()
 
 	select {
@@ -176,4 +239,29 @@ func requireDumpAck(t *testing.T, applied <-chan error) error {
 	}
 
 	return nil
+}
+
+func requireKeysFromDifferentPartitions(t *testing.T, engine *Engine) (database.BatchKey, database.BatchKey) {
+	t.Helper()
+
+	first := database.BatchKey{
+		BatchSize:    60,
+		BatchSizeStr: "60",
+		Key:          "key-0",
+	}
+	firstPartition := engine.partitionIdx(first.Key)
+
+	for i := 1; i < 100; i++ {
+		key := database.BatchKey{
+			BatchSize:    60,
+			BatchSizeStr: "60",
+			Key:          "key-" + strconv.Itoa(i),
+		}
+		if engine.partitionIdx(key.Key) != firstPartition {
+			return first, key
+		}
+	}
+
+	t.Fatal("could not find keys from different partitions")
+	return database.BatchKey{}, database.BatchKey{}
 }
