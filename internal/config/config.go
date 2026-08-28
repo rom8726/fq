@@ -29,6 +29,7 @@ const (
 	configDefaultFilePath = "config.yml"
 
 	DefaultLimitEventQueueCapacity = 16
+	DefaultEnginePartitions        = 10
 )
 
 type Config struct {
@@ -88,7 +89,16 @@ type ObservabilityConfig struct {
 type EngineConfig struct {
 	Type                    string        `yaml:"type"`
 	CleanInterval           time.Duration `yaml:"clean_interval"`
+	Partitions              int           `yaml:"partitions"`
 	LimitEventQueueCapacity int           `yaml:"limit_event_queue_capacity"`
+}
+
+func (cfg EngineConfig) PartitionsValue() int {
+	if cfg.Partitions == 0 {
+		return DefaultEnginePartitions
+	}
+
+	return cfg.Partitions
 }
 
 func (cfg EngineConfig) LimitEventQueueCapacityValue() int {
@@ -176,6 +186,7 @@ func validate(cfg *Config) error {
 	err = validation.ValidateStruct(&cfg.Engine,
 		validation.Field(&cfg.Engine.Type, validation.Required, validation.In("in_memory")),
 		validation.Field(&cfg.Engine.CleanInterval, validation.Required, positiveDurationRule),
+		validation.Field(&cfg.Engine.Partitions, validation.Min(0)),
 		validation.Field(&cfg.Engine.LimitEventQueueCapacity, validation.Min(0)),
 	)
 	if err != nil {

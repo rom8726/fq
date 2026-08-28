@@ -146,7 +146,7 @@ func (e *FqElem) DumpValue(dumpTx database.Tx) (database.ValueType, database.TxT
 		return e.value, e.lastTxAt, e.ver
 	}
 
-	if e.dumpVer <= dumpTx {
+	if e.dumpVer != database.NoTx && e.dumpVer <= dumpTx {
 		return e.dumpValue, e.dumpLastTxAt, e.dumpVer
 	}
 

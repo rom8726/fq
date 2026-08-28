@@ -20,10 +20,6 @@ var supportedEngineTypes = map[string]struct{}{
 	InMemoryEngine: {},
 }
 
-const (
-	defaultPartitionsNumber = 10
-)
-
 func CreateEngine(
 	cfg config.EngineConfig,
 	logger *zerolog.Logger,
@@ -37,5 +33,5 @@ func CreateEngine(
 		}
 	}
 
-	return inMemory.NewEngine(inMemory.HashTableBuilder, defaultPartitionsNumber, logger, walStream, dumpStream)
+	return inMemory.NewEngine(inMemory.HashTableBuilder, cfg.PartitionsValue(), logger, walStream, dumpStream)
 }

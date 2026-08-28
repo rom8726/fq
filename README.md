@@ -380,6 +380,17 @@ engine:
 
 If a stream subscriber is slower than incoming limit-filled events and its queue is full, new events for that subscriber are dropped.
 
+### Engine Partitions
+
+`engine.partitions` controls how many independent in-memory hash table partitions are used:
+
+```yaml
+engine:
+  partitions: 10
+```
+
+Higher values reduce per-partition lock contention and make dump/clean snapshots smaller, at the cost of more partition objects. If omitted or set to `0`, fq uses `10`.
+
 ## Replication
 
 fq supports async master-slave replication:
