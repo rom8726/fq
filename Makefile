@@ -85,7 +85,8 @@ bench-release-all:
 	@go run ./cmd/bench -profile ./benchmarks/profiles/release-hot-counter.yml
 	@go run ./cmd/bench -profile ./benchmarks/profiles/release-uniform-counter.yml
 	@go run ./cmd/bench -profile ./benchmarks/profiles/release-fw.yml
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw-uniform.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw-zipfian.yml
 	@go run ./cmd/bench -profile ./benchmarks/profiles/release-tb.yml
 
 .PHONY: stress-smoke
