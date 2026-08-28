@@ -427,7 +427,8 @@ func copySnapshots(snapshotDir string) error {
 		"benchmarks/profiles/release-hot-counter.yml",
 		"benchmarks/profiles/release-uniform-counter.yml",
 		"benchmarks/profiles/release-fw.yml",
-		"benchmarks/profiles/release-sw.yml",
+		"benchmarks/profiles/release-sw-uniform.yml",
+		"benchmarks/profiles/release-sw-zipfian.yml",
 		"benchmarks/profiles/release-tb.yml",
 	} {
 		data, err := os.ReadFile(path)
