@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"flag"
 	"fmt"
 	"math"
@@ -738,6 +739,10 @@ func recordResult(
 	measuredLatencies *[]time.Duration,
 	lastError *string,
 ) {
+	if isIgnoredResult(res) {
+		return
+	}
+
 	if res.err != nil || res.badResp {
 		*lastError = res.errText
 	}
@@ -755,6 +760,14 @@ func recordResult(
 		*windowLatencies = append(*windowLatencies, res.latency)
 		*measuredLatencies = append(*measuredLatencies, res.latency)
 	}
+}
+
+func isIgnoredResult(res result) bool {
+	if res.err == nil {
+		return false
+	}
+
+	return stderrors.Is(res.err, context.Canceled) || stderrors.Is(res.err, network.ErrIdleTimeout)
 }
 
 func drainResults(

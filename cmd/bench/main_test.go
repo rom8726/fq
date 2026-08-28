@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/fq-db/fq/internal/network"
 )
 
 func TestMakeReportComputesMeasuredSummary(t *testing.T) {
@@ -118,6 +121,56 @@ func TestRecordResultKeepsWarmupErrorForDiagnostics(t *testing.T) {
 	}
 	if lastError != "connect: refused" {
 		t.Fatalf("last error = %q", lastError)
+	}
+}
+
+func TestRecordResultIgnoresShutdownErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "context_canceled", err: context.Canceled},
+		{name: "idle_timeout", err: network.ErrIdleTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var measuredCount uint64
+			var measuredErrors uint64
+			var windowCount int
+			var windowErrors int
+			var windowLatencies []time.Duration
+			var measuredLatencies []time.Duration
+			lastError := "previous"
+
+			recordResult(
+				result{err: tc.err, errText: tc.err.Error(), latency: time.Second},
+				true,
+				&measuredCount,
+				&measuredErrors,
+				&windowCount,
+				&windowErrors,
+				&windowLatencies,
+				&measuredLatencies,
+				&lastError,
+			)
+
+			if measuredCount != 0 || measuredErrors != 0 || windowCount != 0 || windowErrors != 0 {
+				t.Fatalf("ignored result was counted: measured=%d/%d window=%d/%d",
+					measuredCount,
+					measuredErrors,
+					windowCount,
+					windowErrors,
+				)
+			}
+			if len(windowLatencies) != 0 || len(measuredLatencies) != 0 {
+				t.Fatalf("ignored result latency was recorded: window=%d measured=%d",
+					len(windowLatencies),
+					len(measuredLatencies),
+				)
+			}
+			if lastError != "previous" {
+				t.Fatalf("last error = %q", lastError)
+			}
+		})
 	}
 }
 
