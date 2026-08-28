@@ -2,6 +2,8 @@ package dumper
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,6 +19,17 @@ func TestDumperWALCleanupUsesDumpTxWithoutProvider(t *testing.T) {
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
 
 	require.Equal(t, []uint64{100}, wal.lsns)
+}
+
+func TestDumperCreatesMissingDumpDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing", "dump")
+	d := New(emptyDumpEngine{}, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+
+	_, err := os.Stat(filepath.Join(dir, currentDumpFileName))
+	require.NoError(t, err)
 }
 
 func TestDumperWALCleanupIsCappedByReplicaAck(t *testing.T) {

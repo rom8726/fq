@@ -20,6 +20,10 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 	// Invalidate all active sessions before creating new dump
 	d.invalidateAllSessions()
 
+	if err := os.MkdirAll(d.dir, 0o750); err != nil {
+		return fmt.Errorf("create dump directory: %w", err)
+	}
+
 	filename := fmt.Sprintf("dump_%d.dump", time.Now().UnixNano())
 	filePath := filepath.Join(d.dir, filename)
 	shouldRemove := true
