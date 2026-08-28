@@ -13,6 +13,8 @@ Use fq when you need:
 - login, signup, or abuse throttling
 - fast time-window counters with optional WAL, dumps, and async replication
 
+See last benchmark reports: [benchmarks/reports](benchmarks/reports)
+
 ## Features
 
 - Atomic fixed-window rate limiter
@@ -220,6 +222,8 @@ Try a token-bucket limiter:
 
 ## Benchmarking
 
+Last benchmark reports: [benchmarks/reports](benchmarks/reports)
+
 Run a live latency/RPS benchmark against a running server:
 
 ```shell
@@ -280,7 +284,8 @@ Included profiles:
 - `benchmarks/profiles/release-hot-counter.yml`
 - `benchmarks/profiles/release-uniform-counter.yml`
 - `benchmarks/profiles/release-fw.yml`
-- `benchmarks/profiles/release-sw.yml`
+- `benchmarks/profiles/release-sw-uniform.yml`
+- `benchmarks/profiles/release-sw-zipfian.yml`
 - `benchmarks/profiles/release-tb.yml`
 
 ## Stress testing
