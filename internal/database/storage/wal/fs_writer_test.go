@@ -36,9 +36,6 @@ func TestBatchWritingToWALSegment(t *testing.T) {
 	maxSegmentSize := 100 << 10
 	logger := zerolog.Nop()
 	fsWriter := NewFSWriter(testWALDirectory, maxSegmentSize, &logger)
-	defer func() {
-		require.NoError(t, fsWriter.Close())
-	}()
 
 	originalNow := now
 	defer func() {
@@ -64,6 +61,11 @@ func TestBatchWritingToWALSegment(t *testing.T) {
 	stat, err := os.Stat(testWALDirectory + "/wal_1000.log")
 	require.NoError(t, err)
 	require.NotZero(t, stat.Size())
+
+	require.NoError(t, fsWriter.Close())
+	meta, err := readSegmentMetadata(testWALDirectory + "/wal_1000.log")
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), meta.MaxLSN)
 }
 
 func TestWALSegmentsRotation(t *testing.T) {
@@ -114,6 +116,9 @@ func TestWALSegmentsRotation(t *testing.T) {
 	stat, err := os.Stat(testWALDirectory + "/wal_2000.log")
 	require.NoError(t, err)
 	require.NotZero(t, stat.Size())
+	meta, err := readSegmentMetadata(testWALDirectory + "/wal_2000.log")
+	require.NoError(t, err)
+	require.Equal(t, uint64(6), meta.MaxLSN)
 
 	stat, err = os.Stat(testWALDirectory + "/wal_3000.log")
 	require.NoError(t, err)

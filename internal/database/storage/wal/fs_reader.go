@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 
 	"github.com/rs/zerolog"
@@ -27,18 +26,9 @@ func NewFSReader(directory string, logger *zerolog.Logger) *FSReader {
 }
 
 func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
-	files, err := os.ReadDir(r.directory)
+	filenames, err := walSegmentPaths(r.directory)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan WAL directory: %w", err)
-	}
-
-	filenames := make([]string, 0, len(files))
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		filenames = append(filenames, filepath.Join(r.directory, file.Name()))
+		return nil, err
 	}
 	sort.Strings(filenames)
 

@@ -59,6 +59,22 @@ func TestReadLogsTruncatesIncompleteHeaderTailInLastSegment(t *testing.T) {
 	require.Equal(t, int64(len(validBatch)), stat.Size())
 }
 
+func TestReadLogsIgnoresSegmentMetadataFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	segmentPath := writeWALSegment(t, dir, "wal_1000.log", mustEncodeLogs(t, []*LogData{testLogData(1)}))
+	require.NoError(t, writeSegmentMetadata(segmentPath, segmentMetadata{MaxLSN: 1}))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(1), logs[0].LSN)
+}
+
 func TestReadLogsRejectsTruncatedNonLastSegment(t *testing.T) {
 	t.Parallel()
 

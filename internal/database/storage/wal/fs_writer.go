@@ -21,12 +21,14 @@ var errFSWriterClosed = errors.New("wal writer is closed")
 type FSWriter struct {
 	mutex sync.Mutex
 
-	segment   *os.File
-	directory string
+	segment     *os.File
+	segmentPath string
+	directory   string
 
 	segmentSize       int
 	syncedSegmentSize int
 	maxSegmentSize    int
+	segmentMaxLSN     uint64
 
 	segmentTimestamp int64
 	segmentSequence  int
@@ -107,6 +109,8 @@ func (w *FSWriter) writeBatch(batch []Log) error {
 		return err
 	}
 
+	w.recordSegmentMaxLSN(batch)
+
 	return nil
 }
 
@@ -178,8 +182,10 @@ func (w *FSWriter) rotateSegment() error {
 		segment, err := os.OpenFile(segmentName, flags, 0o644)
 		if err == nil {
 			w.segment = segment
+			w.segmentPath = segmentName
 			w.segmentSize = 0
 			w.syncedSegmentSize = 0
+			w.segmentMaxLSN = 0
 
 			return nil
 		}
@@ -205,10 +211,16 @@ func (w *FSWriter) closeSegment() error {
 		w.logger.Error().Err(syncErr).Msg("failed to sync WAL segment before close")
 	}
 
+	if err := w.flushSegmentMetadata(); err != nil {
+		w.logger.Warn().Err(err).Str("segment_path", w.segmentPath).Msg("failed to update WAL segment metadata")
+	}
+
 	segment := w.segment
 	w.segment = nil
+	w.segmentPath = ""
 	w.segmentSize = 0
 	w.syncedSegmentSize = 0
+	w.segmentMaxLSN = 0
 
 	closeErr := segment.Close()
 	if closeErr != nil {
@@ -250,6 +262,22 @@ func (w *FSWriter) segmentName(timestamp int64, sequence int) string {
 	}
 
 	return filepath.Join(w.directory, fmt.Sprintf("wal_%d_%d.log", timestamp, sequence))
+}
+
+func (w *FSWriter) recordSegmentMaxLSN(batch []Log) {
+	for _, log := range batch {
+		if log.data != nil && log.data.LSN > w.segmentMaxLSN {
+			w.segmentMaxLSN = log.data.LSN
+		}
+	}
+}
+
+func (w *FSWriter) flushSegmentMetadata() error {
+	if w.segmentPath == "" || w.segmentMaxLSN == 0 {
+		return nil
+	}
+
+	return writeSegmentMetadata(w.segmentPath, segmentMetadata{MaxLSN: w.segmentMaxLSN})
 }
 
 func uint32ToBytes(num uint32) []byte {
