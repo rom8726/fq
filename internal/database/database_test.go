@@ -11,17 +11,17 @@ func TestResponseFormatting(t *testing.T) {
 	t.Parallel()
 
 	require.Equal(t, "err|boom", string(makeErrorMsg(errors.New("boom"))))
-	require.Equal(t, "ok|42", string(makeValueMsg(42)))
+	require.Equal(t, "ok|42", string(appendValueMsg(nil, 42)))
 	require.Equal(t, "ok|1", string(makeBoolMsg(true)))
 	require.Equal(t, "ok|0", string(makeBoolMsg(false)))
-	require.Equal(t, "ok|1;0;1", string(makeBoolsMsg([]bool{true, false, true})))
-	require.Equal(t, "ok|1;7;3;60", string(makeRateLimitMsg(RateLimitResult{
+	require.Equal(t, "ok|1;0;1", string(appendBoolsMsg(nil, []bool{true, false, true})))
+	require.Equal(t, "ok|1;7;3;60", string(appendRateLimitMsg(nil, RateLimitResult{
 		Allowed:    true,
 		Current:    7,
 		Remaining:  3,
 		ResetAfter: 60,
 	})))
-	require.Equal(t, "ok|tenant-a;60;100;5", string(makeLimitEventMsg(LimitEvent{
+	require.Equal(t, "ok|tenant-a;60;100;5", string(appendLimitEventMsg(nil, LimitEvent{
 		Key:        "tenant-a",
 		Window:     60,
 		Current:    100,
@@ -33,7 +33,16 @@ func BenchmarkResponseFormatting(b *testing.B) {
 	b.Run("value", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_ = makeValueMsg(ValueType(i))
+			_ = appendValueMsg(nil, ValueType(i))
+		}
+	})
+
+	b.Run("value_append", func(b *testing.B) {
+		buf := make([]byte, 0, len("ok|18446744073709551615"))
+
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			buf = appendValueMsg(buf[:0], ValueType(i))
 		}
 	})
 
@@ -42,7 +51,7 @@ func BenchmarkResponseFormatting(b *testing.B) {
 
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_ = makeBoolsMsg(values)
+			_ = appendBoolsMsg(nil, values)
 		}
 	})
 
@@ -56,7 +65,7 @@ func BenchmarkResponseFormatting(b *testing.B) {
 
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_ = makeRateLimitMsg(result)
+			_ = appendRateLimitMsg(nil, result)
 		}
 	})
 }

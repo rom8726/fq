@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/rs/zerolog"
 
@@ -19,6 +20,9 @@ const (
 	minBatchSize = 1
 	maxLimit     = uint64(1<<31 - 1)
 	minLimit     = 1
+
+	defaultResponseBufferCapacity = 64
+	maxPooledResponseBufferSize   = 64 << 10
 )
 
 var (
@@ -34,7 +38,19 @@ var (
 
 	okTrueMsg  = []byte("ok|1")
 	okFalseMsg = []byte("ok|0")
+
+	responseBufferPool = sync.Pool{
+		New: func() any {
+			return &responseBuffer{
+				buf: make([]byte, 0, defaultResponseBufferCapacity),
+			}
+		},
+	}
 )
+
+type responseBuffer struct {
+	buf []byte
+}
 
 type computeLayer interface {
 	HandleQuery(context.Context, string) (compute.Query, error)
@@ -78,9 +94,9 @@ func NewDatabase(
 }
 
 func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
-	var response []byte
+	var response string
 	err := d.HandleQueryStream(ctx, queryStr, func(msg []byte) error {
-		response = msg
+		response = string(msg)
 
 		return nil
 	})
@@ -88,7 +104,7 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		return string(makeErrorMsg(err))
 	}
 
-	return string(response)
+	return response
 }
 
 func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write func([]byte) error) error {
@@ -98,118 +114,126 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 			Msg("handling query")
 	}
 
+	responseBuffer := acquireResponseBuffer()
+	defer releaseResponseBuffer(responseBuffer)
+
 	// Validate message size
 	if len(queryStr) > d.maxMessageSize {
-		return write(makeErrorMsg(fmt.Errorf("message size %d exceeds maximum %d", len(queryStr), d.maxMessageSize)))
+		response := appendErrorMsg(
+			responseBuffer.buf[:0],
+			fmt.Errorf("message size %d exceeds maximum %d", len(queryStr), d.maxMessageSize),
+		)
+
+		return write(response)
 	}
 
 	query, err := d.computeLayer.HandleQuery(ctx, queryStr)
 	if err != nil {
-		return write(makeErrorMsg(err))
+		return write(appendErrorMsg(responseBuffer.buf[:0], err))
 	}
 
 	var response []byte
 	switch query.CommandID() {
 	case compute.IncrCommandID:
-		response = d.handleIncrQuery(ctx, query)
+		response = d.handleIncrQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.GetCommandID:
-		response = d.handleGetQuery(ctx, query)
+		response = d.handleGetQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.DelCommandID:
-		response = d.handleDelQuery(ctx, query)
+		response = d.handleDelQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.MsgSizeCommandID:
-		response = d.handleMsgSizeQuery()
+		response = d.handleMsgSizeQuery(responseBuffer.buf[:0])
 	case compute.MDelCommandID:
-		response = d.handleMDelQuery(ctx, query)
+		response = d.handleMDelQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.WatchCommandID:
-		response = d.handleWatchQuery(ctx, query)
+		response = d.handleWatchQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.StreamCommandID:
 		return d.handleStreamQuery(ctx, "", write)
 	case compute.PStreamCommandID:
 		return d.handlePStreamQuery(ctx, query, write)
 	case compute.RLimitCommandID:
-		response = d.handleRLimitQuery(ctx, query)
+		response = d.handleRLimitQuery(ctx, query, responseBuffer.buf[:0])
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
-		response = makeErrorMsg(errInternalConfiguration)
+		response = appendErrorMsg(responseBuffer.buf[:0], errInternalConfiguration)
 	}
 
 	return write(response)
 }
 
-func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query) []byte {
+func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Incr(ctx, key)
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
-	return makeValueMsg(value)
+	return appendValueMsg(dst, value)
 }
 
-func (d *Database) handleGetQuery(ctx context.Context, query compute.Query) []byte {
+func (d *Database) handleGetQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Get(ctx, key)
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
-	return makeValueMsg(value)
+	return appendValueMsg(dst, value)
 }
 
-func (d *Database) handleDelQuery(ctx context.Context, query compute.Query) []byte {
+func (d *Database) handleDelQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Del(ctx, key)
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	return makeBoolMsg(value)
 }
 
-func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query) []byte {
+func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	arguments := query.Arguments()
 	keys, err := makeBatchKeys(arguments)
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	values, err := d.storageLayer.MDel(ctx, keys)
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
-	return makeBoolsMsg(values)
+	return appendBoolsMsg(dst, values)
 }
 
-func (d *Database) handleMsgSizeQuery() []byte {
-	return makeValueMsg(ValueType(d.maxMessageSize))
+func (d *Database) handleMsgSizeQuery(dst []byte) []byte {
+	return appendValueMsg(dst, ValueType(d.maxMessageSize))
 }
 
-func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query) []byte {
+func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Watch(ctx, key)
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
-	return makeValueMsg(value)
+	return appendValueMsg(dst, value)
 }
 
 func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, write func([]byte) error) error {
@@ -224,6 +248,8 @@ func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, 
 func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write func([]byte) error) error {
 	events, unsubscribe := d.storageLayer.SubscribeLimitEvents(ctx, prefix)
 	defer unsubscribe()
+	responseBuffer := acquireResponseBuffer()
+	defer releaseResponseBuffer(responseBuffer)
 
 	for {
 		select {
@@ -234,7 +260,7 @@ func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write f
 				return ctx.Err()
 			}
 
-			if err := write(makeLimitEventMsg(event)); err != nil {
+			if err := write(appendLimitEventMsg(responseBuffer.buf[:0], event)); err != nil {
 				return err
 			}
 		}
@@ -252,10 +278,10 @@ func makeStreamPrefix(prefix string) (string, error) {
 	return prefix, nil
 }
 
-func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) []byte {
+func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	algorithm := strings.ToUpper(query.Arg(0))
 	if algorithm != "FW" && algorithm != "SW" && algorithm != "TB" {
-		return makeErrorMsg(errInvalidRLimitAlgo)
+		return appendErrorMsg(dst, errInvalidRLimitAlgo)
 	}
 
 	windowArgIndex := 3
@@ -264,12 +290,12 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) [
 	}
 	key, err := makeBatchKey(query.Arg(1), query.Arg(windowArgIndex))
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	limit, err := makeLimit(query.Arg(2))
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
 	var result RateLimitResult
@@ -281,16 +307,16 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query) [
 	case "TB":
 		refillAmount, parseErr := makeLimit(query.Arg(3))
 		if parseErr != nil {
-			return makeErrorMsg(parseErr)
+			return appendErrorMsg(dst, parseErr)
 		}
 
 		result, err = d.storageLayer.RLimitTokenBucket(ctx, key, limit, refillAmount)
 	}
 	if err != nil {
-		return makeErrorMsg(err)
+		return appendErrorMsg(dst, err)
 	}
 
-	return makeRateLimitMsg(result)
+	return appendRateLimitMsg(dst, result)
 }
 
 func makeBatchKey(key, batchSizeStr string) (BatchKey, error) {
@@ -364,19 +390,7 @@ func makeLimit(limitStr string) (ValueType, error) {
 }
 
 func makeErrorMsg(err error) []byte {
-	buf := makeResponseBuffer(len("err|") + len(err.Error()))
-	buf = append(buf, "err|"...)
-	buf = append(buf, err.Error()...)
-
-	return buf
-}
-
-func makeValueMsg(v ValueType) []byte {
-	buf := makeResponseBuffer(len("ok|18446744073709551615"))
-	buf = append(buf, "ok|"...)
-	buf = strconv.AppendUint(buf, uint64(v), 10)
-
-	return buf
+	return appendErrorMsg(makeResponseBuffer(len("err|")+len(err.Error())), err)
 }
 
 func makeBoolMsg(v bool) []byte {
@@ -387,58 +401,82 @@ func makeBoolMsg(v bool) []byte {
 	return okFalseMsg
 }
 
-func makeBoolsMsg(arr []bool) []byte {
-	buf := makeResponseBuffer(len(arr)*2 + 3)
-	buf = append(buf, "ok|"...)
+func makeResponseBuffer(capacity int) []byte {
+	return make([]byte, 0, capacity)
+}
+
+func appendErrorMsg(dst []byte, err error) []byte {
+	dst = append(dst, "err|"...)
+	dst = append(dst, err.Error()...)
+
+	return dst
+}
+
+func appendValueMsg(dst []byte, v ValueType) []byte {
+	dst = append(dst, "ok|"...)
+	dst = strconv.AppendUint(dst, uint64(v), 10)
+
+	return dst
+}
+
+func appendBoolsMsg(dst []byte, arr []bool) []byte {
+	dst = append(dst, "ok|"...)
 
 	for i, v := range arr {
 		if v {
-			buf = append(buf, '1')
+			dst = append(dst, '1')
 		} else {
-			buf = append(buf, '0')
+			dst = append(dst, '0')
 		}
 
 		if i < len(arr)-1 {
-			buf = append(buf, ';')
+			dst = append(dst, ';')
 		}
 	}
 
-	return buf
+	return dst
 }
 
-func makeRateLimitMsg(result RateLimitResult) []byte {
-	buf := makeResponseBuffer(len("ok|1;-2147483648;-2147483648;4294967295"))
-	buf = append(buf, "ok|"...)
+func appendRateLimitMsg(dst []byte, result RateLimitResult) []byte {
+	dst = append(dst, "ok|"...)
 	if result.Allowed {
-		buf = append(buf, '1')
+		dst = append(dst, '1')
 	} else {
-		buf = append(buf, '0')
+		dst = append(dst, '0')
 	}
 
-	buf = append(buf, ';')
-	buf = strconv.AppendInt(buf, int64(result.Current), 10)
-	buf = append(buf, ';')
-	buf = strconv.AppendInt(buf, int64(result.Remaining), 10)
-	buf = append(buf, ';')
-	buf = strconv.AppendUint(buf, uint64(result.ResetAfter), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(result.Current), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(result.Remaining), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendUint(dst, uint64(result.ResetAfter), 10)
 
-	return buf
+	return dst
 }
 
-func makeLimitEventMsg(event LimitEvent) []byte {
-	buf := makeResponseBuffer(len(event.Key) + len("ok|;-2147483648;4294967295;4294967295"))
-	buf = append(buf, "ok|"...)
-	buf = append(buf, event.Key...)
-	buf = append(buf, ';')
-	buf = strconv.AppendUint(buf, uint64(event.Window), 10)
-	buf = append(buf, ';')
-	buf = strconv.AppendInt(buf, int64(event.Current), 10)
-	buf = append(buf, ';')
-	buf = strconv.AppendUint(buf, uint64(event.ResetAfter), 10)
+func appendLimitEventMsg(dst []byte, event LimitEvent) []byte {
+	dst = append(dst, "ok|"...)
+	dst = append(dst, event.Key...)
+	dst = append(dst, ';')
+	dst = strconv.AppendUint(dst, uint64(event.Window), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(event.Current), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendUint(dst, uint64(event.ResetAfter), 10)
 
-	return buf
+	return dst
 }
 
-func makeResponseBuffer(capacity int) []byte {
-	return make([]byte, 0, capacity)
+func acquireResponseBuffer() *responseBuffer {
+	return responseBufferPool.Get().(*responseBuffer)
+}
+
+func releaseResponseBuffer(buffer *responseBuffer) {
+	if cap(buffer.buf) > maxPooledResponseBufferSize {
+		return
+	}
+
+	buffer.buf = buffer.buf[:0]
+	responseBufferPool.Put(buffer)
 }
