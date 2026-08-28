@@ -77,6 +77,10 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 		return fmt.Errorf("rename dump file: %w", err)
 	}
 
+	if err := d.syncDumpDirectory(); err != nil {
+		return err
+	}
+
 	// Increment dump version after successful rename
 	d.dumpVersion++
 	shouldRemove = false // File successfully renamed, don't remove
@@ -84,6 +88,24 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 	if d.wal != nil {
 		cleanupLSN := d.walCleanupLSN(uint64(dumpTx))
 		d.scheduleWALCleanup(cleanupLSN)
+	}
+
+	return nil
+}
+
+func (d *Dumper) syncDumpDirectory() error {
+	dir, err := os.Open(d.dir)
+	if err != nil {
+		return fmt.Errorf("open dump directory for sync: %w", err)
+	}
+
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	if syncErr != nil {
+		return fmt.Errorf("sync dump directory: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close dump directory after sync: %w", closeErr)
 	}
 
 	return nil
