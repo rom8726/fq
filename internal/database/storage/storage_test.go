@@ -187,10 +187,18 @@ func (e *txRecordingEngine) QuotaAcquire(
 	return database.QuotaAcquireResult{Acquired: true, Allocated: 1}, nil
 }
 
-func (e *txRecordingEngine) QuotaRelease(txCtx database.TxContext, _ string, _ string) bool {
+func (e *txRecordingEngine) QuotaRelease(
+	txCtx database.TxContext,
+	_ string,
+	_ string,
+	beforeApply func() error,
+) (database.QuotaReleaseResult, error) {
 	e.lastTx = txCtx.Tx
+	if err := beforeApply(); err != nil {
+		return database.QuotaReleaseResult{}, err
+	}
 
-	return true
+	return database.QuotaReleaseResult{Released: true}, nil
 }
 
 func (e *txRecordingEngine) QuotaDelete(txCtx database.TxContext, _ string, beforeApply func() error) (bool, error) {

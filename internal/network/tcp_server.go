@@ -228,7 +228,9 @@ func requestNeedsTimeout(request []byte) bool {
 
 	return tokenEquals(command, "WATCH") ||
 		tokenEquals(command, "STREAM") ||
-		tokenEquals(command, "PSTREAM")
+		tokenEquals(command, "PSTREAM") ||
+		tokenEquals(command, "QSTREAM") ||
+		tokenEquals(command, "QPSTREAM")
 }
 
 func firstToken(request []byte) []byte {

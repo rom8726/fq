@@ -183,6 +183,8 @@ func TestRequestNeedsTimeout(t *testing.T) {
 		{name: "watch", request: "WATCH key 1", want: true},
 		{name: "stream", request: "STREAM", want: true},
 		{name: "pstream", request: "\tPSTREAM tenant-", want: true},
+		{name: "qstream", request: "QSTREAM", want: true},
+		{name: "qpstream", request: "\tQPSTREAM tenant-", want: true},
 		{name: "lowercase stays nonblocking", request: "watch key 1", want: false},
 		{name: "prefix is not command", request: "WATCHED key 1", want: false},
 	}

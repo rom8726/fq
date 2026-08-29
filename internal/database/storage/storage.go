@@ -40,7 +40,7 @@ type Engine interface {
 		database.QuotaAcquireRequest,
 		func() error,
 	) (database.QuotaAcquireResult, error)
-	QuotaRelease(database.TxContext, string, string) bool
+	QuotaRelease(database.TxContext, string, string, func() error) (database.QuotaReleaseResult, error)
 	QuotaDelete(database.TxContext, string, func() error) (bool, error)
 	QuotaInfo(database.TxTime, string) database.QuotaInfo
 	Get(database.BatchKey) (database.ValueType, bool)
@@ -110,11 +110,16 @@ type Storage struct {
 	tx                      atomic.Uint64
 	dumpTx                  atomic.Uint64
 	limitEvents             map[chan database.LimitEvent]limitEventSubscriber
+	quotaEvents             map[chan database.QuotaEvent]quotaEventSubscriber
 	limitEventQueueCapacity int
 	eventsMu                sync.RWMutex
 }
 
 type limitEventSubscriber struct {
+	prefix string
+}
+
+type quotaEventSubscriber struct {
 	prefix string
 }
 
@@ -152,6 +157,7 @@ func NewStorage(
 		syncCommit:              syncCommit,
 		limitEventQueueCapacity: limitEventQueueCapacity,
 		limitEvents:             make(map[chan database.LimitEvent]limitEventSubscriber),
+		quotaEvents:             make(map[chan database.QuotaEvent]quotaEventSubscriber),
 	}, nil
 }
 
@@ -304,27 +310,68 @@ func (s *Storage) QuotaAcquire(
 		request.ExpiresAt = txCtx.CurrTime + database.TxTime(request.TTL)
 	}
 
-	return s.engine.QuotaAcquire(txCtx, request, func() error {
+	result, err := s.engine.QuotaAcquire(txCtx, request, func() error {
 		return s.writeQuotaAcquireWAL(ctx, txCtx, request)
 	})
+	if err != nil {
+		return database.QuotaAcquireResult{}, err
+	}
+	if result.Mutated {
+		s.publishQuotaEvent(database.QuotaEvent{
+			Event:     "acq",
+			Name:      request.Name,
+			ClientID:  request.ClientID,
+			Amount:    request.Amount,
+			Used:      result.Used,
+			Remaining: result.Remaining,
+			ExpiresAt: request.ExpiresAt,
+		})
+	}
+
+	return result, nil
 }
 
 func (s *Storage) QuotaRelease(ctx context.Context, name, clientID string) (bool, error) {
 	txCtx := s.makeTxContext()
 
-	if err := s.writeQuotaReleaseWAL(ctx, txCtx, name, clientID); err != nil {
+	result, err := s.engine.QuotaRelease(txCtx, name, clientID, func() error {
+		return s.writeQuotaReleaseWAL(ctx, txCtx, name, clientID)
+	})
+	if err != nil {
 		return false, err
 	}
+	if result.Released {
+		s.publishQuotaEvent(database.QuotaEvent{
+			Event:     "rel",
+			Name:      name,
+			ClientID:  clientID,
+			Amount:    result.Amount,
+			Used:      result.Used,
+			Remaining: result.Remaining,
+			ExpiresAt: result.ExpiresAt,
+		})
+	}
 
-	return s.engine.QuotaRelease(txCtx, name, clientID), nil
+	return result.Released, nil
 }
 
 func (s *Storage) QuotaDelete(ctx context.Context, name string) (bool, error) {
 	txCtx := s.makeTxContext()
 
-	return s.engine.QuotaDelete(txCtx, name, func() error {
+	deleted, err := s.engine.QuotaDelete(txCtx, name, func() error {
 		return s.writeQuotaDeleteWAL(ctx, txCtx, name)
 	})
+	if err != nil {
+		return false, err
+	}
+	if deleted {
+		s.publishQuotaEvent(database.QuotaEvent{
+			Event: "del",
+			Name:  name,
+		})
+	}
+
+	return deleted, nil
 }
 
 func (s *Storage) QuotaInfo(_ context.Context, name string) (database.QuotaInfo, error) {
@@ -548,6 +595,32 @@ func (s *Storage) SubscribeLimitEvents(ctx context.Context, prefix string) (<-ch
 	return ch, unsubscribe
 }
 
+//nolint:gocritic,dupl // ok
+func (s *Storage) SubscribeQuotaEvents(ctx context.Context, prefix string) (<-chan database.QuotaEvent, func()) {
+	ch := make(chan database.QuotaEvent, s.limitEventQueueCapacity)
+
+	s.eventsMu.Lock()
+	s.quotaEvents[ch] = quotaEventSubscriber{prefix: prefix}
+	s.eventsMu.Unlock()
+
+	var once sync.Once
+	unsubscribe := func() {
+		once.Do(func() {
+			s.eventsMu.Lock()
+			delete(s.quotaEvents, ch)
+			close(ch)
+			s.eventsMu.Unlock()
+		})
+	}
+
+	go func() {
+		<-ctx.Done()
+		unsubscribe()
+	}()
+
+	return ch, unsubscribe
+}
+
 func (s *Storage) publishLimitFilled(
 	key database.BatchKey,
 	result database.RateLimitResult,
@@ -578,6 +651,27 @@ func (s *Storage) publishLimitFilled(
 				Str("key", event.Key).
 				Uint32("window", event.Window).
 				Msg("limit event subscriber is slow, dropping event")
+		}
+	}
+}
+
+func (s *Storage) publishQuotaEvent(event database.QuotaEvent) {
+	s.eventsMu.RLock()
+	defer s.eventsMu.RUnlock()
+
+	for ch, subscriber := range s.quotaEvents {
+		if subscriber.prefix != "" && !strings.HasPrefix(event.Name, subscriber.prefix) {
+			continue
+		}
+
+		select {
+		case ch <- event:
+		default:
+			s.logger.Warn().
+				Str("event", event.Event).
+				Str("name", event.Name).
+				Str("client_id", event.ClientID).
+				Msg("quota event subscriber is slow, dropping event")
 		}
 	}
 }

@@ -80,7 +80,7 @@ func main() {
 			}
 			if isStreamCommand(request) {
 				timeout = time.Hour
-				fmt.Println("Streaming limit events... (press Ctrl+C to cancel)")
+				fmt.Println("Streaming events... (press Ctrl+C to cancel)")
 			}
 
 			ctx, cancel := context.WithDeadline(context.Background(), start.Add(timeout))
@@ -158,5 +158,8 @@ func isWatchCommand(request string) bool {
 
 func isStreamCommand(request string) bool {
 	upperRequest := strings.ToUpper(strings.TrimSpace(request))
-	return upperRequest == "STREAM" || strings.HasPrefix(upperRequest, "PSTREAM ")
+	return upperRequest == "STREAM" ||
+		strings.HasPrefix(upperRequest, "PSTREAM ") ||
+		upperRequest == "QSTREAM" ||
+		strings.HasPrefix(upperRequest, "QPSTREAM ")
 }

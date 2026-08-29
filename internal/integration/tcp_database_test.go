@@ -517,6 +517,45 @@ func TestTCPDatabasePStreamFiltersLimitEventsByPrefix(t *testing.T) {
 	}
 }
 
+func TestTCPDatabaseQPStreamFiltersQuotaEventsByPrefix(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	streamClient := connectEventually(t, app.address)
+
+	events := make(chan string, 4)
+	errs := make(chan error, 1)
+	go func() {
+		errs <- streamClient.Stream(context.Background(), []byte("QPSTREAM tenant_a-"), func(response []byte) error {
+			events <- string(response)
+
+			return nil
+		})
+	}()
+
+	app.RequireQuotaAcquire("QUOTA ACQ tenant_b-quota 10 4 client-a", true, 4, 4, 6, 0)
+	requireNoStreamEvent(t, events)
+
+	app.RequireQuotaAcquire("QUOTA ACQ tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
+	require.Equal(t, "ok|acq;tenant_a-quota;client-a;4;4;6;0", requireStreamEvent(t, events))
+
+	app.RequireQuotaAcquire("QUOTA ACQ tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
+	requireNoStreamEvent(t, events)
+
+	app.RequireQuery("QUOTA REL tenant_a-quota client-a", "ok|1")
+	require.Equal(t, "ok|rel;tenant_a-quota;client-a;4;0;10;0", requireStreamEvent(t, events))
+
+	app.RequireQuery("QUOTA DEL tenant_a-quota", "ok|1")
+	require.Equal(t, "ok|del;tenant_a-quota;;0;0;0;0", requireStreamEvent(t, events))
+
+	require.NoError(t, streamClient.Close())
+	select {
+	case <-errs:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop")
+	}
+}
+
 func requireNoStreamEvent(t *testing.T, events <-chan string) {
 	t.Helper()
 

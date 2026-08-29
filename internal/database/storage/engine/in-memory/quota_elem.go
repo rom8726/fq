@@ -77,17 +77,30 @@ func (e *QuotaElem) Acquire(
 	e.used += request.Amount
 	e.ver = txCtx.Tx
 
-	return e.makeResultLocked(txCtx.CurrTime, true, request.Amount, request.ExpiresAt), nil
+	result := e.makeResultLocked(txCtx.CurrTime, true, request.Amount, request.ExpiresAt)
+	result.Mutated = true
+
+	return result, nil
 }
 
-func (e *QuotaElem) Release(txCtx database.TxContext, clientID string) bool {
+func (e *QuotaElem) Release(
+	txCtx database.TxContext,
+	clientID string,
+	beforeApply func() error,
+) (database.QuotaReleaseResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	e.cleanExpiredLocked(txCtx.CurrTime)
 	allocation, ok := e.allocations[clientID]
 	if !ok {
-		return false
+		return database.QuotaReleaseResult{}, nil
+	}
+
+	if beforeApply != nil {
+		if err := beforeApply(); err != nil {
+			return database.QuotaReleaseResult{}, fmt.Errorf("before apply quota release: %w", err)
+		}
 	}
 
 	delete(e.allocations, clientID)
@@ -97,7 +110,13 @@ func (e *QuotaElem) Release(txCtx database.TxContext, clientID string) bool {
 	}
 	e.ver = txCtx.Tx
 
-	return true
+	return database.QuotaReleaseResult{
+		Released:  true,
+		Amount:    allocation.amount,
+		Used:      e.used,
+		Remaining: e.remainingLocked(),
+		ExpiresAt: allocation.expiresAt,
+	}, nil
 }
 
 func (e *QuotaElem) CanDelete(now database.TxTime) bool {
@@ -115,11 +134,6 @@ func (e *QuotaElem) Info(now database.TxTime) database.QuotaInfo {
 
 	e.cleanExpiredLocked(now)
 
-	remaining := e.limit - e.used
-	if remaining < 0 {
-		remaining = 0
-	}
-
 	clients := make([]database.QuotaClientInfo, 0, len(e.allocations))
 	for clientID, allocation := range e.allocations {
 		clients = append(clients, database.QuotaClientInfo{
@@ -135,7 +149,7 @@ func (e *QuotaElem) Info(now database.TxTime) database.QuotaInfo {
 	return database.QuotaInfo{
 		Limit:     e.limit,
 		Used:      e.used,
-		Remaining: remaining,
+		Remaining: e.remainingLocked(),
 		Clients:   clients,
 	}
 }
@@ -224,11 +238,6 @@ func (e *QuotaElem) makeResultLocked(
 	allocated database.ValueType,
 	expiresAt database.TxTime,
 ) database.QuotaAcquireResult {
-	remaining := e.limit - e.used
-	if remaining < 0 {
-		remaining = 0
-	}
-
 	expiresAfter := uint32(0)
 	if expiresAt > now {
 		expiresAfter = uint32(expiresAt - now)
@@ -238,7 +247,16 @@ func (e *QuotaElem) makeResultLocked(
 		Acquired:     acquired,
 		Allocated:    allocated,
 		Used:         e.used,
-		Remaining:    remaining,
+		Remaining:    e.remainingLocked(),
 		ExpiresAfter: expiresAfter,
 	}
+}
+
+func (e *QuotaElem) remainingLocked() database.ValueType {
+	remaining := e.limit - e.used
+	if remaining < 0 {
+		return 0
+	}
+
+	return remaining
 }

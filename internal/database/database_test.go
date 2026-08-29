@@ -37,6 +37,15 @@ func TestResponseFormatting(t *testing.T) {
 			{ClientID: "client-b", Amount: 3, ExpiresAt: 123},
 		},
 	})))
+	require.Equal(t, "ok|acq;quota;client-a;4;7;3;123", string(appendQuotaEventMsg(nil, QuotaEvent{
+		Event:     "acq",
+		Name:      "quota",
+		ClientID:  "client-a",
+		Amount:    4,
+		Used:      7,
+		Remaining: 3,
+		ExpiresAt: 123,
+	})))
 	require.Equal(t, "ok|tenant-a;60;100;5", string(appendLimitEventMsg(nil, LimitEvent{
 		Key:        "tenant-a",
 		Window:     60,

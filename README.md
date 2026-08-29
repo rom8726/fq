@@ -154,6 +154,8 @@ QUOTA ACQ <name> <limit> <amount> <client_id> [ttl]
 QUOTA REL <name> <client_id>
 QUOTA INF <name>
 QUOTA DEL <name>
+QSTREAM
+QPSTREAM <prefix>
 ```
 
 `QUOTA ACQ` atomically reserves `amount` units from quota `name` for `client_id`.
@@ -193,6 +195,19 @@ ok|<limit>;<used>;<remaining>[;<client_id>;<amount>;<expires_at>...]
 Client fields are repeated in sorted `client_id` order. `expires_at` is a Unix
 timestamp in seconds, or `0` for an allocation without TTL.
 
+`QSTREAM` streams successful quota mutation events. `QPSTREAM` streams the same
+events filtered to quota names that start with `prefix`.
+
+Quota stream events return:
+
+```text
+ok|<event>;<name>;<client_id>;<amount>;<used>;<remaining>;<expires_at>
+```
+
+`event` is one of `acq`, `rel`, or `del`. Idempotent `QUOTA ACQ` retries do not
+emit events because they do not change state. For `del`, `client_id` is empty and
+the numeric fields are `0`.
+
 Example with limit `10`:
 
 ```text
@@ -220,6 +235,8 @@ MDEL <key> <window> <key> <window> ...
 WATCH <key> <window>
 STREAM
 PSTREAM <prefix>
+QSTREAM
+QPSTREAM <prefix>
 MSGSIZE
 ```
 
@@ -230,6 +247,8 @@ MSGSIZE
 - `WATCH`: waits until a key value changes or the request times out
 - `STREAM`: streams limit-filled events as `ok|<key>;<window>;<current>;<reset_after>` frames
 - `PSTREAM`: streams the same events, filtered to keys that start with `prefix`
+- `QSTREAM`: streams quota mutation events
+- `QPSTREAM`: streams the same quota events, filtered to quota names that start with `prefix`
 - `MSGSIZE`: returns the maximum configured request/response payload size
 
 Counter commands are useful for frequency capping and quota tracking where the application performs the decision itself.

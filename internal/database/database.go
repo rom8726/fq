@@ -63,6 +63,7 @@ type storageLayer interface {
 	MDel(ctx context.Context, keys []BatchKey) ([]bool, error)
 	Watch(ctx context.Context, key BatchKey) (ValueType, error)
 	SubscribeLimitEvents(ctx context.Context, prefix string) (<-chan LimitEvent, func())
+	SubscribeQuotaEvents(ctx context.Context, prefix string) (<-chan QuotaEvent, func())
 	RLimitFixedWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 	RLimitSlidingWindow(ctx context.Context, key BatchKey, limit ValueType) (RateLimitResult, error)
 	RLimitTokenBucket(
@@ -154,6 +155,10 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		return d.handleStreamQuery(ctx, "", write)
 	case compute.PStreamCommandID:
 		return d.handlePStreamQuery(ctx, query, write)
+	case compute.QStreamCommandID:
+		return d.handleQStreamQuery(ctx, "", write)
+	case compute.QPStreamCommandID:
+		return d.handleQPStreamQuery(ctx, query, write)
 	case compute.RLimitCommandID:
 		response = d.handleRLimitQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.QuotaCommandID:
@@ -370,6 +375,38 @@ func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write f
 			}
 
 			if err := write(appendLimitEventMsg(responseBuffer.buf[:0], event)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (d *Database) handleQPStreamQuery(ctx context.Context, query compute.Query, write func([]byte) error) error {
+	prefix, err := makeStreamPrefix(query.Arg(0))
+	if err != nil {
+		return write(makeErrorMsg(err))
+	}
+
+	return d.handleQStreamQuery(ctx, prefix, write)
+}
+
+//nolint:dupl // ok
+func (d *Database) handleQStreamQuery(ctx context.Context, prefix string, write func([]byte) error) error {
+	events, unsubscribe := d.storageLayer.SubscribeQuotaEvents(ctx, prefix)
+	defer unsubscribe()
+	responseBuffer := acquireResponseBuffer()
+	defer releaseResponseBuffer(responseBuffer)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case event, ok := <-events:
+			if !ok {
+				return ctx.Err()
+			}
+
+			if err := write(appendQuotaEventMsg(responseBuffer.buf[:0], event)); err != nil {
 				return err
 			}
 		}
@@ -626,6 +663,25 @@ func appendQuotaInfoMsg(dst []byte, info QuotaInfo) []byte {
 		dst = append(dst, ';')
 		dst = strconv.AppendUint(dst, uint64(client.ExpiresAt), 10)
 	}
+
+	return dst
+}
+
+func appendQuotaEventMsg(dst []byte, event QuotaEvent) []byte {
+	dst = append(dst, "ok|"...)
+	dst = append(dst, event.Event...)
+	dst = append(dst, ';')
+	dst = append(dst, event.Name...)
+	dst = append(dst, ';')
+	dst = append(dst, event.ClientID...)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(event.Amount), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(event.Used), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(event.Remaining), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendUint(dst, uint64(event.ExpiresAt), 10)
 
 	return dst
 }

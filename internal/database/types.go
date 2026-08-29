@@ -77,6 +77,7 @@ type QuotaAcquireResult struct {
 	Used         ValueType
 	Remaining    ValueType
 	ExpiresAfter uint32
+	Mutated      bool
 }
 
 type QuotaClientInfo struct {
@@ -90,4 +91,22 @@ type QuotaInfo struct {
 	Used      ValueType
 	Remaining ValueType
 	Clients   []QuotaClientInfo
+}
+
+type QuotaReleaseResult struct {
+	Released  bool
+	Amount    ValueType
+	Used      ValueType
+	Remaining ValueType
+	ExpiresAt TxTime
+}
+
+type QuotaEvent struct {
+	Event     string
+	Name      string
+	ClientID  string
+	Amount    ValueType
+	Used      ValueType
+	Remaining ValueType
+	ExpiresAt TxTime
 }

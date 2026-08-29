@@ -10,29 +10,33 @@ import (
 )
 
 const (
-	incrQueryArgumentsNumber    = 2
-	getQueryArgumentsNumber     = 2
-	delQueryArgumentsNumber     = 2
-	msgSizeQueryArgumentsNumber = 0
-	mdelQueryArgumentsNumber    = -2
-	watchQueryArgumentsNumber   = 2
-	streamQueryArgumentsNumber  = 0
-	pstreamQueryArgumentsNumber = 1
-	rlimitQueryArgumentsNumber  = -3
-	quotaQueryArgumentsNumber   = -4
+	incrQueryArgumentsNumber     = 2
+	getQueryArgumentsNumber      = 2
+	delQueryArgumentsNumber      = 2
+	msgSizeQueryArgumentsNumber  = 0
+	mdelQueryArgumentsNumber     = -2
+	watchQueryArgumentsNumber    = 2
+	streamQueryArgumentsNumber   = 0
+	pstreamQueryArgumentsNumber  = 1
+	qstreamQueryArgumentsNumber  = 0
+	qpstreamQueryArgumentsNumber = 1
+	rlimitQueryArgumentsNumber   = -3
+	quotaQueryArgumentsNumber    = -4
 )
 
 var queryArgumentsNumber = map[CommandID]int{
-	IncrCommandID:    incrQueryArgumentsNumber,
-	GetCommandID:     getQueryArgumentsNumber,
-	DelCommandID:     delQueryArgumentsNumber,
-	MsgSizeCommandID: msgSizeQueryArgumentsNumber,
-	MDelCommandID:    mdelQueryArgumentsNumber,
-	WatchCommandID:   watchQueryArgumentsNumber,
-	StreamCommandID:  streamQueryArgumentsNumber,
-	PStreamCommandID: pstreamQueryArgumentsNumber,
-	RLimitCommandID:  rlimitQueryArgumentsNumber,
-	QuotaCommandID:   quotaQueryArgumentsNumber,
+	IncrCommandID:     incrQueryArgumentsNumber,
+	GetCommandID:      getQueryArgumentsNumber,
+	DelCommandID:      delQueryArgumentsNumber,
+	MsgSizeCommandID:  msgSizeQueryArgumentsNumber,
+	MDelCommandID:     mdelQueryArgumentsNumber,
+	WatchCommandID:    watchQueryArgumentsNumber,
+	StreamCommandID:   streamQueryArgumentsNumber,
+	PStreamCommandID:  pstreamQueryArgumentsNumber,
+	QStreamCommandID:  qstreamQueryArgumentsNumber,
+	QPStreamCommandID: qpstreamQueryArgumentsNumber,
+	RLimitCommandID:   rlimitQueryArgumentsNumber,
+	QuotaCommandID:    quotaQueryArgumentsNumber,
 }
 
 var (

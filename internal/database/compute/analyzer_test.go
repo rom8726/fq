@@ -80,6 +80,14 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"PSTREAM", "tenant_a-"},
 			query:  compute.NewQuery(compute.PStreamCommandID, []string{"tenant_a-"}),
 		},
+		"valid qstream query": {
+			tokens: []string{"QSTREAM"},
+			query:  compute.NewQuery(compute.QStreamCommandID, []string{}),
+		},
+		"valid qpstream query": {
+			tokens: []string{"QPSTREAM", "tenant_a-"},
+			query:  compute.NewQuery(compute.QPStreamCommandID, []string{"tenant_a-"}),
+		},
 		"valid rlimit query": {
 			tokens: []string{"RLIMIT", "FW", "key", "100", "60"},
 			query:  compute.NewQuery(compute.RLimitCommandID, []string{"FW", "key", "100", "60"}),

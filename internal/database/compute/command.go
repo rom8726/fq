@@ -19,34 +19,40 @@ const (
 	QuotaAcquireCommandID
 	QuotaReleaseCommandID
 	QuotaDeleteCommandID
+	QStreamCommandID
+	QPStreamCommandID
 )
 
 var (
-	UnknownCommand = "UNKNOWN"
-	IncrCommand    = "INCR"
-	GetCommand     = "GET"
-	DelCommand     = "DEL"
-	MsgSizeCommand = "MSGSIZE"
-	MDelCommand    = "MDEL"
-	WatchCommand   = "WATCH"
-	StreamCommand  = "STREAM"
-	PStreamCommand = "PSTREAM"
-	RLimitCommand  = "RLIMIT"
-	QuotaCommand   = "QUOTA"
+	UnknownCommand  = "UNKNOWN"
+	IncrCommand     = "INCR"
+	GetCommand      = "GET"
+	DelCommand      = "DEL"
+	MsgSizeCommand  = "MSGSIZE"
+	MDelCommand     = "MDEL"
+	WatchCommand    = "WATCH"
+	StreamCommand   = "STREAM"
+	PStreamCommand  = "PSTREAM"
+	QStreamCommand  = "QSTREAM"
+	QPStreamCommand = "QPSTREAM"
+	RLimitCommand   = "RLIMIT"
+	QuotaCommand    = "QUOTA"
 )
 
 var commandNamesToID = map[string]CommandID{
-	UnknownCommand: UnknownCommandID,
-	IncrCommand:    IncrCommandID,
-	GetCommand:     GetCommandID,
-	DelCommand:     DelCommandID,
-	MsgSizeCommand: MsgSizeCommandID,
-	MDelCommand:    MDelCommandID,
-	WatchCommand:   WatchCommandID,
-	StreamCommand:  StreamCommandID,
-	PStreamCommand: PStreamCommandID,
-	RLimitCommand:  RLimitCommandID,
-	QuotaCommand:   QuotaCommandID,
+	UnknownCommand:  UnknownCommandID,
+	IncrCommand:     IncrCommandID,
+	GetCommand:      GetCommandID,
+	DelCommand:      DelCommandID,
+	MsgSizeCommand:  MsgSizeCommandID,
+	MDelCommand:     MDelCommandID,
+	WatchCommand:    WatchCommandID,
+	StreamCommand:   StreamCommandID,
+	PStreamCommand:  PStreamCommandID,
+	QStreamCommand:  QStreamCommandID,
+	QPStreamCommand: QPStreamCommandID,
+	RLimitCommand:   RLimitCommandID,
+	QuotaCommand:    QuotaCommandID,
 }
 
 func (c CommandID) Int() int {

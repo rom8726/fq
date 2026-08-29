@@ -51,7 +51,12 @@ type hashTable interface {
 		request database.QuotaAcquireRequest,
 		beforeApply func() error,
 	) (database.QuotaAcquireResult, error)
-	QuotaRelease(txCtx database.TxContext, name string, clientID string) bool
+	QuotaRelease(
+		txCtx database.TxContext,
+		name string,
+		clientID string,
+		beforeApply func() error,
+	) (database.QuotaReleaseResult, error)
 	QuotaDelete(txCtx database.TxContext, name string, beforeApply func() error) (bool, error)
 	QuotaInfo(now database.TxTime, name string) database.QuotaInfo
 	AddSlidingWindowEvent(txCtx database.TxContext, key database.BatchKey)
@@ -280,20 +285,25 @@ func (e *Engine) QuotaAcquire(
 	return result, err
 }
 
-func (e *Engine) QuotaRelease(txCtx database.TxContext, name, clientID string) bool {
+func (e *Engine) QuotaRelease(
+	txCtx database.TxContext,
+	name, clientID string,
+	beforeApply func() error,
+) (database.QuotaReleaseResult, error) {
 	idx := e.partitionIdx(name)
 	partition := e.partitions[idx]
-	res := partition.QuotaRelease(txCtx, name, clientID)
+	result, err := partition.QuotaRelease(txCtx, name, clientID, beforeApply)
 
 	if e.logger.GetLevel() == zerolog.DebugLevel {
 		e.logger.Debug().
 			Str("name", name).
 			Str("client_id", clientID).
-			Bool("result", res).
+			Any("result", result).
+			Err(err).
 			Msg("success quota release query")
 	}
 
-	return res
+	return result, err
 }
 
 func (e *Engine) QuotaDelete(txCtx database.TxContext, name string, beforeApply func() error) (bool, error) {
@@ -608,7 +618,9 @@ func (e *Engine) applyQuotaReleaseFromLog(log *wal.LogData) {
 		return
 	}
 
-	e.QuotaRelease(txCtx, log.Arguments[0], log.Arguments[1])
+	if _, err := e.QuotaRelease(txCtx, log.Arguments[0], log.Arguments[1], nil); err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_REL").Msg("failed to apply WAL log")
+	}
 }
 
 func (e *Engine) applyQuotaDeleteFromLog(log *wal.LogData) {

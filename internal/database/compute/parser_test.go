@@ -130,6 +130,16 @@ func TestParserParseAndAnalyzeQuery(t *testing.T) {
 			command: compute.MDelCommandID,
 			args:    []string{"key1", "60", "key2", "60"},
 		},
+		"valid qstream": {
+			query:   "QSTREAM",
+			command: compute.QStreamCommandID,
+			args:    []string{},
+		},
+		"valid qpstream": {
+			query:   "QPSTREAM tenant-",
+			command: compute.QPStreamCommandID,
+			args:    []string{"tenant-"},
+		},
 		"valid token bucket rlimit": {
 			query:   "RLIMIT TB key 100 10 60",
 			command: compute.RLimitCommandID,

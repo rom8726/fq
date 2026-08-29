@@ -24,6 +24,7 @@ func TestQuotaElemAcquireReleaseAndDelete(t *testing.T) {
 		Allocated: 4,
 		Used:      4,
 		Remaining: 6,
+		Mutated:   true,
 	}, first)
 
 	second, err := table.QuotaAcquire(database.TxContext{Tx: 2, CurrTime: 101}, database.QuotaAcquireRequest{
@@ -44,7 +45,9 @@ func TestQuotaElemAcquireReleaseAndDelete(t *testing.T) {
 	require.ErrorIs(t, err, database.ErrQuotaNotEmpty)
 	require.False(t, deleted)
 
-	require.True(t, table.QuotaRelease(database.TxContext{Tx: 4, CurrTime: 103}, "pool", "client-a"))
+	released, err := table.QuotaRelease(database.TxContext{Tx: 4, CurrTime: 103}, "pool", "client-a", nil)
+	require.NoError(t, err)
+	require.True(t, released.Released)
 
 	deleted, err = table.QuotaDelete(database.TxContext{Tx: 5, CurrTime: 104}, "pool", nil)
 	require.NoError(t, err)

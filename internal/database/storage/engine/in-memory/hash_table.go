@@ -114,15 +114,19 @@ func (s *HashTable) QuotaAcquire(
 	return v.Acquire(txCtx, request, beforeApply)
 }
 
-func (s *HashTable) QuotaRelease(txCtx database.TxContext, name, clientID string) bool {
+func (s *HashTable) QuotaRelease(
+	txCtx database.TxContext,
+	name, clientID string,
+	beforeApply func() error,
+) (database.QuotaReleaseResult, error) {
 	s.mu.RLock()
 	v, ok := s.q[name]
 	s.mu.RUnlock()
 	if !ok {
-		return false
+		return database.QuotaReleaseResult{}, nil
 	}
 
-	return v.Release(txCtx, clientID)
+	return v.Release(txCtx, clientID, beforeApply)
 }
 
 func (s *HashTable) QuotaDelete(txCtx database.TxContext, name string, beforeApply func() error) (bool, error) {
