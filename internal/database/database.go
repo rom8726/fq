@@ -359,6 +359,7 @@ func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, 
 	return d.handleStreamQuery(ctx, prefix, write)
 }
 
+//nolint:dupl // ok
 func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write func([]byte) error) error {
 	events, unsubscribe := d.storageLayer.SubscribeLimitEvents(ctx, prefix)
 	defer unsubscribe()

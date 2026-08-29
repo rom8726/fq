@@ -624,7 +624,7 @@ func (s *Storage) Watch(ctx context.Context, key database.BatchKey) (database.Va
 	}
 }
 
-//nolint:gocritic // ok
+//nolint:gocritic,dupl // ok
 func (s *Storage) SubscribeLimitEvents(ctx context.Context, prefix string) (<-chan database.LimitEvent, func()) {
 	ch := make(chan database.LimitEvent, s.limitEventQueueCapacity)
 
