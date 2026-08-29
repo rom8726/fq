@@ -74,9 +74,11 @@ type hashTable interface {
 }
 
 type Engine struct {
-	partitions      []hashTable
-	logger          *zerolog.Logger
-	walApplyWorkers int
+	partitions          []hashTable
+	logger              *zerolog.Logger
+	walApplyWorkers     int
+	limitEventPublisher func(database.LimitEvent)
+	quotaEventPublisher func(database.QuotaEvent)
 }
 
 func NewEngine(
@@ -153,6 +155,14 @@ func NewEngineWithWALApplyWorkers(
 	}
 
 	return engine, nil
+}
+
+func (e *Engine) SetQuotaEventPublisher(publisher func(database.QuotaEvent)) {
+	e.quotaEventPublisher = publisher
+}
+
+func (e *Engine) SetLimitEventPublisher(publisher func(database.LimitEvent)) {
+	e.limitEventPublisher = publisher
 }
 
 func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
@@ -522,6 +532,8 @@ func (e *Engine) applyLog(log *wal.LogData) {
 		e.applySlidingWindowEventFromLog(log)
 	case compute.RLimitTokenBucketCommandID:
 		e.applyTokenBucketEventFromLog(log)
+	case compute.RLimitFixedWindowCommandID:
+		e.applyFixedWindowEventFromLog(log)
 	case compute.QuotaAcquireCommandID:
 		e.applyQuotaAcquireFromLog(log)
 	case compute.QuotaReleaseCommandID:
@@ -537,6 +549,7 @@ func (e *Engine) walLogPartitionIdx(log *wal.LogData) (int, bool) {
 		compute.DelCommandID,
 		compute.RLimitSlidingWindowCommandID,
 		compute.RLimitTokenBucketCommandID,
+		compute.RLimitFixedWindowCommandID,
 		compute.QuotaAcquireCommandID,
 		compute.QuotaReleaseCommandID,
 		compute.QuotaDeleteCommandID:
@@ -548,6 +561,40 @@ func (e *Engine) walLogPartitionIdx(log *wal.LogData) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func (e *Engine) applyFixedWindowEventFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 4 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Str("command", "RLIMIT_FW").
+			Msg("invalid WAL log: insufficient arguments")
+		return
+	}
+
+	limit, err := strconv.ParseUint(log.Arguments[1], 10, 31)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_FW").Msg("failed to parse limit")
+		return
+	}
+
+	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[2], log.Arguments[3])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_FW").Msg("failed to parse WAL log")
+		return
+	}
+	if isExpired(txCtx.CurrTime, database.TxTime(batchKey.BatchSize)) {
+		return
+	}
+
+	result, err := e.RLimitFixedWindow(txCtx, batchKey, database.ValueType(limit), nil)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_FW").Msg("failed to apply WAL log")
+		return
+	}
+
+	e.publishLimitFilled(batchKey, result)
 }
 
 func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
@@ -590,15 +637,28 @@ func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
 		return
 	}
 
-	_, err = e.QuotaAcquire(txCtx, database.QuotaAcquireRequest{
+	request := database.QuotaAcquireRequest{
 		Name:      log.Arguments[0],
 		Limit:     database.ValueType(limit),
 		Amount:    database.ValueType(amount),
 		ClientID:  log.Arguments[3],
 		ExpiresAt: database.TxTime(expiresAt),
-	}, nil)
+	}
+	result, err := e.QuotaAcquire(txCtx, request, nil)
 	if err != nil {
 		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_ACQ").Msg("failed to apply WAL log")
+		return
+	}
+	if result.Mutated {
+		e.publishQuotaEvent(database.QuotaEvent{
+			Event:     "acq",
+			Name:      request.Name,
+			ClientID:  request.ClientID,
+			Amount:    request.Amount,
+			Used:      result.Used,
+			Remaining: result.Remaining,
+			ExpiresAt: request.ExpiresAt,
+		})
 	}
 }
 
@@ -618,8 +678,21 @@ func (e *Engine) applyQuotaReleaseFromLog(log *wal.LogData) {
 		return
 	}
 
-	if _, err := e.QuotaRelease(txCtx, log.Arguments[0], log.Arguments[1], nil); err != nil {
+	result, err := e.QuotaRelease(txCtx, log.Arguments[0], log.Arguments[1], nil)
+	if err != nil {
 		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_REL").Msg("failed to apply WAL log")
+		return
+	}
+	if result.Released {
+		e.publishQuotaEvent(database.QuotaEvent{
+			Event:     "rel",
+			Name:      log.Arguments[0],
+			ClientID:  log.Arguments[1],
+			Amount:    result.Amount,
+			Used:      result.Used,
+			Remaining: result.Remaining,
+			ExpiresAt: result.ExpiresAt,
+		})
 	}
 }
 
@@ -639,9 +712,38 @@ func (e *Engine) applyQuotaDeleteFromLog(log *wal.LogData) {
 		return
 	}
 
-	if _, err := e.QuotaDelete(txCtx, log.Arguments[0], nil); err != nil {
+	deleted, err := e.QuotaDelete(txCtx, log.Arguments[0], nil)
+	if err != nil {
 		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_DEL").Msg("failed to apply WAL log")
+		return
 	}
+	if deleted {
+		e.publishQuotaEvent(database.QuotaEvent{
+			Event: "del",
+			Name:  log.Arguments[0],
+		})
+	}
+}
+
+func (e *Engine) publishQuotaEvent(event database.QuotaEvent) {
+	if e.quotaEventPublisher == nil {
+		return
+	}
+
+	e.quotaEventPublisher(event)
+}
+
+func (e *Engine) publishLimitFilled(key database.BatchKey, result database.RateLimitResult) {
+	if !result.LimitFilled || e.limitEventPublisher == nil {
+		return
+	}
+
+	e.limitEventPublisher(database.LimitEvent{
+		Key:        key.Key,
+		Window:     key.BatchSize,
+		Current:    result.Current,
+		ResetAfter: result.ResetAfter,
+	})
 }
 
 func (e *Engine) applyIncrFromLog(log *wal.LogData) {
@@ -668,7 +770,25 @@ func (e *Engine) applySlidingWindowEventFromLog(log *wal.LogData) {
 		return
 	}
 
-	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], log.Arguments[1], log.Arguments[2])
+	limitFromLog := len(log.Arguments) >= 4
+	var limit uint64
+	var batchSizeArg string
+	var currTimeArg string
+	if limitFromLog {
+		var parseErr error
+		limit, parseErr = strconv.ParseUint(log.Arguments[1], 10, 31)
+		if parseErr != nil {
+			e.logger.Error().Err(parseErr).Uint64("lsn", log.LSN).Str("command", "RLIMIT_SW").Msg("failed to parse limit")
+			return
+		}
+		batchSizeArg = log.Arguments[2]
+		currTimeArg = log.Arguments[3]
+	} else {
+		batchSizeArg = log.Arguments[1]
+		currTimeArg = log.Arguments[2]
+	}
+
+	batchKey, txCtx, err := parseWALBatchKeyAndCtx(log.LSN, log.Arguments[0], batchSizeArg, currTimeArg)
 	if err != nil {
 		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_SW").Msg("failed to parse WAL log")
 		return
@@ -679,7 +799,19 @@ func (e *Engine) applySlidingWindowEventFromLog(log *wal.LogData) {
 
 	idx := e.partitionIdx(batchKey.Key)
 	partition := e.partitions[idx]
-	partition.AddSlidingWindowEvent(txCtx, batchKey)
+	if !limitFromLog {
+		partition.AddSlidingWindowEvent(txCtx, batchKey)
+
+		return
+	}
+
+	result, err := partition.RLimitSlidingWindow(txCtx, batchKey, database.ValueType(limit), nil)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_SW").Msg("failed to apply WAL log")
+		return
+	}
+
+	e.publishLimitFilled(batchKey, result)
 }
 
 func (e *Engine) applyTokenBucketEventFromLog(log *wal.LogData) {
@@ -721,7 +853,19 @@ func (e *Engine) applyTokenBucketEventFromLog(log *wal.LogData) {
 
 	idx := e.partitionIdx(batchKey.Key)
 	partition := e.partitions[idx]
-	partition.AddTokenBucketEvent(txCtx, batchKey, database.ValueType(capacity), database.ValueType(refillAmount))
+	result, err := partition.RLimitTokenBucket(
+		txCtx,
+		batchKey,
+		database.ValueType(capacity),
+		database.ValueType(refillAmount),
+		nil,
+	)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "RLIMIT_TB").Msg("failed to apply WAL log")
+		return
+	}
+
+	e.publishLimitFilled(batchKey, result)
 }
 
 func (e *Engine) applySingleKeyLog(

@@ -60,8 +60,18 @@ type WAL interface {
 	DelAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey)
 	MDel(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey) tools.FutureError
 	MDelAsync(ctx context.Context, txCtx database.TxContext, keys []database.BatchKey)
-	RLimitSlidingWindow(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError
-	RLimitSlidingWindowAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey)
+	RLimitSlidingWindow(
+		ctx context.Context,
+		txCtx database.TxContext,
+		key database.BatchKey,
+		limit database.ValueType,
+	) tools.FutureError
+	RLimitSlidingWindowAsync(
+		ctx context.Context,
+		txCtx database.TxContext,
+		key database.BatchKey,
+		limit database.ValueType,
+	)
 	RLimitTokenBucket(
 		ctx context.Context,
 		txCtx database.TxContext,
@@ -69,6 +79,13 @@ type WAL interface {
 		capacity database.ValueType,
 		refillAmount database.ValueType,
 	) tools.FutureError
+	RLimitFixedWindow(
+		ctx context.Context,
+		txCtx database.TxContext,
+		key database.BatchKey,
+		limit database.ValueType,
+	) tools.FutureError
+	RLimitFixedWindowAsync(ctx context.Context, txCtx database.TxContext, key database.BatchKey, limit database.ValueType)
 	RLimitTokenBucketAsync(
 		ctx context.Context,
 		txCtx database.TxContext,
@@ -93,6 +110,14 @@ type Replica interface {
 	Start(context.Context)
 	IsMaster() bool
 	Shutdown()
+}
+
+type quotaEventPublisher interface {
+	SetQuotaEventPublisher(func(database.QuotaEvent))
+}
+
+type limitEventPublisher interface {
+	SetLimitEventPublisher(func(database.LimitEvent))
 }
 
 var ErrInvalidLimitEventQueueCapacity = errors.New("limit event queue capacity is invalid")
@@ -146,7 +171,7 @@ func NewStorage(
 		return nil, ErrInvalidLimitEventQueueCapacity
 	}
 
-	return &Storage{
+	storage := &Storage{
 		engine:                  engine,
 		wal:                     wal,
 		dumper:                  dumper,
@@ -158,7 +183,16 @@ func NewStorage(
 		limitEventQueueCapacity: limitEventQueueCapacity,
 		limitEvents:             make(map[chan database.LimitEvent]limitEventSubscriber),
 		quotaEvents:             make(map[chan database.QuotaEvent]quotaEventSubscriber),
-	}, nil
+	}
+
+	if publisher, ok := engine.(quotaEventPublisher); ok {
+		publisher.SetQuotaEventPublisher(storage.publishQuotaEvent)
+	}
+	if publisher, ok := engine.(limitEventPublisher); ok {
+		publisher.SetLimitEventPublisher(storage.publishLimitEvent)
+	}
+
+	return storage, nil
 }
 
 func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
@@ -251,7 +285,7 @@ func (s *Storage) RLimitFixedWindow(
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitFixedWindow(txCtx, key, limit, func() error {
-		return s.writeIncrWAL(ctx, txCtx, key)
+		return s.writeRLimitFixedWindowWAL(ctx, txCtx, key, limit)
 	})
 	if err != nil {
 		return database.RateLimitResult{}, err
@@ -270,7 +304,7 @@ func (s *Storage) RLimitSlidingWindow(
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitSlidingWindow(txCtx, key, limit, func() error {
-		return s.writeRLimitSlidingWindowWAL(ctx, txCtx, key)
+		return s.writeRLimitSlidingWindowWAL(ctx, txCtx, key, limit)
 	})
 	if err != nil {
 		return database.RateLimitResult{}, err
@@ -455,17 +489,38 @@ func (s *Storage) writeRLimitSlidingWindowWAL(
 	ctx context.Context,
 	txCtx database.TxContext,
 	key database.BatchKey,
+	limit database.ValueType,
 ) error {
 	if s.wal == nil {
 		return nil
 	}
 
 	if s.syncCommit {
-		future := s.wal.RLimitSlidingWindow(ctx, txCtx, key)
+		future := s.wal.RLimitSlidingWindow(ctx, txCtx, key, limit)
 		return future.Get()
 	}
 
-	s.wal.RLimitSlidingWindowAsync(ctx, txCtx, key)
+	s.wal.RLimitSlidingWindowAsync(ctx, txCtx, key, limit)
+
+	return nil
+}
+
+func (s *Storage) writeRLimitFixedWindowWAL(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+	limit database.ValueType,
+) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.RLimitFixedWindow(ctx, txCtx, key, limit)
+		return future.Get()
+	}
+
+	s.wal.RLimitFixedWindowAsync(ctx, txCtx, key, limit)
 
 	return nil
 }
@@ -636,6 +691,10 @@ func (s *Storage) publishLimitFilled(
 		ResetAfter: result.ResetAfter,
 	}
 
+	s.publishLimitEvent(event)
+}
+
+func (s *Storage) publishLimitEvent(event database.LimitEvent) {
 	s.eventsMu.RLock()
 	defer s.eventsMu.RUnlock()
 

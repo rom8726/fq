@@ -21,6 +21,7 @@ const (
 	QuotaDeleteCommandID
 	QStreamCommandID
 	QPStreamCommandID
+	RLimitFixedWindowCommandID
 )
 
 var (

@@ -486,6 +486,94 @@ func TestTCPDatabaseSlaveEventuallyConvergesWithMaster(t *testing.T) {
 	recoveredFromReplicatedWAL.RequireRateLimit("RLIMIT TB replicated_tb 3 1 600", true, 3, 0, 600)
 }
 
+func TestTCPDatabaseSlaveStreamsReplicatedQuotaEvents(t *testing.T) {
+	masterWALDir := t.TempDir()
+	masterDumpDir := t.TempDir()
+	slaveWALDir := t.TempDir()
+	replicationAddress := freeLocalAddress(t)
+
+	masterApp := startTestDatabaseWithMasterReplication(t, masterWALDir, masterDumpDir, replicationAddress)
+	defer masterApp.Close()
+	waitTCPAddress(t, replicationAddress, 16<<20)
+
+	slave := startTestDatabaseWithSlaveReplication(t, slaveWALDir, replicationAddress)
+	defer slave.Close()
+
+	streamClient := connectEventually(t, slave.address)
+	events := make(chan string, 4)
+	errs := make(chan error, 1)
+	go func() {
+		errs <- streamClient.Stream(context.Background(), []byte("QPSTREAM tenant_a-"), func(response []byte) error {
+			events <- string(response)
+
+			return nil
+		})
+	}()
+
+	masterApp.RequireQuotaAcquire("QUOTA ACQ tenant_b-quota 10 4 client-a", true, 4, 4, 6, 0)
+	requireNoStreamEvent(t, events)
+
+	masterApp.RequireQuotaAcquire("QUOTA ACQ tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
+	require.Equal(t, "ok|acq;tenant_a-quota;client-a;4;4;6;0", requireStreamEvent(t, events))
+
+	masterApp.RequireQuery("QUOTA REL tenant_a-quota client-a", "ok|1")
+	require.Equal(t, "ok|rel;tenant_a-quota;client-a;4;0;10;0", requireStreamEvent(t, events))
+
+	masterApp.RequireQuery("QUOTA DEL tenant_a-quota", "ok|1")
+	require.Equal(t, "ok|del;tenant_a-quota;;0;0;0;0", requireStreamEvent(t, events))
+
+	require.NoError(t, streamClient.Close())
+	select {
+	case <-errs:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop")
+	}
+}
+
+func TestTCPDatabaseSlaveStreamsReplicatedLimitEvents(t *testing.T) {
+	masterWALDir := t.TempDir()
+	masterDumpDir := t.TempDir()
+	slaveWALDir := t.TempDir()
+	replicationAddress := freeLocalAddress(t)
+
+	masterApp := startTestDatabaseWithMasterReplication(t, masterWALDir, masterDumpDir, replicationAddress)
+	defer masterApp.Close()
+	waitTCPAddress(t, replicationAddress, 16<<20)
+
+	slave := startTestDatabaseWithSlaveReplication(t, slaveWALDir, replicationAddress)
+	defer slave.Close()
+
+	streamClient := connectEventually(t, slave.address)
+	events := make(chan string, 4)
+	errs := make(chan error, 1)
+	go func() {
+		errs <- streamClient.Stream(context.Background(), []byte("PSTREAM tenant_a-"), func(response []byte) error {
+			events <- string(response)
+
+			return nil
+		})
+	}()
+
+	masterApp.RequireRateLimit("RLIMIT FW tenant_b-fw 1 600", true, 1, 0, 600)
+	requireNoStreamEvent(t, events)
+
+	masterApp.RequireRateLimit("RLIMIT FW tenant_a-fw 1 600", true, 1, 0, 600)
+	require.True(t, strings.HasPrefix(requireStreamEvent(t, events), "ok|tenant_a-fw;600;1;"))
+
+	masterApp.RequireRateLimit("RLIMIT SW tenant_a-sw 1 600", true, 1, 0, 600)
+	require.True(t, strings.HasPrefix(requireStreamEvent(t, events), "ok|tenant_a-sw;600;1;"))
+
+	masterApp.RequireRateLimit("RLIMIT TB tenant_a-tb 1 1 600", true, 1, 0, 600)
+	require.True(t, strings.HasPrefix(requireStreamEvent(t, events), "ok|tenant_a-tb;600;1;"))
+
+	require.NoError(t, streamClient.Close())
+	select {
+	case <-errs:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop")
+	}
+}
+
 func TestTCPDatabasePStreamFiltersLimitEventsByPrefix(t *testing.T) {
 	app := startTestDatabase(t, t.TempDir())
 	defer app.Close()
@@ -572,7 +660,7 @@ func requireStreamEvent(t *testing.T, events <-chan string) string {
 	select {
 	case event := <-events:
 		return event
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for stream event")
 	}
 

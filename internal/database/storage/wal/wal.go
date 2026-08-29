@@ -263,20 +263,64 @@ func (w *WAL) RLimitSlidingWindow(
 	ctx context.Context,
 	txCtx database.TxContext,
 	key database.BatchKey,
+	limit database.ValueType,
 ) tools.FutureError {
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
-	return w.push(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
+	return w.push(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{
+		key.Key,
+		strconv.FormatInt(int64(limit), 10),
+		key.BatchSizeStr,
+		currTimeStr,
+	})
+}
+
+func (w *WAL) RLimitFixedWindow(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+	limit database.ValueType,
+) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.RLimitFixedWindowCommandID, []string{
+		key.Key,
+		strconv.FormatInt(int64(limit), 10),
+		key.BatchSizeStr,
+		currTimeStr,
+	})
+}
+
+func (w *WAL) RLimitFixedWindowAsync(
+	ctx context.Context,
+	txCtx database.TxContext,
+	key database.BatchKey,
+	limit database.ValueType,
+) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.RLimitFixedWindowCommandID, []string{
+		key.Key,
+		strconv.FormatInt(int64(limit), 10),
+		key.BatchSizeStr,
+		currTimeStr,
+	})
 }
 
 func (w *WAL) RLimitSlidingWindowAsync(
 	ctx context.Context,
 	txCtx database.TxContext,
 	key database.BatchKey,
+	limit database.ValueType,
 ) {
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
-	w.pushAsync(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{key.Key, key.BatchSizeStr, currTimeStr})
+	w.pushAsync(ctx, txCtx.Tx, compute.RLimitSlidingWindowCommandID, []string{
+		key.Key,
+		strconv.FormatInt(int64(limit), 10),
+		key.BatchSizeStr,
+		currTimeStr,
+	})
 }
 
 func (w *WAL) RLimitTokenBucket(
