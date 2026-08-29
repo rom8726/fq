@@ -16,5 +16,6 @@ func TestCommandNameToCommandID(t *testing.T) {
 	require.Equal(t, compute.StreamCommandID, compute.CommandNameToCommandID("STREAM"))
 	require.Equal(t, compute.PStreamCommandID, compute.CommandNameToCommandID("PSTREAM"))
 	require.Equal(t, compute.RLimitCommandID, compute.CommandNameToCommandID("RLIMIT"))
+	require.Equal(t, compute.QuotaCommandID, compute.CommandNameToCommandID("QUOTA"))
 	require.Equal(t, compute.UnknownCommandID, compute.CommandNameToCommandID("TRUNCATE"))
 }

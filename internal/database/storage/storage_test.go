@@ -174,6 +174,38 @@ func (e *txRecordingEngine) RLimitTokenBucket(
 	return database.RateLimitResult{Allowed: true, Current: 1}, nil
 }
 
+func (e *txRecordingEngine) QuotaAcquire(
+	txCtx database.TxContext,
+	_ database.QuotaAcquireRequest,
+	beforeApply func() error,
+) (database.QuotaAcquireResult, error) {
+	e.lastTx = txCtx.Tx
+	if err := beforeApply(); err != nil {
+		return database.QuotaAcquireResult{}, err
+	}
+
+	return database.QuotaAcquireResult{Acquired: true, Allocated: 1}, nil
+}
+
+func (e *txRecordingEngine) QuotaRelease(txCtx database.TxContext, _ string, _ string) bool {
+	e.lastTx = txCtx.Tx
+
+	return true
+}
+
+func (e *txRecordingEngine) QuotaDelete(txCtx database.TxContext, _ string, beforeApply func() error) (bool, error) {
+	e.lastTx = txCtx.Tx
+	if err := beforeApply(); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (e *txRecordingEngine) QuotaInfo(_ database.TxTime, _ string) database.QuotaInfo {
+	return database.QuotaInfo{}
+}
+
 func (e *txRecordingEngine) Get(database.BatchKey) (database.ValueType, bool) {
 	return 0, false
 }

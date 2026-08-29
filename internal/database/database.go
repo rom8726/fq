@@ -70,6 +70,10 @@ type storageLayer interface {
 		key BatchKey,
 		capacity, refillAmount ValueType,
 	) (RateLimitResult, error)
+	QuotaAcquire(ctx context.Context, request QuotaAcquireRequest) (QuotaAcquireResult, error)
+	QuotaRelease(ctx context.Context, name string, clientID string) (bool, error)
+	QuotaDelete(ctx context.Context, name string) (bool, error)
+	QuotaInfo(ctx context.Context, name string) (QuotaInfo, error)
 }
 
 type Database struct {
@@ -152,6 +156,8 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		return d.handlePStreamQuery(ctx, query, write)
 	case compute.RLimitCommandID:
 		response = d.handleRLimitQuery(ctx, query, responseBuffer.buf[:0])
+	case compute.QuotaCommandID:
+		response = d.handleQuotaQuery(ctx, query, responseBuffer.buf[:0])
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -159,6 +165,109 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	}
 
 	return write(response)
+}
+
+func (d *Database) handleQuotaQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+	action := strings.ToUpper(query.Arg(0))
+	switch action {
+	case "ACQ":
+		return d.handleQuotaAcquireQuery(ctx, query, dst)
+	case "REL":
+		return d.handleQuotaReleaseQuery(ctx, query, dst)
+	case "DEL":
+		return d.handleQuotaDeleteQuery(ctx, query, dst)
+	case "INF":
+		return d.handleQuotaInfoQuery(ctx, query, dst)
+	default:
+		return appendErrorMsg(dst, compute.ErrInvalidArguments)
+	}
+}
+
+func (d *Database) handleQuotaAcquireQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+	name, err := makeQuotaName(query.Arg(1))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+	clientID, err := makeQuotaClientID(query.Arg(4))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+	limit, err := makeLimit(query.Arg(2))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+	amount, err := makeLimit(query.Arg(3))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	var ttl uint32
+	if query.ArgumentCount() == 6 {
+		parsedTTL, parseErr := makeTTL(query.Arg(5))
+		if parseErr != nil {
+			return appendErrorMsg(dst, parseErr)
+		}
+		ttl = parsedTTL
+	}
+
+	result, err := d.storageLayer.QuotaAcquire(ctx, QuotaAcquireRequest{
+		Name:     name,
+		Limit:    limit,
+		Amount:   amount,
+		ClientID: clientID,
+		TTL:      ttl,
+	})
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return appendQuotaAcquireMsg(dst, result)
+}
+
+func (d *Database) handleQuotaReleaseQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+	name, err := makeQuotaName(query.Arg(1))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+	clientID, err := makeQuotaClientID(query.Arg(2))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	released, err := d.storageLayer.QuotaRelease(ctx, name, clientID)
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return makeBoolMsg(released)
+}
+
+func (d *Database) handleQuotaDeleteQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+	name, err := makeQuotaName(query.Arg(1))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	deleted, err := d.storageLayer.QuotaDelete(ctx, name)
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return makeBoolMsg(deleted)
+}
+
+func (d *Database) handleQuotaInfoQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+	name, err := makeQuotaName(query.Arg(1))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	info, err := d.storageLayer.QuotaInfo(ctx, name)
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return appendQuotaInfoMsg(dst, info)
 }
 
 func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
@@ -389,6 +498,32 @@ func makeLimit(limitStr string) (ValueType, error) {
 	return ValueType(limit), nil
 }
 
+func makeTTL(ttlStr string) (uint32, error) {
+	ttl, err := strconv.ParseUint(ttlStr, 10, 32)
+	if err != nil {
+		return 0, errBatchSizeNotNumber
+	}
+	if ttl < minBatchSize || ttl > maxBatchSize {
+		return 0, fmt.Errorf(
+			"%w: %d (must be between %d and %d)",
+			errInvalidBatchSize,
+			ttl,
+			minBatchSize,
+			maxBatchSize,
+		)
+	}
+
+	return uint32(ttl), nil
+}
+
+func makeQuotaName(name string) (string, error) {
+	return makeStreamPrefix(name)
+}
+
+func makeQuotaClientID(clientID string) (string, error) {
+	return makeStreamPrefix(clientID)
+}
+
 func makeErrorMsg(err error) []byte {
 	return appendErrorMsg(makeResponseBuffer(len("err|")+len(err.Error())), err)
 }
@@ -451,6 +586,46 @@ func appendRateLimitMsg(dst []byte, result RateLimitResult) []byte {
 	dst = strconv.AppendInt(dst, int64(result.Remaining), 10)
 	dst = append(dst, ';')
 	dst = strconv.AppendUint(dst, uint64(result.ResetAfter), 10)
+
+	return dst
+}
+
+func appendQuotaAcquireMsg(dst []byte, result QuotaAcquireResult) []byte {
+	dst = append(dst, "ok|"...)
+	if result.Acquired {
+		dst = append(dst, '1')
+	} else {
+		dst = append(dst, '0')
+	}
+
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(result.Allocated), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(result.Used), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(result.Remaining), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendUint(dst, uint64(result.ExpiresAfter), 10)
+
+	return dst
+}
+
+func appendQuotaInfoMsg(dst []byte, info QuotaInfo) []byte {
+	dst = append(dst, "ok|"...)
+	dst = strconv.AppendInt(dst, int64(info.Limit), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(info.Used), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendInt(dst, int64(info.Remaining), 10)
+
+	for _, client := range info.Clients {
+		dst = append(dst, ';')
+		dst = append(dst, client.ClientID...)
+		dst = append(dst, ';')
+		dst = strconv.AppendInt(dst, int64(client.Amount), 10)
+		dst = append(dst, ';')
+		dst = strconv.AppendUint(dst, uint64(client.ExpiresAt), 10)
+	}
 
 	return dst
 }

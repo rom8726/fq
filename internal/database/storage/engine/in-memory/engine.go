@@ -46,6 +46,14 @@ type hashTable interface {
 		refillAmount database.ValueType,
 		beforeApply func() error,
 	) (database.RateLimitResult, error)
+	QuotaAcquire(
+		txCtx database.TxContext,
+		request database.QuotaAcquireRequest,
+		beforeApply func() error,
+	) (database.QuotaAcquireResult, error)
+	QuotaRelease(txCtx database.TxContext, name string, clientID string) bool
+	QuotaDelete(txCtx database.TxContext, name string, beforeApply func() error) (bool, error)
+	QuotaInfo(now database.TxTime, name string) database.QuotaInfo
 	AddSlidingWindowEvent(txCtx database.TxContext, key database.BatchKey)
 	AddTokenBucketEvent(
 		txCtx database.TxContext,
@@ -251,6 +259,74 @@ func (e *Engine) RLimitTokenBucket(
 	return result, err
 }
 
+func (e *Engine) QuotaAcquire(
+	txCtx database.TxContext,
+	request database.QuotaAcquireRequest,
+	beforeApply func() error,
+) (database.QuotaAcquireResult, error) {
+	idx := e.partitionIdx(request.Name)
+	partition := e.partitions[idx]
+	result, err := partition.QuotaAcquire(txCtx, request, beforeApply)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Any("tx_ctx", txCtx).
+			Any("request", request).
+			Any("result", result).
+			Err(err).
+			Msg("success quota acquire query")
+	}
+
+	return result, err
+}
+
+func (e *Engine) QuotaRelease(txCtx database.TxContext, name, clientID string) bool {
+	idx := e.partitionIdx(name)
+	partition := e.partitions[idx]
+	res := partition.QuotaRelease(txCtx, name, clientID)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Str("name", name).
+			Str("client_id", clientID).
+			Bool("result", res).
+			Msg("success quota release query")
+	}
+
+	return res
+}
+
+func (e *Engine) QuotaDelete(txCtx database.TxContext, name string, beforeApply func() error) (bool, error) {
+	idx := e.partitionIdx(name)
+	partition := e.partitions[idx]
+	res, err := partition.QuotaDelete(txCtx, name, beforeApply)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Str("name", name).
+			Bool("result", res).
+			Err(err).
+			Msg("success quota delete query")
+	}
+
+	return res, err
+}
+
+func (e *Engine) QuotaInfo(now database.TxTime, name string) database.QuotaInfo {
+	idx := e.partitionIdx(name)
+	partition := e.partitions[idx]
+	info := partition.QuotaInfo(now, name)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Str("name", name).
+			Any("info", info).
+			Msg("success quota info query")
+	}
+
+	return info
+}
+
 func (e *Engine) Get(key database.BatchKey) (database.ValueType, bool) {
 	idx := e.partitionIdx(key.Key)
 	partition := e.partitions[idx]
@@ -319,6 +395,18 @@ func (e *Engine) Dump(ctx context.Context, dumpTx database.Tx) (resC <-chan data
 
 func (e *Engine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
 	if elem.Kind == database.DumpElemKindTokenBucket {
+		idx := e.partitionIdx(elem.Key)
+		partition := e.partitions[idx]
+		partition.RestoreDumpElem(elem)
+
+		return nil
+	}
+
+	if elem.Kind == database.DumpElemKindQuotaAllocation {
+		if elem.ExpiresAt != 0 && elem.ExpiresAt <= database.TxTime(time.Now().Unix()) {
+			return nil
+		}
+
 		idx := e.partitionIdx(elem.Key)
 		partition := e.partitions[idx]
 		partition.RestoreDumpElem(elem)
@@ -424,6 +512,12 @@ func (e *Engine) applyLog(log *wal.LogData) {
 		e.applySlidingWindowEventFromLog(log)
 	case compute.RLimitTokenBucketCommandID:
 		e.applyTokenBucketEventFromLog(log)
+	case compute.QuotaAcquireCommandID:
+		e.applyQuotaAcquireFromLog(log)
+	case compute.QuotaReleaseCommandID:
+		e.applyQuotaReleaseFromLog(log)
+	case compute.QuotaDeleteCommandID:
+		e.applyQuotaDeleteFromLog(log)
 	}
 }
 
@@ -432,7 +526,10 @@ func (e *Engine) walLogPartitionIdx(log *wal.LogData) (int, bool) {
 	case compute.IncrCommandID,
 		compute.DelCommandID,
 		compute.RLimitSlidingWindowCommandID,
-		compute.RLimitTokenBucketCommandID:
+		compute.RLimitTokenBucketCommandID,
+		compute.QuotaAcquireCommandID,
+		compute.QuotaReleaseCommandID,
+		compute.QuotaDeleteCommandID:
 		if len(log.Arguments) == 0 {
 			return 0, false
 		}
@@ -440,6 +537,98 @@ func (e *Engine) walLogPartitionIdx(log *wal.LogData) (int, bool) {
 		return e.partitionIdx(log.Arguments[0]), true
 	default:
 		return 0, false
+	}
+}
+
+func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 6 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Str("command", "QUOTA_ACQ").
+			Msg("invalid WAL log: insufficient arguments")
+		return
+	}
+
+	limit, err := strconv.ParseUint(log.Arguments[1], 10, 31)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_ACQ").Msg("failed to parse limit")
+		return
+	}
+	amount, err := strconv.ParseUint(log.Arguments[2], 10, 31)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_ACQ").Msg("failed to parse amount")
+		return
+	}
+	expiresAt, err := strconv.ParseUint(log.Arguments[4], 16, 32)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_ACQ").Msg("failed to parse expires at")
+		return
+	}
+	currTime, err := strconv.ParseUint(log.Arguments[5], 16, 32)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_ACQ").Msg("failed to parse current time")
+		return
+	}
+
+	txCtx := database.TxContext{
+		Tx:       database.Tx(log.LSN),
+		CurrTime: database.TxTime(currTime),
+		FromWAL:  true,
+	}
+	if expiresAt != 0 && database.TxTime(expiresAt) <= txCtx.CurrTime {
+		return
+	}
+
+	_, err = e.QuotaAcquire(txCtx, database.QuotaAcquireRequest{
+		Name:      log.Arguments[0],
+		Limit:     database.ValueType(limit),
+		Amount:    database.ValueType(amount),
+		ClientID:  log.Arguments[3],
+		ExpiresAt: database.TxTime(expiresAt),
+	}, nil)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_ACQ").Msg("failed to apply WAL log")
+	}
+}
+
+func (e *Engine) applyQuotaReleaseFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 3 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Str("command", "QUOTA_REL").
+			Msg("invalid WAL log: insufficient arguments")
+		return
+	}
+
+	txCtx, err := parseWALTxContext(log.LSN, log.Arguments[2])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_REL").Msg("failed to parse WAL log")
+		return
+	}
+
+	e.QuotaRelease(txCtx, log.Arguments[0], log.Arguments[1])
+}
+
+func (e *Engine) applyQuotaDeleteFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 2 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Str("command", "QUOTA_DEL").
+			Msg("invalid WAL log: insufficient arguments")
+		return
+	}
+
+	txCtx, err := parseWALTxContext(log.LSN, log.Arguments[1])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_DEL").Msg("failed to parse WAL log")
+		return
+	}
+
+	if _, err := e.QuotaDelete(txCtx, log.Arguments[0], nil); err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_DEL").Msg("failed to apply WAL log")
 	}
 }
 
@@ -617,6 +806,19 @@ func parseWALBatchKeyAndCtx(
 	}
 
 	return batchKey, txCtx, nil
+}
+
+func parseWALTxContext(lsn uint64, currTimeStr string) (database.TxContext, error) {
+	currTime, err := strconv.ParseInt(currTimeStr, 16, 64)
+	if err != nil {
+		return database.TxContext{}, fmt.Errorf("WAL log: parse curr time: %w", err)
+	}
+
+	return database.TxContext{
+		Tx:       database.Tx(lsn),
+		CurrTime: database.TxTime(currTime),
+		FromWAL:  true,
+	}, nil
 }
 
 func isExpired(currTime, batchSize database.TxTime) bool {

@@ -53,6 +53,15 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", false, 3, 0, 60)
 	app.RequireQuery("DEL bucket 60", "ok|1")
 	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", true, 1, 2, 60)
+	app.RequireQuotaAcquire("QUOTA ACQ quota 10 4 client-a 60", true, 4, 4, 6, 60)
+	app.RequireQuotaAcquire("QUOTA ACQ quota 10 4 client-a 60", true, 4, 4, 6, 60)
+	app.RequireQuotaInfo("QUOTA INF quota", 10, 4, 6, []testQuotaClient{
+		{clientID: "client-a", amount: 4, expires: true},
+	})
+	app.RequireQuotaAcquire("QUOTA ACQ quota 10 7 client-b", false, 0, 4, 6, 0)
+	app.RequireQuery("QUOTA DEL quota", "err|quota is not empty")
+	app.RequireQuery("QUOTA REL quota client-a", "ok|1")
+	app.RequireQuery("QUOTA DEL quota", "ok|1")
 	app.RequireQuery("MDEL key 60 other 60", "ok|1;1")
 	app.RequireQuery("GET key 60", "ok|0")
 	app.RequireQuery("TRUNCATE key 60", "err|invalid command")
@@ -545,6 +554,7 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	first.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 	first.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 1, 2, 600)
 	first.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 2, 1, 600)
+	first.RequireQuotaAcquire("QUOTA ACQ durable_quota 10 4 client-a", true, 4, 4, 6, 0)
 	first.Close()
 
 	second := startTestDatabase(t, walDir)
@@ -554,6 +564,12 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	second.RequireQuery("GET limited 60", "ok|2")
 	second.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 	second.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 3, 0, 600)
+	second.RequireQuotaInfo("QUOTA INF durable_quota", 10, 4, 6, []testQuotaClient{
+		{clientID: "client-a", amount: 4},
+	})
+	second.RequireQuotaAcquire("QUOTA ACQ durable_quota 10 7 client-b", false, 0, 4, 6, 0)
+	second.RequireQuery("QUOTA REL durable_quota client-a", "ok|1")
+	second.RequireQuotaAcquire("QUOTA ACQ durable_quota 10 7 client-b", true, 7, 7, 3, 0)
 }
 
 func TestTCPDatabaseRecoversSlidingWindowFromDumpAfterRestart(t *testing.T) {
@@ -939,6 +955,88 @@ func (a *testDatabaseApp) RequireRateLimit(
 	require.NoError(a.t, err)
 	require.GreaterOrEqual(a.t, uint32(resetAfter), uint32(0))
 	require.LessOrEqual(a.t, uint32(resetAfter), window)
+}
+
+func (a *testDatabaseApp) RequireQuotaAcquire(
+	query string,
+	acquired bool,
+	allocated database.ValueType,
+	used database.ValueType,
+	remaining database.ValueType,
+	maxExpiresAfter uint32,
+) {
+	a.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	response, err := a.client.Send(ctx, []byte(query))
+	require.NoError(a.t, err)
+
+	parts := strings.Split(string(response), "|")
+	require.Len(a.t, parts, 2)
+	require.Equal(a.t, "ok", parts[0])
+
+	fields := strings.Split(parts[1], ";")
+	require.Len(a.t, fields, 5)
+	if acquired {
+		require.Equal(a.t, "1", fields[0])
+	} else {
+		require.Equal(a.t, "0", fields[0])
+	}
+	require.Equal(a.t, strconv.FormatInt(int64(allocated), 10), fields[1])
+	require.Equal(a.t, strconv.FormatInt(int64(used), 10), fields[2])
+	require.Equal(a.t, strconv.FormatInt(int64(remaining), 10), fields[3])
+
+	expiresAfter, err := strconv.ParseUint(fields[4], 10, 32)
+	require.NoError(a.t, err)
+	require.LessOrEqual(a.t, uint32(expiresAfter), maxExpiresAfter)
+}
+
+type testQuotaClient struct {
+	clientID string
+	amount   database.ValueType
+	expires  bool
+}
+
+func (a *testDatabaseApp) RequireQuotaInfo(
+	query string,
+	limit database.ValueType,
+	used database.ValueType,
+	remaining database.ValueType,
+	clients []testQuotaClient,
+) {
+	a.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	response, err := a.client.Send(ctx, []byte(query))
+	require.NoError(a.t, err)
+
+	parts := strings.Split(string(response), "|")
+	require.Len(a.t, parts, 2)
+	require.Equal(a.t, "ok", parts[0])
+
+	fields := strings.Split(parts[1], ";")
+	require.Len(a.t, fields, 3+len(clients)*3)
+	require.Equal(a.t, strconv.FormatInt(int64(limit), 10), fields[0])
+	require.Equal(a.t, strconv.FormatInt(int64(used), 10), fields[1])
+	require.Equal(a.t, strconv.FormatInt(int64(remaining), 10), fields[2])
+
+	for i, client := range clients {
+		offset := 3 + i*3
+		require.Equal(a.t, client.clientID, fields[offset])
+		require.Equal(a.t, strconv.FormatInt(int64(client.amount), 10), fields[offset+1])
+
+		expiresAt, err := strconv.ParseUint(fields[offset+2], 10, 32)
+		require.NoError(a.t, err)
+		if client.expires {
+			require.NotZero(a.t, expiresAt)
+		} else {
+			require.Zero(a.t, expiresAt)
+		}
+	}
 }
 
 func (a *testDatabaseApp) MinReplicaAckLSN() uint64 {

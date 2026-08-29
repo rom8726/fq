@@ -19,6 +19,7 @@ const (
 	streamQueryArgumentsNumber  = 0
 	pstreamQueryArgumentsNumber = 1
 	rlimitQueryArgumentsNumber  = -3
+	quotaQueryArgumentsNumber   = -4
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -31,6 +32,7 @@ var queryArgumentsNumber = map[CommandID]int{
 	StreamCommandID:  streamQueryArgumentsNumber,
 	PStreamCommandID: pstreamQueryArgumentsNumber,
 	RLimitCommandID:  rlimitQueryArgumentsNumber,
+	QuotaCommandID:   quotaQueryArgumentsNumber,
 }
 
 var (
@@ -75,6 +77,10 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 		if !validRLimitArguments(query.Arguments()) {
 			return Query{}, ErrInvalidArguments
 		}
+	case argumentsNumber == -4:
+		if !validQuotaArguments(query.Arguments()) {
+			return Query{}, ErrInvalidArguments
+		}
 	default:
 		return Query{}, fmt.Errorf("unknown arguments count setting: %d for command %d", argumentsNumber, commandID)
 	}
@@ -84,6 +90,25 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 	}
 
 	return query, nil
+}
+
+func validQuotaArguments(arguments []string) bool {
+	if len(arguments) == 0 {
+		return false
+	}
+
+	switch strings.ToUpper(arguments[0]) {
+	case "ACQ":
+		return len(arguments) == 5 || len(arguments) == 6
+	case "REL":
+		return len(arguments) == 3
+	case "DEL":
+		return len(arguments) == 2
+	case "INF":
+		return len(arguments) == 2
+	default:
+		return false
+	}
 }
 
 func validRLimitArguments(arguments []string) bool {

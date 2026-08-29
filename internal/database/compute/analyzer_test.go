@@ -88,6 +88,34 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"RLIMIT", "TB", "key", "100", "10", "60"},
 			query:  compute.NewQuery(compute.RLimitCommandID, []string{"TB", "key", "100", "10", "60"}),
 		},
+		"invalid number arguments for quota acquire": {
+			tokens: []string{"QUOTA", "ACQ", "pool", "10", "3"},
+			err:    compute.ErrInvalidArguments,
+		},
+		"invalid quota action": {
+			tokens: []string{"QUOTA", "GET", "pool"},
+			err:    compute.ErrInvalidArguments,
+		},
+		"valid quota acquire query": {
+			tokens: []string{"QUOTA", "ACQ", "pool", "10", "3", "client-1"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "10", "3", "client-1"}),
+		},
+		"valid quota acquire query with ttl": {
+			tokens: []string{"QUOTA", "ACQ", "pool", "10", "3", "client-1", "60"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "10", "3", "client-1", "60"}),
+		},
+		"valid quota release query": {
+			tokens: []string{"QUOTA", "REL", "pool", "client-1"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"REL", "pool", "client-1"}),
+		},
+		"valid quota delete query": {
+			tokens: []string{"QUOTA", "DEL", "pool"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"DEL", "pool"}),
+		},
+		"valid quota info query": {
+			tokens: []string{"QUOTA", "INF", "pool"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"INF", "pool"}),
+		},
 	}
 
 	ctx := context.Background()

@@ -315,6 +315,66 @@ func (w *WAL) RLimitTokenBucketAsync(
 	})
 }
 
+func (w *WAL) QuotaAcquire(
+	ctx context.Context,
+	txCtx database.TxContext,
+	request database.QuotaAcquireRequest,
+) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+	expiresAtStr := strconv.FormatUint(uint64(request.ExpiresAt), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.QuotaAcquireCommandID, []string{
+		request.Name,
+		strconv.FormatInt(int64(request.Limit), 10),
+		strconv.FormatInt(int64(request.Amount), 10),
+		request.ClientID,
+		expiresAtStr,
+		currTimeStr,
+	})
+}
+
+func (w *WAL) QuotaAcquireAsync(
+	ctx context.Context,
+	txCtx database.TxContext,
+	request database.QuotaAcquireRequest,
+) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+	expiresAtStr := strconv.FormatUint(uint64(request.ExpiresAt), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.QuotaAcquireCommandID, []string{
+		request.Name,
+		strconv.FormatInt(int64(request.Limit), 10),
+		strconv.FormatInt(int64(request.Amount), 10),
+		request.ClientID,
+		expiresAtStr,
+		currTimeStr,
+	})
+}
+
+func (w *WAL) QuotaRelease(ctx context.Context, txCtx database.TxContext, name, clientID string) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.QuotaReleaseCommandID, []string{name, clientID, currTimeStr})
+}
+
+func (w *WAL) QuotaReleaseAsync(ctx context.Context, txCtx database.TxContext, name, clientID string) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.QuotaReleaseCommandID, []string{name, clientID, currTimeStr})
+}
+
+func (w *WAL) QuotaDelete(ctx context.Context, txCtx database.TxContext, name string) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.QuotaDeleteCommandID, []string{name, currTimeStr})
+}
+
+func (w *WAL) QuotaDeleteAsync(ctx context.Context, txCtx database.TxContext, name string) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.QuotaDeleteCommandID, []string{name, currTimeStr})
+}
+
 func (w *WAL) push(
 	ctx context.Context,
 	tx database.Tx,

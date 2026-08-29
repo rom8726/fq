@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type HashTable struct {
 	m  map[hashTableKey]*FqElem
 	sw map[hashTableKey]*SlidingWindowElem
 	tb map[hashTableKey]*TokenBucketElem
+	q  map[string]*QuotaElem
 }
 
 func NewHashTable() *HashTable {
@@ -35,6 +37,7 @@ func NewHashTable() *HashTable {
 		m:  make(map[hashTableKey]*FqElem),
 		sw: make(map[hashTableKey]*SlidingWindowElem),
 		tb: make(map[hashTableKey]*TokenBucketElem),
+		q:  make(map[string]*QuotaElem),
 	}
 }
 
@@ -101,6 +104,60 @@ func (s *HashTable) AddTokenBucketEvent(
 	v.AddEvent(txCtx, capacity, refillAmount)
 }
 
+func (s *HashTable) QuotaAcquire(
+	txCtx database.TxContext,
+	request database.QuotaAcquireRequest,
+	beforeApply func() error,
+) (database.QuotaAcquireResult, error) {
+	v := s.getOrInitQuotaElem(request.Name, request.Limit)
+
+	return v.Acquire(txCtx, request, beforeApply)
+}
+
+func (s *HashTable) QuotaRelease(txCtx database.TxContext, name, clientID string) bool {
+	s.mu.RLock()
+	v, ok := s.q[name]
+	s.mu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	return v.Release(txCtx, clientID)
+}
+
+func (s *HashTable) QuotaDelete(txCtx database.TxContext, name string, beforeApply func() error) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.q[name]
+	if !ok {
+		return false, nil
+	}
+	if !v.CanDelete(txCtx.CurrTime) {
+		return false, database.ErrQuotaNotEmpty
+	}
+	if beforeApply != nil {
+		if err := beforeApply(); err != nil {
+			return false, fmt.Errorf("before apply quota delete: %w", err)
+		}
+	}
+
+	delete(s.q, name)
+
+	return true, nil
+}
+
+func (s *HashTable) QuotaInfo(now database.TxTime, name string) database.QuotaInfo {
+	s.mu.RLock()
+	v, ok := s.q[name]
+	s.mu.RUnlock()
+	if !ok {
+		return database.QuotaInfo{}
+	}
+
+	return v.Info(now)
+}
+
 func (s *HashTable) Get(key database.BatchKey) (database.ValueType, bool) {
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
 
@@ -139,7 +196,7 @@ func (s *HashTable) Del(key database.BatchKey) bool {
 func (s *HashTable) Clean(ctx context.Context) {
 	now := database.TxTime(time.Now().Unix())
 
-	counterItems, slidingWindowItems := s.cleanSnapshot(ctx)
+	counterItems, slidingWindowItems, quotaItems := s.cleanSnapshot(ctx)
 	if ctx.Err() != nil {
 		return
 	}
@@ -176,6 +233,24 @@ func (s *HashTable) Clean(ctx context.Context) {
 	}
 
 	s.deleteEmptySlidingWindows(ctx, slidingWindowKeysToDelete, now)
+	if ctx.Err() != nil {
+		return
+	}
+
+	quotaKeysToDelete := make([]cleanQuotaItem, 0, len(quotaItems)/10)
+	for _, item := range quotaItems {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if item.elem.Clean(now) {
+			quotaKeysToDelete = append(quotaKeysToDelete, item)
+		}
+	}
+
+	s.deleteEmptyQuotas(ctx, quotaKeysToDelete, now)
 }
 
 type cleanCounterItem struct {
@@ -188,7 +263,16 @@ type cleanSlidingWindowItem struct {
 	elem *SlidingWindowElem
 }
 
-func (s *HashTable) cleanSnapshot(ctx context.Context) ([]cleanCounterItem, []cleanSlidingWindowItem) {
+type cleanQuotaItem struct {
+	key  string
+	elem *QuotaElem
+}
+
+func (s *HashTable) cleanSnapshot(ctx context.Context) (
+	[]cleanCounterItem,
+	[]cleanSlidingWindowItem,
+	[]cleanQuotaItem,
+) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -196,7 +280,7 @@ func (s *HashTable) cleanSnapshot(ctx context.Context) ([]cleanCounterItem, []cl
 	for k, v := range s.m {
 		select {
 		case <-ctx.Done():
-			return nil, nil
+			return nil, nil, nil
 		default:
 		}
 
@@ -207,14 +291,25 @@ func (s *HashTable) cleanSnapshot(ctx context.Context) ([]cleanCounterItem, []cl
 	for k, v := range s.sw {
 		select {
 		case <-ctx.Done():
-			return nil, nil
+			return nil, nil, nil
 		default:
 		}
 
 		slidingWindowItems = append(slidingWindowItems, cleanSlidingWindowItem{key: k, elem: v})
 	}
 
-	return counterItems, slidingWindowItems
+	quotaItems := make([]cleanQuotaItem, 0, len(s.q))
+	for k, v := range s.q {
+		select {
+		case <-ctx.Done():
+			return nil, nil, nil
+		default:
+		}
+
+		quotaItems = append(quotaItems, cleanQuotaItem{key: k, elem: v})
+	}
+
+	return counterItems, slidingWindowItems, quotaItems
 }
 
 //nolint:dupl // ok
@@ -293,6 +388,42 @@ func (s *HashTable) deleteEmptySlidingWindows(
 	}
 }
 
+//nolint:dupl // ok
+func (s *HashTable) deleteEmptyQuotas(ctx context.Context, items []cleanQuotaItem, now database.TxTime) {
+	for start := 0; start < len(items); {
+		startedAt := time.Now()
+		processed := 0
+
+		s.mu.Lock()
+		for ; start < len(items); start++ {
+			if processed >= cleanChunkSize {
+				break
+			}
+			if processed > 0 && time.Since(startedAt) >= cleanChunkTimeBudget {
+				break
+			}
+
+			item := items[start]
+			if current := s.q[item.key]; current == item.elem && current.Clean(now) {
+				delete(s.q, item.key)
+			}
+			processed++
+		}
+		s.mu.Unlock()
+
+		if start >= len(items) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
 func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem) {
 	s.mu.RLock()
 	// Create a snapshot to avoid holding lock during channel operations
@@ -324,6 +455,16 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 		tbItems = append(tbItems, struct {
 			key  hashTableKey
 			elem *TokenBucketElem
+		}{k, v})
+	}
+	qItems := make([]struct {
+		key  string
+		elem *QuotaElem
+	}, 0, len(s.q))
+	for k, v := range s.q {
+		qItems = append(qItems, struct {
+			key  string
+			elem *QuotaElem
 		}{k, v})
 	}
 	s.mu.RUnlock()
@@ -374,6 +515,29 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 			Tx:        tx,
 		}
 	}
+
+	now := database.TxTime(time.Now().Unix())
+	for _, item := range qItems {
+		limit := item.elem.Limit()
+		for _, allocation := range item.elem.DumpAllocations(dumpTx, now) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			ch <- database.DumpElem{
+				Kind:      database.DumpElemKindQuotaAllocation,
+				Key:       item.key,
+				Limit:     limit,
+				Value:     allocation.amount,
+				ClientID:  allocation.clientID,
+				ExpiresAt: allocation.expiresAt,
+				TxAt:      allocation.txAt,
+				Tx:        allocation.tx,
+			}
+		}
+	}
 }
 
 func (s *HashTable) RestoreDumpElem(elem database.DumpElem) {
@@ -389,6 +553,13 @@ func (s *HashTable) RestoreDumpElem(elem database.DumpElem) {
 		key := hashTableKey{key: elem.Key, batchSize: elem.BatchSize}
 		tbElem := s.getOrInitTokenBucketElem(key)
 		tbElem.Restore(elem)
+
+		return
+	}
+
+	if elem.Kind == database.DumpElemKindQuotaAllocation {
+		quotaElem := s.getOrInitQuotaElem(elem.Key, elem.Limit)
+		quotaElem.RestoreAllocation(elem)
 
 		return
 	}
@@ -462,6 +633,26 @@ func (s *HashTable) getOrInitTokenBucketElem(key hashTableKey) *TokenBucketElem 
 	if !ok {
 		v = NewTokenBucketElem(key.batchSize)
 		s.tb[key] = v
+	}
+	s.mu.Unlock()
+
+	return v
+}
+
+func (s *HashTable) getOrInitQuotaElem(name string, limit database.ValueType) *QuotaElem {
+	s.mu.RLock()
+	v, ok := s.q[name]
+	s.mu.RUnlock()
+
+	if ok {
+		return v
+	}
+
+	s.mu.Lock()
+	v, ok = s.q[name]
+	if !ok {
+		v = NewQuotaElem(limit)
+		s.q[name] = v
 	}
 	s.mu.Unlock()
 

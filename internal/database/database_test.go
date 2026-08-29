@@ -21,6 +21,22 @@ func TestResponseFormatting(t *testing.T) {
 		Remaining:  3,
 		ResetAfter: 60,
 	})))
+	require.Equal(t, "ok|1;4;7;3;60", string(appendQuotaAcquireMsg(nil, QuotaAcquireResult{
+		Acquired:     true,
+		Allocated:    4,
+		Used:         7,
+		Remaining:    3,
+		ExpiresAfter: 60,
+	})))
+	require.Equal(t, "ok|10;7;3;client-a;4;0;client-b;3;123", string(appendQuotaInfoMsg(nil, QuotaInfo{
+		Limit:     10,
+		Used:      7,
+		Remaining: 3,
+		Clients: []QuotaClientInfo{
+			{ClientID: "client-a", Amount: 4},
+			{ClientID: "client-b", Amount: 3, ExpiresAt: 123},
+		},
+	})))
 	require.Equal(t, "ok|tenant-a;60;100;5", string(appendLimitEventMsg(nil, LimitEvent{
 		Key:        "tenant-a",
 		Window:     60,

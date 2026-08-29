@@ -89,11 +89,36 @@ func (s *tokenScanner) scanQuery(commandID CommandID) (Query, error) {
 		return s.scanFixedQuery(commandID, 1)
 	case RLimitCommandID:
 		return s.scanRLimitQuery()
+	case QuotaCommandID:
+		return s.scanQuotaQuery()
 	case MDelCommandID:
 		return s.scanMDelQuery()
 	default:
 		return Query{}, ErrInvalidCommand
 	}
+}
+
+func (s *tokenScanner) scanQuotaQuery() (Query, error) {
+	var args []string
+	for {
+		arg, ok, err := s.next()
+		if err != nil {
+			return Query{}, err
+		}
+		if !ok {
+			break
+		}
+
+		args = append(args, arg)
+		if len(args) > 6 {
+			return Query{}, ErrInvalidArguments
+		}
+	}
+	if !validQuotaArguments(args) {
+		return Query{}, ErrInvalidArguments
+	}
+
+	return NewQuery(QuotaCommandID, args), nil
 }
 
 func (s *tokenScanner) scanFixedQuery(commandID CommandID, argCount int) (Query, error) {
@@ -228,6 +253,8 @@ func commandIDFromToken(token string) CommandID {
 		return PStreamCommandID
 	case asciiEqualFold(token, RLimitCommand):
 		return RLimitCommandID
+	case asciiEqualFold(token, QuotaCommand):
+		return QuotaCommandID
 	default:
 		return UnknownCommandID
 	}

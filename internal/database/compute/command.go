@@ -15,6 +15,10 @@ const (
 	RLimitCommandID
 	RLimitSlidingWindowCommandID
 	RLimitTokenBucketCommandID
+	QuotaCommandID
+	QuotaAcquireCommandID
+	QuotaReleaseCommandID
+	QuotaDeleteCommandID
 )
 
 var (
@@ -28,6 +32,7 @@ var (
 	StreamCommand  = "STREAM"
 	PStreamCommand = "PSTREAM"
 	RLimitCommand  = "RLIMIT"
+	QuotaCommand   = "QUOTA"
 )
 
 var commandNamesToID = map[string]CommandID{
@@ -41,6 +46,7 @@ var commandNamesToID = map[string]CommandID{
 	StreamCommand:  StreamCommandID,
 	PStreamCommand: PStreamCommandID,
 	RLimitCommand:  RLimitCommandID,
+	QuotaCommand:   QuotaCommandID,
 }
 
 func (c CommandID) Int() int {

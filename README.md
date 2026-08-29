@@ -1,6 +1,6 @@
 # fq
 
-**fast quotas** - a small specialized database for frequency capping, rate limiting, and quota counters.
+**fq** - a small specialized database for frequency capping, rate limiting, and quota counters.
 
 fq is built for a narrow set of high-throughput backend workloads where the main operation is to check or update counters inside time windows. It is not a general-purpose database and does not try to replace Redis, PostgreSQL, or other broad storage systems.
 
@@ -8,6 +8,7 @@ Use fq when you need:
 
 - API rate limiting
 - user, tenant, or token quotas
+- shared resource lease quotas
 - ad frequency capping
 - notification or message caps
 - login, signup, or abuse throttling
@@ -20,6 +21,7 @@ See last benchmark reports: [benchmarks/reports](benchmarks/reports)
 - Atomic fixed-window rate limiter
 - Atomic sliding-window rate limiter
 - Atomic token-bucket rate limiter
+- Atomic client-owned quota allocator with optional TTL
 - Counter commands for frequency capping
 - In-memory storage engine
 - WAL and periodic dumps for recovery
@@ -144,6 +146,69 @@ Example with limit `3`:
 ```
 
 Rejected rate-limit requests do not change state and are not written to WAL.
+
+### Quotas
+
+```text
+QUOTA ACQ <name> <limit> <amount> <client_id> [ttl]
+QUOTA REL <name> <client_id>
+QUOTA INF <name>
+QUOTA DEL <name>
+```
+
+`QUOTA ACQ` atomically reserves `amount` units from quota `name` for `client_id`.
+The first successful acquire creates the quota and fixes its `limit`; later acquires
+for the same quota must pass the same `limit`, otherwise fq returns an error.
+
+If `ttl` is provided, the client allocation expires and releases automatically after
+that many seconds. `QUOTA REL` explicitly releases the allocation for one client.
+`QUOTA DEL` deletes the whole quota only when it has no active client allocations.
+`QUOTA INF` returns the current active allocations for a quota.
+
+Repeated `QUOTA ACQ` calls from the same `client_id` with the same `amount` are
+idempotent and return the current allocation without extending its TTL. A repeated
+acquire with a different `amount` returns an error.
+
+`QUOTA ACQ` returns:
+
+```text
+ok|<acquired>;<allocated>;<used>;<remaining>;<expires_after>
+```
+
+- `acquired`: `1` when the reservation exists after the command, `0` when there is not enough quota
+- `allocated`: units reserved for this client by the command, or the existing idempotent reservation
+- `used`: total active reserved units in the quota
+- `remaining`: units still available
+- `expires_after`: seconds until this client's allocation expires, or `0` for no TTL
+
+`QUOTA REL` and `QUOTA DEL` return `ok|1` when state was removed and `ok|0` when
+there was nothing to remove.
+
+`QUOTA INF` returns:
+
+```text
+ok|<limit>;<used>;<remaining>[;<client_id>;<amount>;<expires_at>...]
+```
+
+Client fields are repeated in sorted `client_id` order. `expires_at` is a Unix
+timestamp in seconds, or `0` for an allocation without TTL.
+
+Example with limit `10`:
+
+```text
+[fq]> QUOTA ACQ campaign_42 10 4 worker_a 60
+1;4;4;6;60
+[fq]> QUOTA INF campaign_42
+10;4;6;worker_a;4;1788019260
+[fq]> QUOTA ACQ campaign_42 10 4 worker_a 60
+1;4;4;6;59
+[fq]> QUOTA ACQ campaign_42 10 7 worker_b
+0;0;4;6;0
+[fq]> QUOTA REL campaign_42 worker_a
+1
+[fq]> QUOTA DEL campaign_42
+1
+```
 
 ### Counters
 

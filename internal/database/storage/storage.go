@@ -35,6 +35,14 @@ type Engine interface {
 		database.ValueType,
 		func() error,
 	) (database.RateLimitResult, error)
+	QuotaAcquire(
+		database.TxContext,
+		database.QuotaAcquireRequest,
+		func() error,
+	) (database.QuotaAcquireResult, error)
+	QuotaRelease(database.TxContext, string, string) bool
+	QuotaDelete(database.TxContext, string, func() error) (bool, error)
+	QuotaInfo(database.TxTime, string) database.QuotaInfo
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
 	MDel(database.TxContext, []database.BatchKey) []bool
@@ -68,6 +76,12 @@ type WAL interface {
 		capacity database.ValueType,
 		refillAmount database.ValueType,
 	)
+	QuotaAcquire(ctx context.Context, txCtx database.TxContext, request database.QuotaAcquireRequest) tools.FutureError
+	QuotaAcquireAsync(ctx context.Context, txCtx database.TxContext, request database.QuotaAcquireRequest)
+	QuotaRelease(ctx context.Context, txCtx database.TxContext, name string, clientID string) tools.FutureError
+	QuotaReleaseAsync(ctx context.Context, txCtx database.TxContext, name string, clientID string)
+	QuotaDelete(ctx context.Context, txCtx database.TxContext, name string) tools.FutureError
+	QuotaDeleteAsync(ctx context.Context, txCtx database.TxContext, name string)
 	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
@@ -281,6 +295,44 @@ func (s *Storage) RLimitTokenBucket(
 	return result, nil
 }
 
+func (s *Storage) QuotaAcquire(
+	ctx context.Context,
+	request database.QuotaAcquireRequest,
+) (database.QuotaAcquireResult, error) {
+	txCtx := s.makeTxContext()
+	if request.TTL > 0 {
+		request.ExpiresAt = txCtx.CurrTime + database.TxTime(request.TTL)
+	}
+
+	return s.engine.QuotaAcquire(txCtx, request, func() error {
+		return s.writeQuotaAcquireWAL(ctx, txCtx, request)
+	})
+}
+
+func (s *Storage) QuotaRelease(ctx context.Context, name, clientID string) (bool, error) {
+	txCtx := s.makeTxContext()
+
+	if err := s.writeQuotaReleaseWAL(ctx, txCtx, name, clientID); err != nil {
+		return false, err
+	}
+
+	return s.engine.QuotaRelease(txCtx, name, clientID), nil
+}
+
+func (s *Storage) QuotaDelete(ctx context.Context, name string) (bool, error) {
+	txCtx := s.makeTxContext()
+
+	return s.engine.QuotaDelete(txCtx, name, func() error {
+		return s.writeQuotaDeleteWAL(ctx, txCtx, name)
+	})
+}
+
+func (s *Storage) QuotaInfo(_ context.Context, name string) (database.QuotaInfo, error) {
+	now := database.TxTime(time.Now().Unix())
+
+	return s.engine.QuotaInfo(now, name), nil
+}
+
 func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueType, error) {
 	value, _ := s.engine.Get(key)
 
@@ -388,6 +440,55 @@ func (s *Storage) writeRLimitTokenBucketWAL(
 	}
 
 	s.wal.RLimitTokenBucketAsync(ctx, txCtx, key, capacity, refillAmount)
+
+	return nil
+}
+
+func (s *Storage) writeQuotaAcquireWAL(
+	ctx context.Context,
+	txCtx database.TxContext,
+	request database.QuotaAcquireRequest,
+) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.QuotaAcquire(ctx, txCtx, request)
+		return future.Get()
+	}
+
+	s.wal.QuotaAcquireAsync(ctx, txCtx, request)
+
+	return nil
+}
+
+func (s *Storage) writeQuotaReleaseWAL(ctx context.Context, txCtx database.TxContext, name, clientID string) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.QuotaRelease(ctx, txCtx, name, clientID)
+		return future.Get()
+	}
+
+	s.wal.QuotaReleaseAsync(ctx, txCtx, name, clientID)
+
+	return nil
+}
+
+func (s *Storage) writeQuotaDeleteWAL(ctx context.Context, txCtx database.TxContext, name string) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.QuotaDelete(ctx, txCtx, name)
+		return future.Get()
+	}
+
+	s.wal.QuotaDeleteAsync(ctx, txCtx, name)
 
 	return nil
 }
