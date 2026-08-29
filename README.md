@@ -16,6 +16,21 @@ Use fq when you need:
 
 See last benchmark reports: [benchmarks/reports](benchmarks/reports)
 
+## Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Commands](#commands)
+- [Quick Start](#quick-start)
+- [Benchmarking](#benchmarking)
+- [Stress testing](#stress-testing)
+- [Release results capture](#release-results-capture)
+- [Persistence](#persistence)
+- [Replication](#replication)
+- [Observability](#observability)
+- [Architecture](#architecture)
+- [Development](#development)
+
 ## Features
 
 - Atomic fixed-window rate limiter
