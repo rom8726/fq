@@ -11,7 +11,7 @@ key_prefix: bench_tb
 key_distribution: zipfian
 key_start: 0
 key_range: 100000
-batch: 10
+batch: 600
 output: json
 output_file: benchmarks/results/release-tb.json
 seed: 42

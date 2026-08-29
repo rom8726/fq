@@ -11,7 +11,7 @@ key_prefix: bench_sw
 key_distribution: uniform
 key_start: 0
 key_range: 100000
-batch: 10
+batch: 600
 output: json
 output_file: benchmarks/results/release-sw-uniform.json
 seed: 42
