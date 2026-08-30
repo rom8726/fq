@@ -3,7 +3,7 @@ package initialization
 
 import (
 	"errors"
-	"os"
+	"io"
 
 	"github.com/rs/zerolog"
 
@@ -31,7 +31,7 @@ var supportedLoggingLevels = map[string]zerolog.Level{
 // const defaultEncoding = "json"
 const defaultLevel = zerolog.InfoLevel
 
-func CreateLogger(cfg config.LoggingConfig) (*zerolog.Logger, error) {
+func CreateLogger(cfg config.LoggingConfig, w io.Writer) (*zerolog.Logger, error) {
 	level := defaultLevel
 
 	if cfg.Level != "" {
@@ -41,7 +41,7 @@ func CreateLogger(cfg config.LoggingConfig) (*zerolog.Logger, error) {
 		}
 	}
 
-	writer := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: loggerTimestampFormat}
+	writer := zerolog.ConsoleWriter{Out: w, TimeFormat: loggerTimestampFormat}
 	logger := zerolog.New(writer).With().Timestamp().Logger().Level(level)
 
 	return &logger, nil

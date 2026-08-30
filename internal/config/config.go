@@ -26,8 +26,6 @@ const (
 	ReplicaTypeMaster = "master"
 	ReplicaTypeSlave  = "slave"
 
-	configDefaultFilePath = "config.yml"
-
 	DefaultLimitEventQueueCapacity = 16
 	DefaultEnginePartitions        = 10
 	DefaultEngineWALApplyWorkers   = 1
@@ -141,25 +139,17 @@ type ReplicationConfig struct {
 	SyncInterval  time.Duration `yaml:"sync_interval"`
 }
 
-func Init() (Config, error) {
-	var configPath string
-
-	if len(os.Args) > 1 {
-		configPath = os.Args[1]
-	} else {
-		configPath = configDefaultFilePath
-	}
-
-	info, err := os.Stat(configPath)
+func Load(path string) (Config, error) {
+	info, err := os.Stat(path)
 	if err != nil {
-		return Config{}, fmt.Errorf("stat config %q: %w", configPath, err)
+		return Config{}, fmt.Errorf("stat config %q: %w", path, err)
 	}
 
 	if info.IsDir() {
-		return Config{}, fmt.Errorf("config %q is a directory", configPath)
+		return Config{}, fmt.Errorf("config %q is a directory", path)
 	}
 
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config file: %w", err)
 	}

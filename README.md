@@ -472,6 +472,25 @@ Connect with the CLI:
 make run-cli
 ```
 
+Or start the server with the built-in interactive TUI:
+
+```shell
+make run-interactive
+# or: bin/fq -i
+```
+
+Or run the interactive TUI from Docker:
+
+```shell
+make docker-run-interactive
+# or:
+docker run --rm -it \
+  -p 1945:1945 \
+  -p 1946:1946 \
+  -p 2112:2112 \
+  ghcr.io/fq-db/fq:latest -i
+```
+
 Try a fixed-window limiter:
 
 ```text

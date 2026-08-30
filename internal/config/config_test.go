@@ -15,6 +15,36 @@ func TestValidateAcceptsValidConfig(t *testing.T) {
 	require.NoError(t, validate(&cfg))
 }
 
+func TestLoadReadsValidConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	contents := `
+engine:
+  type: in_memory
+  clean_interval: 1s
+persistence:
+  mode: memory
+network:
+  address: ":1945"
+  max_connections: 10
+  max_message_size: 4KB
+  idle_timeout: 1m
+logging:
+  level: info
+`
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "in_memory", cfg.Engine.Type)
+	require.Equal(t, ":1945", cfg.Network.Address)
+}
+
+func TestLoadMissingFileReturnsError(t *testing.T) {
+	_, err := Load("/nonexistent/path/config.yml")
+	require.Error(t, err)
+}
+
 func TestEngineLimitEventQueueCapacityDefaults(t *testing.T) {
 	cfg := validConfig()
 	cfg.Engine.LimitEventQueueCapacity = 0

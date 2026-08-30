@@ -3,6 +3,7 @@ package initialization
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -37,17 +38,26 @@ type Initializer struct {
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
-	startedAt := time.Now()
-	walStream := make(chan walPkg.Chunk, 1)
-	dumpStream := make(chan database.DumpChunk, 1)
-
-	logger, err := CreateLogger(cfg.Logging)
+	logger, err := CreateLogger(cfg.Logging, os.Stdout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
+	return newInitializer(cfg, logger)
+}
+
+func NewInitializerWithLogger(cfg config.Config, logger *zerolog.Logger) (*Initializer, error) {
+	return newInitializer(cfg, logger)
+}
+
+func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, error) {
+	startedAt := time.Now()
+	walStream := make(chan walPkg.Chunk, 1)
+	dumpStream := make(chan database.DumpChunk, 1)
+
 	var wal *walPkg.WAL
 	if cfg.UsesWAL() {
+		var err error
 		wal, err = CreateWAL(cfg.WAL, logger, walStream)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize wal: %w", err)

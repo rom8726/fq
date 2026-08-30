@@ -53,6 +53,12 @@ run-server:
 	@mkdir -p ./fq_data/wal
 	@go run ./cmd/fq
 
+.PHONY: run-interactive
+run-interactive:
+	@echo "-> Running fq server with interactive TUI..."
+	@mkdir -p ./fq_data/wal
+	@go run ./cmd/fq -i
+
 .PHONY: run-slave
 run-slave:
 	@echo "-> Running fq server (slave replica)..."
@@ -73,6 +79,15 @@ run-cli-slave:
 run-bench:
 	@echo "-> Running fq benchmark..."
 	@go run ./cmd/bench -address :1945
+
+.PHONY: docker-run-interactive
+docker-run-interactive:
+	@echo "-> Running fq Docker image with interactive TUI..."
+	@docker run --rm -it \
+		-p 1945:1945 \
+		-p 1946:1946 \
+		-p 2112:2112 \
+		ghcr.io/fq-db/fq:latest -i
 
 .PHONY: bench-smoke
 bench-smoke:
