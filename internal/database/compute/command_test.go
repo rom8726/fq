@@ -19,7 +19,8 @@ func TestCommandNameToCommandID(t *testing.T) {
 	require.Equal(t, compute.QPStreamCommandID, compute.CommandNameToCommandID("QPSTREAM"))
 	require.Equal(t, compute.RLimitCommandID, compute.CommandNameToCommandID("RLIMIT"))
 	require.Equal(t, compute.QuotaCommandID, compute.CommandNameToCommandID("QUOTA"))
-	require.Equal(t, compute.UnknownCommandID, compute.CommandNameToCommandID("TRUNCATE"))
+	require.Equal(t, compute.FlushDBCommandID, compute.CommandNameToCommandID("FLUSHDB"))
+	require.Equal(t, compute.TruncateCommandID, compute.CommandNameToCommandID("TRUNCATE"))
 }
 
 func TestPersistentCommandIDsDoNotDrift(t *testing.T) {
@@ -34,4 +35,6 @@ func TestPersistentCommandIDsDoNotDrift(t *testing.T) {
 	require.Equal(t, compute.CommandID(17), compute.QPStreamCommandID)
 	require.Equal(t, compute.CommandID(18), compute.RLimitFixedWindowCommandID)
 	require.Equal(t, compute.CommandID(19), compute.QuotaSetCommandID)
+	require.Equal(t, compute.CommandID(20), compute.FlushDBCommandID)
+	require.Equal(t, compute.CommandID(21), compute.TruncateCommandID)
 }

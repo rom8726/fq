@@ -20,9 +20,17 @@ type fsWriter interface {
 	WriteBatch([]Log)
 }
 
+type truncatingFSWriter interface {
+	Truncate() error
+}
+
 type fsReader interface {
 	ReadLogs(ctx context.Context) ([]*LogData, error)
 	ReadSegment(ctx context.Context, filename string) ([]*LogData, error)
+}
+
+type afterLSNFSReader interface {
+	ReadLogsAfter(ctx context.Context, lsn uint64) ([]*LogData, error)
 }
 
 var errWALClosed = errors.New("wal is closed")
@@ -37,7 +45,8 @@ type WAL struct {
 
 	stream chan<- Chunk
 
-	records chan Log
+	records  chan Log
+	controls chan walControl
 
 	closeCh     chan struct{}
 	closeDoneCh chan struct{}
@@ -45,6 +54,11 @@ type WAL struct {
 	closed      atomic.Bool
 
 	logger *zerolog.Logger
+}
+
+type walControl struct {
+	fn      func() error
+	promise tools.Promise[error]
 }
 
 func NewWAL(
@@ -73,6 +87,7 @@ func NewWAL(
 		directory:     directory,
 		stream:        stream,
 		records:       make(chan Log, queueCapacity),
+		controls:      make(chan walControl),
 		closeCh:       make(chan struct{}),
 		closeDoneCh:   make(chan struct{}),
 		logger:        logger,
@@ -155,6 +170,23 @@ func (w *WAL) Start() {
 			}
 		}
 
+		drainAndFlushReadyRecords := func() {
+			for {
+				for len(batch) < w.maxBatchSize {
+					select {
+					case record := <-w.records:
+						observability.SetWALQueueDepth(len(w.records))
+						appendRecord(record)
+					default:
+						flush()
+
+						return
+					}
+				}
+				flush()
+			}
+		}
+
 		for {
 			select {
 			case <-w.closeCh:
@@ -172,6 +204,9 @@ func (w *WAL) Start() {
 			case record := <-w.records:
 				observability.SetWALQueueDepth(len(w.records))
 				appendRecord(record)
+			case control := <-w.controls:
+				drainAndFlushReadyRecords()
+				control.promise.Set(control.fn())
 			case <-timerC:
 				timerC = nil
 				drainReadyRecords()
@@ -465,6 +500,67 @@ func (w *WAL) QuotaDeleteAsync(ctx context.Context, txCtx database.TxContext, na
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
 	w.pushAsync(ctx, txCtx.Tx, compute.QuotaDeleteCommandID, []string{name, currTimeStr})
+}
+
+func (w *WAL) FlushDB(ctx context.Context, txCtx database.TxContext) tools.FutureError {
+	future := w.push(ctx, txCtx.Tx, compute.FlushDBCommandID, nil)
+
+	return w.after(future, func(err error) error {
+		if err != nil {
+			return err
+		}
+
+		return writeLastFlushDBLSN(w.directory, uint64(txCtx.Tx))
+	})
+}
+
+func (w *WAL) Truncate(ctx context.Context) tools.FutureError {
+	return w.control(ctx, func() error {
+		writer, ok := w.fsWriter.(truncatingFSWriter)
+		if !ok {
+			return nil
+		}
+
+		return writer.Truncate()
+	})
+}
+
+func (w *WAL) control(ctx context.Context, fn func() error) tools.FutureError {
+	promise := tools.NewPromise[error]()
+	future := promise.GetFuture()
+
+	if err := ctx.Err(); err != nil {
+		promise.Set(err)
+
+		return future
+	}
+
+	if w.closed.Load() {
+		promise.Set(errWALClosed)
+
+		return future
+	}
+
+	select {
+	case <-ctx.Done():
+		promise.Set(ctx.Err())
+	case <-w.closeCh:
+		promise.Set(errWALClosed)
+	case w.controls <- walControl{fn: fn, promise: promise}:
+	}
+
+	return future
+}
+
+func (w *WAL) after(future tools.FutureError, fn func(error) error) tools.FutureError {
+	promise := tools.NewPromise[error]()
+	result := promise.GetFuture()
+
+	go func() {
+		promise.Set(fn(future.Get()))
+	}()
+
+	return result
 }
 
 func (w *WAL) push(

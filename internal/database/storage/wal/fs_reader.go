@@ -26,6 +26,10 @@ func NewFSReader(directory string, logger *zerolog.Logger) *FSReader {
 }
 
 func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
+	return r.ReadLogsAfter(ctx, 0)
+}
+
+func (r *FSReader) ReadLogsAfter(ctx context.Context, lsn uint64) ([]*LogData, error) {
 	filenames, err := walSegmentPaths(r.directory)
 	if err != nil {
 		return nil, err
@@ -38,6 +42,12 @@ func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
+		}
+
+		if canSkip, err := r.segmentCanBeSkipped(ctx, filename, lsn); err != nil {
+			return nil, err
+		} else if canSkip {
+			continue
 		}
 
 		data, err := os.ReadFile(filename)
@@ -59,6 +69,40 @@ func (r *FSReader) ReadLogs(ctx context.Context) ([]*LogData, error) {
 	})
 
 	return logs, nil
+}
+
+func (r *FSReader) segmentCanBeSkipped(ctx context.Context, filename string, lsn uint64) (bool, error) {
+	if lsn == 0 {
+		return false, nil
+	}
+
+	meta, err := readSegmentMetadata(filename)
+	if err == nil {
+		return meta.MaxLSN <= lsn, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if r.logger != nil {
+		r.logger.Warn().
+			Err(err).
+			Str("segment_path", filename).
+			Msg("failed to read WAL segment metadata, falling back to segment scan")
+	}
+
+	logs, err := r.ReadSegment(ctx, filename)
+	if err != nil {
+		return false, fmt.Errorf("failed to read segment metadata fallback %s: %w", filename, err)
+	}
+
+	var maxLSN uint64
+	for _, log := range logs {
+		if log.LSN > maxLSN {
+			maxLSN = log.LSN
+		}
+	}
+
+	return maxLSN <= lsn, nil
 }
 
 func (r *FSReader) ReadSegment(ctx context.Context, filename string) ([]*LogData, error) {

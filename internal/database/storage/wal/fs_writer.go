@@ -70,6 +70,21 @@ func (w *FSWriter) Close() error {
 	return w.closeSegment()
 }
 
+func (w *FSWriter) Truncate() error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if w.closed {
+		return errFSWriterClosed
+	}
+
+	if err := w.closeSegment(); err != nil {
+		return err
+	}
+
+	return removeWALFiles(w.directory)
+}
+
 func (w *FSWriter) writeBatch(batch []Log) error {
 	if w.closed {
 		return errFSWriterClosed
@@ -278,6 +293,32 @@ func (w *FSWriter) flushSegmentMetadata() error {
 	}
 
 	return writeSegmentMetadata(w.segmentPath, segmentMetadata{MaxLSN: w.segmentMaxLSN})
+}
+
+func removeWALFiles(directory string) error {
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return fmt.Errorf("failed to create WAL directory: %w", err)
+	}
+
+	files, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("failed to scan WAL directory: %w", err)
+	}
+
+	for _, file := range files {
+		name := file.Name()
+		if file.IsDir() || (!isWALSegmentFile(name) &&
+			!isWALSegmentMetadataFile(name) &&
+			name != lastFlushDBLSNFileName) {
+			continue
+		}
+
+		if err := os.Remove(filepath.Join(directory, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove WAL file %s: %w", name, err)
+		}
+	}
+
+	return syncDirectory(directory)
 }
 
 func uint32ToBytes(num uint32) []byte {

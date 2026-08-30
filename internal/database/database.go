@@ -76,6 +76,8 @@ type storageLayer interface {
 	QuotaRelease(ctx context.Context, name string, clientID string) (bool, error)
 	QuotaDelete(ctx context.Context, name string) (bool, error)
 	QuotaInfo(ctx context.Context, name string) (QuotaInfo, error)
+	FlushDB(ctx context.Context) error
+	Truncate(ctx context.Context) error
 }
 
 type Database struct {
@@ -164,6 +166,10 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		response = d.handleRLimitQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.QuotaCommandID:
 		response = d.handleQuotaQuery(ctx, query, responseBuffer.buf[:0])
+	case compute.FlushDBCommandID:
+		response = d.handleFlushDBQuery(ctx, responseBuffer.buf[:0])
+	case compute.TruncateCommandID:
+		response = d.handleTruncateQuery(ctx, responseBuffer.buf[:0])
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -171,6 +177,22 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	}
 
 	return write(response)
+}
+
+func (d *Database) handleFlushDBQuery(ctx context.Context, dst []byte) []byte {
+	if err := d.storageLayer.FlushDB(ctx); err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return appendValueMsg(dst, 1)
+}
+
+func (d *Database) handleTruncateQuery(ctx context.Context, dst []byte) []byte {
+	if err := d.storageLayer.Truncate(ctx); err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return appendValueMsg(dst, 1)
 }
 
 func (d *Database) handleQuotaQuery(ctx context.Context, query compute.Query, dst []byte) []byte {

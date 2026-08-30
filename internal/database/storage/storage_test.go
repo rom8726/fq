@@ -239,6 +239,10 @@ func (e *txRecordingEngine) MDel(database.TxContext, []database.BatchKey) []bool
 	return nil
 }
 
+func (e *txRecordingEngine) FlushDB() {
+	e.lastTx = 0
+}
+
 func (e *txRecordingEngine) Clean(context.Context) {}
 
 func (e *txRecordingEngine) Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error) {

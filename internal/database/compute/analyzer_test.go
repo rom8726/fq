@@ -21,7 +21,7 @@ func TestAnalyzeQuery(t *testing.T) {
 			err:    compute.ErrInvalidCommand,
 		},
 		"invalid command": {
-			tokens: []string{"TRUNCATE"},
+			tokens: []string{"UNKNOWN"},
 			err:    compute.ErrInvalidCommand,
 		},
 		"invalid number arguments for incr query": {
@@ -71,6 +71,14 @@ func TestAnalyzeQuery(t *testing.T) {
 		"valid message size query": {
 			tokens: []string{"MSGSIZE"},
 			query:  compute.NewQuery(compute.MsgSizeCommandID, []string{}),
+		},
+		"valid flushdb query": {
+			tokens: []string{"FLUSHDB"},
+			query:  compute.NewQuery(compute.FlushDBCommandID, []string{}),
+		},
+		"valid truncate query": {
+			tokens: []string{"TRUNCATE"},
+			query:  compute.NewQuery(compute.TruncateCommandID, []string{}),
 		},
 		"valid stream query": {
 			tokens: []string{"STREAM"},

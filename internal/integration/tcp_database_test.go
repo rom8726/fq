@@ -87,7 +87,7 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireQuery("QUOTA DEL quota", "ok|1")
 	app.RequireQuery("MDEL key 60 other 60", "ok|1;1")
 	app.RequireQuery("GET key 60", "ok|0")
-	app.RequireQuery("TRUNCATE key 60", "err|invalid command")
+	app.RequireQuery("TRUNCATE key 60", "err|invalid arguments")
 	app.RequireQuery("RLIMIT XX limited 2 60", "err|invalid rate limit algorithm")
 }
 
@@ -728,6 +728,78 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	second.RequireQuotaAcquire("QUOTA ACQL durable_quota 10 7 client-b", false, 0, 4, 6, 0)
 	second.RequireQuery("QUOTA REL durable_quota client-a", "ok|1")
 	second.RequireQuotaAcquire("QUOTA ACQL durable_quota 10 7 client-b", true, 7, 7, 3, 0)
+}
+
+func TestTCPDatabaseFlushDBClearsMemoryAndSkipsOldWALAfterRestart(t *testing.T) {
+	walDir := t.TempDir()
+
+	first := startTestDatabase(t, walDir)
+	first.RequireQuery("INCR durable 60", "ok|1")
+	first.RequireQuery("QUOTA SET server_quota 10", "ok|1")
+	first.RequireQuotaAcquire("QUOTA ACQ server_quota 4 client-a", true, 4, 4, 6, 0)
+	first.RequireQuery("FLUSHDB", "ok|1")
+	first.RequireQuery("GET durable 60", "ok|0")
+	first.RequireQuotaInfo("QUOTA INF server_quota", 0, 0, 0, nil)
+	first.RequireQuery("INCR after_flush 60", "ok|1")
+	first.Close()
+
+	_, err := os.Stat(filepath.Join(walDir, "last_flushdb_lsn.meta"))
+	require.NoError(t, err)
+
+	second := startTestDatabase(t, walDir)
+	defer second.Close()
+
+	second.RequireQuery("GET durable 60", "ok|0")
+	second.RequireQuotaInfo("QUOTA INF server_quota", 0, 0, 0, nil)
+	second.RequireQuery("GET after_flush 60", "ok|1")
+}
+
+func TestTCPDatabaseFlushDBRemovesOldDumpBeforeRecovery(t *testing.T) {
+	walDir := t.TempDir()
+	dumpDir := t.TempDir()
+
+	first := startTestDatabaseWithDump(t, walDir, dumpDir, false)
+	first.RequireQuery("INCR dumped 60", "ok|1")
+	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(1)))
+	first.RequireQuery("FLUSHDB", "ok|1")
+	first.Close()
+
+	_, err := os.Stat(filepath.Join(dumpDir, "current.dump"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	second := startTestDatabaseWithDump(t, walDir, dumpDir, true)
+	defer second.Close()
+	second.RequireQuery("GET dumped 60", "ok|0")
+}
+
+func TestTCPDatabaseTruncateClearsMemoryDumpAndWAL(t *testing.T) {
+	walDir := t.TempDir()
+	dumpDir := t.TempDir()
+
+	first := startTestDatabaseWithDump(t, walDir, dumpDir, false)
+	first.RequireQuery("INCR durable 60", "ok|1")
+	first.RequireQuery("QUOTA SET server_quota 10", "ok|1")
+	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(2)))
+	_, err := os.Stat(filepath.Join(dumpDir, "current.dump"))
+	require.NoError(t, err)
+
+	first.RequireQuery("TRUNCATE", "ok|1")
+	first.RequireQuery("GET durable 60", "ok|0")
+	first.RequireQuotaInfo("QUOTA INF server_quota", 0, 0, 0, nil)
+
+	_, err = os.Stat(filepath.Join(dumpDir, "current.dump"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	walFiles, err := filepath.Glob(filepath.Join(walDir, "wal_*.log*"))
+	require.NoError(t, err)
+	require.Empty(t, walFiles)
+	_, err = os.Stat(filepath.Join(walDir, "last_flushdb_lsn.meta"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	first.Close()
+
+	second := startTestDatabaseWithDump(t, walDir, dumpDir, true)
+	defer second.Close()
+	second.RequireQuery("GET durable 60", "ok|0")
+	second.RequireQuotaInfo("QUOTA INF server_quota", 0, 0, 0, nil)
 }
 
 func TestTCPDatabaseRecoversSlidingWindowFromDumpAfterRestart(t *testing.T) {

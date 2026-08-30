@@ -22,6 +22,8 @@ const (
 	qpstreamQueryArgumentsNumber = 1
 	rlimitQueryArgumentsNumber   = -3
 	quotaQueryArgumentsNumber    = -4
+	flushDBQueryArgumentsNumber  = 0
+	truncateQueryArgumentsNumber = 0
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -37,6 +39,8 @@ var queryArgumentsNumber = map[CommandID]int{
 	QPStreamCommandID: qpstreamQueryArgumentsNumber,
 	RLimitCommandID:   rlimitQueryArgumentsNumber,
 	QuotaCommandID:    quotaQueryArgumentsNumber,
+	FlushDBCommandID:  flushDBQueryArgumentsNumber,
+	TruncateCommandID: truncateQueryArgumentsNumber,
 }
 
 var (

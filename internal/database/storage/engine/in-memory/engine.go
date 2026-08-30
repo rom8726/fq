@@ -69,6 +69,7 @@ type hashTable interface {
 	)
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
+	FlushDB()
 	Clean(ctx context.Context)
 	Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem)
 	RestoreDumpElem(elem database.DumpElem)
@@ -412,6 +413,12 @@ func (e *Engine) MDel(txCtx database.TxContext, keys []database.BatchKey) []bool
 	return res
 }
 
+func (e *Engine) FlushDB() {
+	for _, partition := range e.partitions {
+		partition.FlushDB()
+	}
+}
+
 func (e *Engine) Clean(ctx context.Context) {
 	for _, partition := range e.partitions {
 		partition.Clean(ctx)
@@ -563,6 +570,8 @@ func (e *Engine) applyLog(log *wal.LogData) {
 		e.applyQuotaReleaseFromLog(log)
 	case compute.QuotaDeleteCommandID:
 		e.applyQuotaDeleteFromLog(log)
+	case compute.FlushDBCommandID:
+		e.FlushDB()
 	}
 }
 

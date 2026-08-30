@@ -266,3 +266,53 @@ func TestWALSegmentCloseIsIdempotentAndRejectsWrites(t *testing.T) {
 		require.ErrorIs(t, err.Get(), errFSWriterClosed)
 	}
 }
+
+func TestWALSegmentTruncateRemovesFilesAndAllowsNewWrites(t *testing.T) {
+	logger := zerolog.Nop()
+	dir := t.TempDir()
+	fsWriter := NewFSWriter(dir, 100<<10, &logger)
+	defer func() {
+		require.NoError(t, fsWriter.Close())
+	}()
+
+	originalNow := now
+	now = func() time.Time {
+		return time.Unix(20, 0)
+	}
+	defer func() {
+		now = originalNow
+	}()
+
+	first := []Log{
+		NewLog(20, compute.IncrCommandID, []string{"key_20", "60"}),
+	}
+	fsWriter.WriteBatch(first)
+	for _, record := range first {
+		err := record.Result()
+		require.NoError(t, err.Get())
+	}
+
+	require.NoError(t, writeLastFlushDBLSN(dir, 20))
+	require.NoError(t, fsWriter.Truncate())
+
+	files, err := filepath.Glob(filepath.Join(dir, "wal_*.log*"))
+	require.NoError(t, err)
+	require.Empty(t, files)
+	_, err = os.Stat(filepath.Join(dir, lastFlushDBLSNFileName))
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	now = func() time.Time {
+		return time.Unix(21, 0)
+	}
+	second := []Log{
+		NewLog(21, compute.IncrCommandID, []string{"key_21", "60"}),
+	}
+	fsWriter.WriteBatch(second)
+	for _, record := range second {
+		err := record.Result()
+		require.NoError(t, err.Get())
+	}
+
+	_, err = os.Stat(filepath.Join(dir, "wal_21000.log"))
+	require.NoError(t, err)
+}

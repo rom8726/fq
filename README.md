@@ -192,6 +192,8 @@ QUOTA INF <name>
 QUOTA DEL <name>
 QSTREAM
 QPSTREAM <prefix>
+FLUSHDB
+TRUNCATE
 ```
 
 fq supports two quota ownership models:
@@ -308,6 +310,26 @@ Client-owned lease example with limit `10`:
 1
 ```
 
+### Database Maintenance
+
+```text
+FLUSHDB
+TRUNCATE
+```
+
+- `FLUSHDB`: removes all in-memory keys, counters, limiters, and quotas. With dump
+  enabled, fq removes the current dump snapshot; with WAL enabled, fq writes the
+  flush LSN to `last_flushdb_lsn.meta`, so restart recovery ignores WAL entries
+  at or before that point.
+- `TRUNCATE`: removes all in-memory data and physically deletes dump and WAL files,
+  including the `last_flushdb_lsn.meta` barrier.
+
+Both commands return:
+
+```text
+ok|1
+```
+
 ### Counters
 
 ```text
@@ -329,6 +351,8 @@ PSTREAM <prefix>
 QSTREAM
 QPSTREAM <prefix>
 MSGSIZE
+FLUSHDB
+TRUNCATE
 ```
 
 - `INCR`: increments the counter for a key inside a time window
@@ -349,6 +373,8 @@ MSGSIZE
 - `QSTREAM`: streams quota mutation events
 - `QPSTREAM`: streams the same quota events, filtered to quota names that start with `prefix`
 - `MSGSIZE`: returns the maximum configured request/response payload size
+- `FLUSHDB`: clears all in-memory database state and persists a WAL recovery barrier
+- `TRUNCATE`: clears all in-memory database state and deletes dump/WAL persistence files
 
 Counter commands are useful for frequency capping and quota tracking where the application performs the decision itself.
 

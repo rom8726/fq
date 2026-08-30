@@ -1,9 +1,26 @@
 package wal
 
-import "context"
+import (
+	"context"
+	"os"
+)
 
 func (w *WAL) TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error) {
-	logs, err := w.fsReader.ReadLogs(ctx)
+	lastFlushDBLSN, err := readLastFlushDBLSN(w.directory)
+	if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	recoverAfterLSN := dumpLastLSN
+	if lastFlushDBLSN > recoverAfterLSN {
+		recoverAfterLSN = lastFlushDBLSN
+	}
+
+	var logs []*LogData
+	if reader, ok := w.fsReader.(afterLSNFSReader); ok {
+		logs, err = reader.ReadLogsAfter(ctx, recoverAfterLSN)
+	} else {
+		logs, err = w.fsReader.ReadLogs(ctx)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -14,7 +31,7 @@ func (w *WAL) TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (la
 
 	logIdx := len(logs) // end of slice
 	for i := range logs {
-		if logs[i].LSN > dumpLastLSN {
+		if logs[i].LSN > recoverAfterLSN {
 			logIdx = i
 
 			break
@@ -27,5 +44,5 @@ func (w *WAL) TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (la
 		return logs[len(logs)-1].LSN, nil
 	}
 
-	return dumpLastLSN, nil
+	return recoverAfterLSN, nil
 }

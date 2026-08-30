@@ -93,6 +93,47 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 	return nil
 }
 
+func (d *Dumper) Truncate(ctx context.Context) error {
+	d.readDumpMu.Lock()
+	defer d.readDumpMu.Unlock()
+
+	d.invalidateAllSessions()
+
+	if err := os.MkdirAll(d.dir, 0o750); err != nil {
+		return fmt.Errorf("create dump directory: %w", err)
+	}
+
+	files, err := os.ReadDir(d.dir)
+	if err != nil {
+		return fmt.Errorf("scan dump directory: %w", err)
+	}
+
+	for _, file := range files {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		name := file.Name()
+		if file.IsDir() || (name != currentDumpFileName && filepath.Ext(name) != ".dump") {
+			continue
+		}
+
+		if err := os.Remove(filepath.Join(d.dir, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove dump file %s: %w", name, err)
+		}
+	}
+
+	if err := d.syncDumpDirectory(); err != nil {
+		return err
+	}
+
+	d.dumpVersion++
+
+	return nil
+}
+
 func (d *Dumper) syncDumpDirectory() error {
 	dir, err := os.Open(d.dir)
 	if err != nil {

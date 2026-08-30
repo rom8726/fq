@@ -75,6 +75,24 @@ func TestReadLogsIgnoresSegmentMetadataFiles(t *testing.T) {
 	require.Equal(t, uint64(1), logs[0].LSN)
 }
 
+func TestReadLogsAfterSkipsSegmentsUsingMetadata(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	firstSegmentPath := writeWALSegment(t, dir, "wal_1000.log", []byte("not decoded"))
+	secondSegmentPath := writeWALSegment(t, dir, "wal_2000.log", mustEncodeLogs(t, []*LogData{testLogData(2)}))
+	require.NoError(t, writeSegmentMetadata(firstSegmentPath, segmentMetadata{MaxLSN: 1}))
+	require.NoError(t, writeSegmentMetadata(secondSegmentPath, segmentMetadata{MaxLSN: 2}))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	logs, err := reader.ReadLogsAfter(context.Background(), 1)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(2), logs[0].LSN)
+}
+
 func TestReadLogsRejectsTruncatedNonLastSegment(t *testing.T) {
 	t.Parallel()
 

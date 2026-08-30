@@ -223,6 +223,16 @@ func (s *HashTable) Del(key database.BatchKey) bool {
 	return counterFound || slidingWindowFound || tokenBucketFound
 }
 
+func (s *HashTable) FlushDB() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.m = make(map[hashTableKey]*FqElem)
+	s.sw = make(map[hashTableKey]*SlidingWindowElem)
+	s.tb = make(map[hashTableKey]*TokenBucketElem)
+	s.q = make(map[string]*QuotaElem)
+}
+
 func (s *HashTable) Clean(ctx context.Context) {
 	now := database.TxTime(time.Now().Unix())
 

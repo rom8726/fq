@@ -23,6 +23,8 @@ const (
 	QPStreamCommandID
 	RLimitFixedWindowCommandID
 	QuotaSetCommandID
+	FlushDBCommandID
+	TruncateCommandID
 )
 
 var (
@@ -39,6 +41,8 @@ var (
 	QPStreamCommand = "QPSTREAM"
 	RLimitCommand   = "RLIMIT"
 	QuotaCommand    = "QUOTA"
+	FlushDBCommand  = "FLUSHDB"
+	TruncateCommand = "TRUNCATE"
 )
 
 var commandNamesToID = map[string]CommandID{
@@ -55,6 +59,8 @@ var commandNamesToID = map[string]CommandID{
 	QPStreamCommand: QPStreamCommandID,
 	RLimitCommand:   RLimitCommandID,
 	QuotaCommand:    QuotaCommandID,
+	FlushDBCommand:  FlushDBCommandID,
+	TruncateCommand: TruncateCommandID,
 }
 
 func (c CommandID) Int() int {

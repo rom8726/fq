@@ -9,6 +9,7 @@ import (
 )
 
 const segmentMetadataSuffix = ".meta"
+const lastFlushDBLSNFileName = "last_flushdb_lsn.meta"
 
 type segmentMetadata struct {
 	MaxLSN uint64
@@ -16,6 +17,10 @@ type segmentMetadata struct {
 
 func isWALSegmentFile(name string) bool {
 	return strings.HasPrefix(name, "wal_") && strings.HasSuffix(name, ".log")
+}
+
+func isWALSegmentMetadataFile(name string) bool {
+	return strings.HasPrefix(name, "wal_") && strings.HasSuffix(name, ".log"+segmentMetadataSuffix)
 }
 
 func segmentMetadataPath(segmentPath string) string {
@@ -52,6 +57,60 @@ func readSegmentMetadata(segmentPath string) (segmentMetadata, error) {
 	}
 
 	return segmentMetadata{MaxLSN: maxLSN}, nil
+}
+
+func writeLastFlushDBLSN(directory string, lsn uint64) error {
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return fmt.Errorf("create WAL directory: %w", err)
+	}
+
+	path := filepath.Join(directory, lastFlushDBLSNFileName)
+	tmpPath := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
+	data := []byte(strconv.FormatUint(lsn, 10) + "\n")
+
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return fmt.Errorf("write last FLUSHDB LSN: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+
+		return fmt.Errorf("replace last FLUSHDB LSN: %w", err)
+	}
+
+	return syncDirectory(directory)
+}
+
+func readLastFlushDBLSN(directory string) (uint64, error) {
+	data, err := os.ReadFile(filepath.Join(directory, lastFlushDBLSNFileName))
+	if err != nil {
+		return 0, err
+	}
+
+	lsn, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse last FLUSHDB LSN: %w", err)
+	}
+
+	return lsn, nil
+}
+
+func syncDirectory(directory string) error {
+	dir, err := os.Open(directory)
+	if err != nil {
+		return fmt.Errorf("open directory for sync: %w", err)
+	}
+
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	if syncErr != nil {
+		return fmt.Errorf("sync directory: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close directory after sync: %w", closeErr)
+	}
+
+	return nil
 }
 
 func removeSegmentAndMetadata(segmentPath string) error {

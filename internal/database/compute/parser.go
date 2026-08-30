@@ -91,6 +91,8 @@ func (s *tokenScanner) scanQuery(commandID CommandID) (Query, error) {
 		return s.scanFixedQuery(commandID, 0)
 	case QPStreamCommandID:
 		return s.scanFixedQuery(commandID, 1)
+	case FlushDBCommandID, TruncateCommandID:
+		return s.scanFixedQuery(commandID, 0)
 	case RLimitCommandID:
 		return s.scanRLimitQuery()
 	case QuotaCommandID:
@@ -263,6 +265,10 @@ func commandIDFromToken(token string) CommandID {
 		return RLimitCommandID
 	case asciiEqualFold(token, QuotaCommand):
 		return QuotaCommandID
+	case asciiEqualFold(token, FlushDBCommand):
+		return FlushDBCommandID
+	case asciiEqualFold(token, TruncateCommand):
+		return TruncateCommandID
 	default:
 		return UnknownCommandID
 	}

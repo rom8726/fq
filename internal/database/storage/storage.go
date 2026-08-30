@@ -47,6 +47,7 @@ type Engine interface {
 	Get(database.BatchKey) (database.ValueType, bool)
 	Del(database.TxContext, database.BatchKey) bool
 	MDel(database.TxContext, []database.BatchKey) []bool
+	FlushDB()
 	Clean(context.Context)
 	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
 	RestoreDumpElem(context.Context, database.DumpElem) error
@@ -102,11 +103,14 @@ type WAL interface {
 	QuotaReleaseAsync(ctx context.Context, txCtx database.TxContext, name string, clientID string)
 	QuotaDelete(ctx context.Context, txCtx database.TxContext, name string) tools.FutureError
 	QuotaDeleteAsync(ctx context.Context, txCtx database.TxContext, name string)
+	FlushDB(ctx context.Context, txCtx database.TxContext) tools.FutureError
+	Truncate(ctx context.Context) tools.FutureError
 	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
 type Dumper interface {
 	Dump(ctx context.Context, dumpTx database.Tx) error
+	Truncate(ctx context.Context) error
 }
 
 type Replica interface {
@@ -454,6 +458,45 @@ func (s *Storage) MDel(ctx context.Context, keys []database.BatchKey) ([]bool, e
 	}
 
 	return s.engine.MDel(txCtx, keys), nil
+}
+
+func (s *Storage) FlushDB(ctx context.Context) error {
+	txCtx := s.makeTxContext()
+	if s.dumper != nil {
+		if err := s.dumper.Truncate(ctx); err != nil {
+			return err
+		}
+	}
+	if s.wal != nil {
+		future := s.wal.FlushDB(ctx, txCtx)
+		if err := future.Get(); err != nil {
+			return err
+		}
+	}
+
+	s.engine.FlushDB()
+
+	return nil
+}
+
+func (s *Storage) Truncate(ctx context.Context) error {
+	if s.dumper != nil {
+		if err := s.dumper.Truncate(ctx); err != nil {
+			return err
+		}
+	}
+	if s.wal != nil {
+		future := s.wal.Truncate(ctx)
+		if err := future.Get(); err != nil {
+			return err
+		}
+	}
+
+	s.engine.FlushDB()
+	s.dumpTx.Store(0)
+	s.tx.Store(0)
+
+	return nil
 }
 
 func (s *Storage) writeIncrWAL(ctx context.Context, txCtx database.TxContext, key database.BatchKey) error {

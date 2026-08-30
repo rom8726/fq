@@ -113,8 +113,12 @@ func TestParserParseAndAnalyzeQuery(t *testing.T) {
 			err:   compute.ErrInvalidSymbol,
 		},
 		"invalid command": {
-			query: "TRUNCATE key",
+			query: "UNKNOWN key",
 			err:   compute.ErrInvalidCommand,
+		},
+		"invalid truncate arguments": {
+			query: "TRUNCATE key",
+			err:   compute.ErrInvalidArguments,
 		},
 		"invalid arguments": {
 			query: "INCR key",
@@ -133,6 +137,16 @@ func TestParserParseAndAnalyzeQuery(t *testing.T) {
 		"valid qstream": {
 			query:   "QSTREAM",
 			command: compute.QStreamCommandID,
+			args:    []string{},
+		},
+		"valid flushdb": {
+			query:   "FLUSHDB",
+			command: compute.FlushDBCommandID,
+			args:    []string{},
+		},
+		"valid truncate": {
+			query:   "TRUNCATE",
+			command: compute.TruncateCommandID,
 			args:    []string{},
 		},
 		"valid qpstream": {
