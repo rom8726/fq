@@ -116,6 +116,10 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"QUOTA", "SET", "pool", "10"},
 			query:  compute.NewQuery(compute.QuotaCommandID, []string{"SET", "pool", "10"}),
 		},
+		"valid quota setn query": {
+			tokens: []string{"QUOTA", "SETN", "pool", "10", "3"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"SETN", "pool", "10", "3"}),
+		},
 		"valid server-owned quota acquire query": {
 			tokens: []string{"QUOTA", "ACQ", "pool", "3", "client-1"},
 			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "3", "client-1"}),
@@ -123,6 +127,14 @@ func TestAnalyzeQuery(t *testing.T) {
 		"valid server-owned quota acquire query with ttl": {
 			tokens: []string{"QUOTA", "ACQ", "pool", "3", "client-1", "60"},
 			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "3", "client-1", "60"}),
+		},
+		"valid negotiated quota acquire query": {
+			tokens: []string{"QUOTA", "ACQN", "pool", "client-1"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQN", "pool", "client-1"}),
+		},
+		"valid negotiated quota acquire query with ttl": {
+			tokens: []string{"QUOTA", "ACQN", "pool", "client-1", "60"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQN", "pool", "client-1", "60"}),
 		},
 		"valid quota release query": {
 			tokens: []string{"QUOTA", "REL", "pool", "client-1"},

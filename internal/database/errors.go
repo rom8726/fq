@@ -11,4 +11,5 @@ var (
 	ErrQuotaNotFound          = errors.New("quota not found")
 	ErrQuotaLimitBelowUsed    = errors.New("quota limit is below used amount")
 	ErrQuotaOwnershipMismatch = errors.New("quota ownership mismatch")
+	ErrQuotaPolicyMismatch    = errors.New("quota policy mismatch")
 )

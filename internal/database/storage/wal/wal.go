@@ -367,14 +367,19 @@ func (w *WAL) QuotaAcquire(
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 	expiresAtStr := strconv.FormatUint(uint64(request.ExpiresAt), 16)
 
-	return w.push(ctx, txCtx.Tx, compute.QuotaAcquireCommandID, []string{
+	args := []string{
 		request.Name,
 		strconv.FormatInt(int64(request.Limit), 10),
 		strconv.FormatInt(int64(request.Amount), 10),
 		request.ClientID,
 		expiresAtStr,
 		currTimeStr,
-	})
+	}
+	if request.Policy == database.QuotaPolicyPerClient {
+		args = append(args, strconv.FormatUint(uint64(request.Policy), 10))
+	}
+
+	return w.push(ctx, txCtx.Tx, compute.QuotaAcquireCommandID, args)
 }
 
 func (w *WAL) QuotaAcquireAsync(
@@ -385,44 +390,57 @@ func (w *WAL) QuotaAcquireAsync(
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 	expiresAtStr := strconv.FormatUint(uint64(request.ExpiresAt), 16)
 
-	w.pushAsync(ctx, txCtx.Tx, compute.QuotaAcquireCommandID, []string{
+	args := []string{
 		request.Name,
 		strconv.FormatInt(int64(request.Limit), 10),
 		strconv.FormatInt(int64(request.Amount), 10),
 		request.ClientID,
 		expiresAtStr,
 		currTimeStr,
-	})
+	}
+	if request.Policy == database.QuotaPolicyPerClient {
+		args = append(args, strconv.FormatUint(uint64(request.Policy), 10))
+	}
+
+	w.pushAsync(ctx, txCtx.Tx, compute.QuotaAcquireCommandID, args)
 }
 
 func (w *WAL) QuotaSet(
 	ctx context.Context,
 	txCtx database.TxContext,
-	name string,
-	limit database.ValueType,
+	request database.QuotaSetRequest,
 ) tools.FutureError {
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
-	return w.push(ctx, txCtx.Tx, compute.QuotaSetCommandID, []string{
-		name,
-		strconv.FormatInt(int64(limit), 10),
+	args := []string{
+		request.Name,
+		strconv.FormatInt(int64(request.Limit), 10),
 		currTimeStr,
-	})
+	}
+	if request.Policy == database.QuotaPolicyPerClient {
+		args = append(args, strconv.FormatUint(uint64(request.Clients), 10))
+	}
+
+	return w.push(ctx, txCtx.Tx, compute.QuotaSetCommandID, args)
 }
 
 func (w *WAL) QuotaSetAsync(
 	ctx context.Context,
 	txCtx database.TxContext,
-	name string,
-	limit database.ValueType,
+	request database.QuotaSetRequest,
 ) {
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 
-	w.pushAsync(ctx, txCtx.Tx, compute.QuotaSetCommandID, []string{
-		name,
-		strconv.FormatInt(int64(limit), 10),
+	args := []string{
+		request.Name,
+		strconv.FormatInt(int64(request.Limit), 10),
 		currTimeStr,
-	})
+	}
+	if request.Policy == database.QuotaPolicyPerClient {
+		args = append(args, strconv.FormatUint(uint64(request.Clients), 10))
+	}
+
+	w.pushAsync(ctx, txCtx.Tx, compute.QuotaSetCommandID, args)
 }
 
 func (w *WAL) QuotaRelease(ctx context.Context, txCtx database.TxContext, name, clientID string) tools.FutureError {

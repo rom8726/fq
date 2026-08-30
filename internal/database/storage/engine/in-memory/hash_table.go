@@ -128,18 +128,16 @@ func (s *HashTable) QuotaAcquire(
 	default:
 		return database.QuotaAcquireResult{}, database.ErrQuotaOwnershipMismatch
 	}
-
 }
 
 func (s *HashTable) QuotaSet(
 	txCtx database.TxContext,
-	name string,
-	limit database.ValueType,
+	request database.QuotaSetRequest,
 	beforeApply func() error,
 ) (bool, error) {
-	v := s.getOrInitQuotaElem(name, 0, database.QuotaOwnershipServer)
+	v := s.getOrInitQuotaElem(request.Name, 0, database.QuotaOwnershipServer)
 
-	return v.SetLimit(txCtx, limit, beforeApply)
+	return v.SetConfig(txCtx, request, beforeApply)
 }
 
 func (s *HashTable) QuotaRelease(
@@ -550,7 +548,7 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 
 	now := database.TxTime(time.Now().Unix())
 	for _, item := range qItems {
-		if limit, ownership, tx, ok := item.elem.DumpConfig(dumpTx); ok {
+		if limit, ownership, policy, clients, tx, ok := item.elem.DumpConfig(dumpTx); ok {
 			select {
 			case <-ctx.Done():
 				return
@@ -562,6 +560,8 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 				Key:       item.key,
 				Limit:     limit,
 				Ownership: ownership,
+				Policy:    policy,
+				Clients:   clients,
 				Tx:        tx,
 			}
 		}
@@ -580,6 +580,8 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 				Limit:     limit,
 				Value:     allocation.amount,
 				Ownership: item.elem.Ownership(),
+				Policy:    item.elem.Policy(),
+				Clients:   item.elem.Clients(),
 				ClientID:  allocation.clientID,
 				ExpiresAt: allocation.expiresAt,
 				TxAt:      allocation.txAt,

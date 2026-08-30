@@ -183,7 +183,9 @@ Rejected rate-limit requests do not change state and are not written to WAL.
 
 ```text
 QUOTA SET <name> <limit>
+QUOTA SETN <name> <limit> <clients>
 QUOTA ACQ <name> <amount> <client_id> [ttl]
+QUOTA ACQN <name> <client_id> [ttl]
 QUOTA ACQL <name> <limit> <amount> <client_id> [ttl]
 QUOTA REL <name> <client_id>
 QUOTA INF <name>
@@ -198,29 +200,34 @@ fq supports two quota ownership models:
   `QUOTA ACQ` then atomically reserves `amount` units for `client_id` without the
   client passing the limit. This is the preferred model when quota limits are
   central policy.
+- Server-decided quotas: `QUOTA SETN` creates or updates quota `name` with
+  `limit` and expected `clients`. `QUOTA ACQN` lets a client ask fq to assign its
+  share; fq reserves up to `min(limit / clients, remaining)`.
 - Client-owned lease quotas: `QUOTA ACQL` atomically reserves `amount` units from
   quota `name` for `client_id`, with the client passing `limit`. The first
   successful acquire creates the quota and fixes its `limit`; later acquires for
   the same quota must pass the same `limit`, otherwise fq returns an error.
 
-`QUOTA SET` returns `ok|1` when the quota limit was created or changed and `ok|0`
-when the quota already had the same limit. Lowering the limit below the current
-active allocation total returns an error.
+`QUOTA SET` and `QUOTA SETN` return `ok|1` when the quota config was created or
+changed and `ok|0` when it already had the same config. Lowering the limit below
+the current active allocation total returns an error.
 
 Quota ownership models cannot be mixed for the same quota name. A quota created
-with `QUOTA SET` only accepts `QUOTA ACQ`, while a quota created with
-`QUOTA ACQL` only accepts `QUOTA ACQL`.
+with `QUOTA SET` only accepts `QUOTA ACQ`, a quota created with `QUOTA SETN`
+only accepts `QUOTA ACQN`, and a quota created with `QUOTA ACQL` only accepts
+`QUOTA ACQL`.
 
 If `ttl` is provided, the client allocation expires and releases automatically after
 that many seconds. `QUOTA REL` explicitly releases the allocation for one client.
 `QUOTA DEL` deletes the whole quota only when it has no active client allocations.
 `QUOTA INF` returns the current active allocations for a quota.
 
-Repeated `QUOTA ACQ` or `QUOTA ACQL` calls from the same `client_id` with the
-same `amount` are idempotent and return the current allocation without extending
-its TTL. A repeated acquire with a different `amount` returns an error.
+Repeated quota acquire calls from the same `client_id` are idempotent and return
+the current allocation without extending its TTL. For `QUOTA ACQ` and
+`QUOTA ACQL`, a repeated acquire with a different `amount` returns an error.
+For `QUOTA ACQN`, a repeated acquire returns the existing allocation.
 
-`QUOTA ACQ` and `QUOTA ACQL` return:
+`QUOTA ACQ`, `QUOTA ACQN`, and `QUOTA ACQL` return:
 
 ```text
 ok|<acquired>;<allocated>;<used>;<remaining>;<expires_after>
@@ -253,8 +260,8 @@ Quota stream events return:
 ok|<event>;<name>;<client_id>;<amount>;<used>;<remaining>;<expires_at>
 ```
 
-`event` is one of `acq`, `rel`, or `del`. `QUOTA SET` does not emit a stream
-event. Idempotent quota acquire retries do not
+`event` is one of `acq`, `rel`, or `del`. `QUOTA SET` and `QUOTA SETN` do not
+emit stream events. Idempotent quota acquire retries do not
 emit events because they do not change state. For `del`, `client_id` is empty and
 the numeric fields are `0`.
 
@@ -271,6 +278,17 @@ Server-owned example with limit `10`:
 1
 [fq]> QUOTA DEL campaign_42
 1
+```
+
+Server-decided example with limit `100000` and `20` expected clients:
+
+```text
+[fq]> QUOTA SETN service_rps 100000 20
+1
+[fq]> QUOTA ACQN service_rps worker_a 60
+1;5000;5000;95000;60
+[fq]> QUOTA ACQN service_rps worker_b
+1;5000;10000;90000;0
 ```
 
 Client-owned lease example with limit `10`:
@@ -299,7 +317,9 @@ DEL <key> <window>
 MDEL <key> <window> <key> <window> ...
 WATCH <key> <window>
 QUOTA SET <name> <limit>
+QUOTA SETN <name> <limit> <clients>
 QUOTA ACQ <name> <amount> <client_id> [ttl]
+QUOTA ACQN <name> <client_id> [ttl]
 QUOTA ACQL <name> <limit> <amount> <client_id> [ttl]
 QUOTA REL <name> <client_id>
 QUOTA INF <name>
@@ -318,6 +338,8 @@ MSGSIZE
 - `WATCH`: waits until a key value changes or the request times out
 - `QUOTA SET`: creates or updates a server-owned quota limit
 - `QUOTA ACQ`: reserves from a server-owned quota
+- `QUOTA SETN`: creates or updates a server-decided quota split across clients
+- `QUOTA ACQN`: reserves a server-decided per-client amount
 - `QUOTA ACQL`: reserves from a client-owned lease quota
 - `QUOTA REL`: releases one client's quota allocation
 - `QUOTA INF`: returns active allocations for a quota

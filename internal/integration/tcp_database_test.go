@@ -65,6 +65,15 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireQuery("QUOTA SET server_quota 3", "err|quota limit is below used amount")
 	app.RequireQuery("QUOTA REL server_quota client-a", "ok|1")
 	app.RequireQuery("QUOTA DEL server_quota", "ok|1")
+	app.RequireQuery("QUOTA SETN negotiated_quota 100000 20", "ok|1")
+	app.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-a", true, 5000, 5000, 95000, 0)
+	app.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-b", true, 5000, 10000, 90000, 0)
+	app.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-a", true, 5000, 10000, 90000, 0)
+	app.RequireQuery("QUOTA ACQ negotiated_quota 1 fixed-client", "err|quota policy mismatch")
+	app.RequireQuery("QUOTA SET negotiated_quota 10", "err|quota policy mismatch")
+	app.RequireQuery("QUOTA REL negotiated_quota client-a", "ok|1")
+	app.RequireQuery("QUOTA REL negotiated_quota client-b", "ok|1")
+	app.RequireQuery("QUOTA DEL negotiated_quota", "ok|1")
 	app.RequireQuotaAcquire("QUOTA ACQL quota 10 4 client-a 60", true, 4, 4, 6, 60)
 	app.RequireQuotaAcquire("QUOTA ACQL quota 10 4 client-a 60", true, 4, 4, 6, 60)
 	app.RequireQuery("QUOTA SET quota 10", "err|quota ownership mismatch")
@@ -698,6 +707,8 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	first.RequireQuery("QUOTA SET empty_quota 5", "ok|1")
 	first.RequireQuery("QUOTA SET server_quota 10", "ok|1")
 	first.RequireQuotaAcquire("QUOTA ACQ server_quota 4 client-a", true, 4, 4, 6, 0)
+	first.RequireQuery("QUOTA SETN negotiated_quota 100000 20", "ok|1")
+	first.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-a", true, 5000, 5000, 95000, 0)
 	first.RequireQuotaAcquire("QUOTA ACQL durable_quota 10 4 client-a", true, 4, 4, 6, 0)
 	first.Close()
 
@@ -710,6 +721,7 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	second.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 3, 0, 600)
 	second.RequireQuotaInfo("QUOTA INF empty_quota", 5, 0, 5, nil)
 	second.RequireQuotaAcquire("QUOTA ACQ server_quota 7 client-b", false, 0, 4, 6, 0)
+	second.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-b", true, 5000, 10000, 90000, 0)
 	second.RequireQuotaInfo("QUOTA INF durable_quota", 10, 4, 6, []testQuotaClient{
 		{clientID: "client-a", amount: 4},
 	})

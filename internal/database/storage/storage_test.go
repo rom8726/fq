@@ -189,8 +189,7 @@ func (e *txRecordingEngine) QuotaAcquire(
 
 func (e *txRecordingEngine) QuotaSet(
 	txCtx database.TxContext,
-	_ string,
-	_ database.ValueType,
+	_ database.QuotaSetRequest,
 	beforeApply func() error,
 ) (bool, error) {
 	e.lastTx = txCtx.Tx

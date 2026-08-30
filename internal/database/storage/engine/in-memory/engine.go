@@ -51,7 +51,7 @@ type hashTable interface {
 		request database.QuotaAcquireRequest,
 		beforeApply func() error,
 	) (database.QuotaAcquireResult, error)
-	QuotaSet(txCtx database.TxContext, name string, limit database.ValueType, beforeApply func() error) (bool, error)
+	QuotaSet(txCtx database.TxContext, request database.QuotaSetRequest, beforeApply func() error) (bool, error)
 	QuotaRelease(
 		txCtx database.TxContext,
 		name string,
@@ -298,18 +298,16 @@ func (e *Engine) QuotaAcquire(
 
 func (e *Engine) QuotaSet(
 	txCtx database.TxContext,
-	name string,
-	limit database.ValueType,
+	request database.QuotaSetRequest,
 	beforeApply func() error,
 ) (bool, error) {
-	idx := e.partitionIdx(name)
+	idx := e.partitionIdx(request.Name)
 	partition := e.partitions[idx]
-	changed, err := partition.QuotaSet(txCtx, name, limit, beforeApply)
+	changed, err := partition.QuotaSet(txCtx, request, beforeApply)
 
 	if e.logger.GetLevel() == zerolog.DebugLevel {
 		e.logger.Debug().
-			Str("name", name).
-			Any("limit", limit).
+			Any("request", request).
 			Bool("changed", changed).
 			Err(err).
 			Msg("success quota set query")
@@ -437,7 +435,7 @@ func (e *Engine) Dump(ctx context.Context, dumpTx database.Tx) (resC <-chan data
 }
 
 func (e *Engine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
-	if elem.Kind == database.DumpElemKindTokenBucket {
+	if elem.Kind == database.DumpElemKindTokenBucket || elem.Kind == database.DumpElemKindQuotaConfig {
 		idx := e.partitionIdx(elem.Key)
 		partition := e.partitions[idx]
 		partition.RestoreDumpElem(elem)
@@ -662,6 +660,15 @@ func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
 	if expiresAt != 0 && database.TxTime(expiresAt) <= txCtx.CurrTime {
 		return
 	}
+	policy := database.QuotaPolicyFixed
+	if len(log.Arguments) >= 7 {
+		parsedPolicy, err := strconv.ParseUint(log.Arguments[6], 10, 32)
+		if err != nil {
+			e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_ACQ").Msg("failed to parse policy")
+			return
+		}
+		policy = database.QuotaPolicy(parsedPolicy)
+	}
 
 	request := database.QuotaAcquireRequest{
 		Name:      log.Arguments[0],
@@ -669,6 +676,7 @@ func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
 		Amount:    database.ValueType(amount),
 		ClientID:  log.Arguments[3],
 		Ownership: quotaAcquireOwnership(database.ValueType(limit)),
+		Policy:    policy,
 		ExpiresAt: database.TxTime(expiresAt),
 	}
 	result, err := e.QuotaAcquire(txCtx, request, nil)
@@ -681,7 +689,7 @@ func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
 			Event:     "acq",
 			Name:      request.Name,
 			ClientID:  request.ClientID,
-			Amount:    request.Amount,
+			Amount:    result.Allocated,
 			Used:      result.Used,
 			Remaining: result.Remaining,
 			ExpiresAt: request.ExpiresAt,
@@ -718,7 +726,22 @@ func (e *Engine) applyQuotaSetFromLog(log *wal.LogData) {
 		return
 	}
 
-	if _, err := e.QuotaSet(txCtx, log.Arguments[0], database.ValueType(limit), nil); err != nil {
+	request := database.QuotaSetRequest{
+		Name:   log.Arguments[0],
+		Limit:  database.ValueType(limit),
+		Policy: database.QuotaPolicyFixed,
+	}
+	if len(log.Arguments) >= 4 {
+		clients, err := strconv.ParseUint(log.Arguments[3], 10, 32)
+		if err != nil {
+			e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_SET").Msg("failed to parse clients")
+			return
+		}
+		request.Policy = database.QuotaPolicyPerClient
+		request.Clients = uint32(clients)
+	}
+
+	if _, err := e.QuotaSet(txCtx, request, nil); err != nil {
 		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_SET").Msg("failed to apply WAL log")
 	}
 }

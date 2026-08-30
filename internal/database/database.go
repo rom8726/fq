@@ -72,7 +72,7 @@ type storageLayer interface {
 		capacity, refillAmount ValueType,
 	) (RateLimitResult, error)
 	QuotaAcquire(ctx context.Context, request QuotaAcquireRequest) (QuotaAcquireResult, error)
-	QuotaSet(ctx context.Context, name string, limit ValueType) (bool, error)
+	QuotaSet(ctx context.Context, request QuotaSetRequest) (bool, error)
 	QuotaRelease(ctx context.Context, name string, clientID string) (bool, error)
 	QuotaDelete(ctx context.Context, name string) (bool, error)
 	QuotaInfo(ctx context.Context, name string) (QuotaInfo, error)
@@ -177,11 +177,15 @@ func (d *Database) handleQuotaQuery(ctx context.Context, query compute.Query, ds
 	action := strings.ToUpper(query.Arg(0))
 	switch action {
 	case "SET":
-		return d.handleQuotaSetQuery(ctx, query, dst)
+		return d.handleQuotaSetQuery(ctx, query, dst, QuotaPolicyFixed)
+	case "SETN":
+		return d.handleQuotaSetQuery(ctx, query, dst, QuotaPolicyPerClient)
 	case "ACQ":
-		return d.handleQuotaAcquireQuery(ctx, query, dst, false)
+		return d.handleQuotaAcquireQuery(ctx, query, dst, QuotaPolicyFixed, false)
+	case "ACQN":
+		return d.handleQuotaAcquireQuery(ctx, query, dst, QuotaPolicyPerClient, false)
 	case "ACQL":
-		return d.handleQuotaAcquireQuery(ctx, query, dst, true)
+		return d.handleQuotaAcquireQuery(ctx, query, dst, QuotaPolicyFixed, true)
 	case "REL":
 		return d.handleQuotaReleaseQuery(ctx, query, dst)
 	case "DEL":
@@ -193,7 +197,12 @@ func (d *Database) handleQuotaQuery(ctx context.Context, query compute.Query, ds
 	}
 }
 
-func (d *Database) handleQuotaSetQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+func (d *Database) handleQuotaSetQuery(
+	ctx context.Context,
+	query compute.Query,
+	dst []byte,
+	policy QuotaPolicy,
+) []byte {
 	name, err := makeQuotaName(query.Arg(1))
 	if err != nil {
 		return appendErrorMsg(dst, err)
@@ -203,7 +212,21 @@ func (d *Database) handleQuotaSetQuery(ctx context.Context, query compute.Query,
 		return appendErrorMsg(dst, err)
 	}
 
-	changed, err := d.storageLayer.QuotaSet(ctx, name, limit)
+	clients := uint32(0)
+	if policy == QuotaPolicyPerClient {
+		parsedClients, parseErr := makeTTL(query.Arg(3))
+		if parseErr != nil {
+			return appendErrorMsg(dst, parseErr)
+		}
+		clients = parsedClients
+	}
+
+	changed, err := d.storageLayer.QuotaSet(ctx, QuotaSetRequest{
+		Name:    name,
+		Limit:   limit,
+		Policy:  policy,
+		Clients: clients,
+	})
 	if err != nil {
 		return appendErrorMsg(dst, err)
 	}
@@ -215,6 +238,7 @@ func (d *Database) handleQuotaAcquireQuery(
 	ctx context.Context,
 	query compute.Query,
 	dst []byte,
+	policy QuotaPolicy,
 	clientOwned bool,
 ) []byte {
 	name, err := makeQuotaName(query.Arg(1))
@@ -236,10 +260,19 @@ func (d *Database) handleQuotaAcquireQuery(
 		clientIDArg = 4
 		ttlArg = 5
 	}
+	if policy == QuotaPolicyPerClient && !clientOwned {
+		amountArg = -1
+		clientIDArg = 2
+		ttlArg = 3
+	}
 
-	amount, err := makeLimit(query.Arg(amountArg))
-	if err != nil {
-		return appendErrorMsg(dst, err)
+	amount := ValueType(0)
+	if amountArg >= 0 {
+		parsedAmount, parseErr := makeLimit(query.Arg(amountArg))
+		if parseErr != nil {
+			return appendErrorMsg(dst, parseErr)
+		}
+		amount = parsedAmount
 	}
 	clientID, err := makeQuotaClientID(query.Arg(clientIDArg))
 	if err != nil {
@@ -261,6 +294,7 @@ func (d *Database) handleQuotaAcquireQuery(
 		Amount:    amount,
 		ClientID:  clientID,
 		Ownership: quotaOwnership(clientOwned),
+		Policy:    policy,
 		TTL:       ttl,
 	})
 	if err != nil {

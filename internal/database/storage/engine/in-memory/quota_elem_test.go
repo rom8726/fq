@@ -67,11 +67,19 @@ func TestQuotaElemSetLimitAndServerOwnedAcquire(t *testing.T) {
 	}, nil)
 	require.ErrorIs(t, err, database.ErrQuotaNotFound)
 
-	changed, err := table.QuotaSet(database.TxContext{Tx: 2, CurrTime: 101}, "pool", 10, nil)
+	changed, err := table.QuotaSet(database.TxContext{Tx: 2, CurrTime: 101}, database.QuotaSetRequest{
+		Name:   "pool",
+		Limit:  10,
+		Policy: database.QuotaPolicyFixed,
+	}, nil)
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	changed, err = table.QuotaSet(database.TxContext{Tx: 3, CurrTime: 102}, "pool", 10, nil)
+	changed, err = table.QuotaSet(database.TxContext{Tx: 3, CurrTime: 102}, database.QuotaSetRequest{
+		Name:   "pool",
+		Limit:  10,
+		Policy: database.QuotaPolicyFixed,
+	}, nil)
 	require.NoError(t, err)
 	require.False(t, changed)
 
@@ -90,15 +98,89 @@ func TestQuotaElemSetLimitAndServerOwnedAcquire(t *testing.T) {
 		Mutated:   true,
 	}, result)
 
-	changed, err = table.QuotaSet(database.TxContext{Tx: 5, CurrTime: 104}, "pool", 3, nil)
+	changed, err = table.QuotaSet(database.TxContext{Tx: 5, CurrTime: 104}, database.QuotaSetRequest{
+		Name:   "pool",
+		Limit:  3,
+		Policy: database.QuotaPolicyFixed,
+	}, nil)
 	require.ErrorIs(t, err, database.ErrQuotaLimitBelowUsed)
 	require.False(t, changed)
+}
+
+func TestQuotaElemSetNAndNegotiatedAcquire(t *testing.T) {
+	table := NewHashTable()
+
+	changed, err := table.QuotaSet(database.TxContext{Tx: 1, CurrTime: 100}, database.QuotaSetRequest{
+		Name:    "pool",
+		Limit:   100000,
+		Policy:  database.QuotaPolicyPerClient,
+		Clients: 20,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	first, err := table.QuotaAcquire(database.TxContext{Tx: 2, CurrTime: 101}, database.QuotaAcquireRequest{
+		Name:      "pool",
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipServer,
+		Policy:    database.QuotaPolicyPerClient,
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, database.QuotaAcquireResult{
+		Acquired:  true,
+		Allocated: 5000,
+		Used:      5000,
+		Remaining: 95000,
+		Mutated:   true,
+	}, first)
+
+	retry, err := table.QuotaAcquire(database.TxContext{Tx: 3, CurrTime: 102}, database.QuotaAcquireRequest{
+		Name:      "pool",
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipServer,
+		Policy:    database.QuotaPolicyPerClient,
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, database.QuotaAcquireResult{
+		Acquired:  true,
+		Allocated: 5000,
+		Used:      5000,
+		Remaining: 95000,
+	}, retry)
+
+	second, err := table.QuotaAcquire(database.TxContext{Tx: 4, CurrTime: 103}, database.QuotaAcquireRequest{
+		Name:      "pool",
+		ClientID:  "client-b",
+		Ownership: database.QuotaOwnershipServer,
+		Policy:    database.QuotaPolicyPerClient,
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, database.QuotaAcquireResult{
+		Acquired:  true,
+		Allocated: 5000,
+		Used:      10000,
+		Remaining: 90000,
+		Mutated:   true,
+	}, second)
+
+	_, err = table.QuotaAcquire(database.TxContext{Tx: 5, CurrTime: 104}, database.QuotaAcquireRequest{
+		Name:      "pool",
+		Amount:    3,
+		ClientID:  "client-c",
+		Ownership: database.QuotaOwnershipServer,
+		Policy:    database.QuotaPolicyFixed,
+	}, nil)
+	require.ErrorIs(t, err, database.ErrQuotaPolicyMismatch)
 }
 
 func TestQuotaElemRejectsMixedOwnership(t *testing.T) {
 	table := NewHashTable()
 
-	changed, err := table.QuotaSet(database.TxContext{Tx: 1, CurrTime: 100}, "server-pool", 10, nil)
+	changed, err := table.QuotaSet(database.TxContext{Tx: 1, CurrTime: 100}, database.QuotaSetRequest{
+		Name:   "server-pool",
+		Limit:  10,
+		Policy: database.QuotaPolicyFixed,
+	}, nil)
 	require.NoError(t, err)
 	require.True(t, changed)
 
@@ -120,7 +202,11 @@ func TestQuotaElemRejectsMixedOwnership(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	changed, err = table.QuotaSet(database.TxContext{Tx: 4, CurrTime: 103}, "lease-pool", 10, nil)
+	changed, err = table.QuotaSet(database.TxContext{Tx: 4, CurrTime: 103}, database.QuotaSetRequest{
+		Name:   "lease-pool",
+		Limit:  10,
+		Policy: database.QuotaPolicyFixed,
+	}, nil)
 	require.ErrorIs(t, err, database.ErrQuotaOwnershipMismatch)
 	require.False(t, changed)
 

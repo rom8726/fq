@@ -104,8 +104,12 @@ func validQuotaArguments(arguments []string) bool {
 	switch strings.ToUpper(arguments[0]) {
 	case "SET":
 		return len(arguments) == 3
+	case "SETN":
+		return len(arguments) == 4
 	case "ACQ":
 		return len(arguments) == 4 || len(arguments) == 5
+	case "ACQN":
+		return len(arguments) == 3 || len(arguments) == 4
 	case "ACQL":
 		return len(arguments) == 5 || len(arguments) == 6
 	case "REL":

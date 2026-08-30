@@ -22,6 +22,14 @@ const (
 	QuotaOwnershipClientLease
 )
 
+type QuotaPolicy uint32
+
+const (
+	QuotaPolicyUnknown QuotaPolicy = iota
+	QuotaPolicyFixed
+	QuotaPolicyPerClient
+)
+
 type Tx uint64
 
 type TxTime uint32
@@ -46,6 +54,8 @@ type DumpElem struct {
 	Limit     ValueType
 	Value     ValueType
 	Ownership QuotaOwnership
+	Policy    QuotaPolicy
+	Clients   uint32
 	ClientID  string
 	ExpiresAt TxTime
 	TxAt      TxTime
@@ -78,8 +88,16 @@ type QuotaAcquireRequest struct {
 	Amount    ValueType
 	ClientID  string
 	Ownership QuotaOwnership
+	Policy    QuotaPolicy
 	TTL       uint32
 	ExpiresAt TxTime
+}
+
+type QuotaSetRequest struct {
+	Name    string
+	Limit   ValueType
+	Policy  QuotaPolicy
+	Clients uint32
 }
 
 type QuotaAcquireResult struct {

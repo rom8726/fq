@@ -23,6 +23,9 @@ type quotaDumpAllocation struct {
 type QuotaElem struct {
 	limit       database.ValueType
 	ownership   database.QuotaOwnership
+	policy      database.QuotaPolicy
+	clients     uint32
+	configTx    database.Tx
 	used        database.ValueType
 	allocations map[string]quotaAllocation
 	ver         database.Tx
@@ -33,14 +36,15 @@ func NewQuotaElem(limit database.ValueType, ownership database.QuotaOwnership) *
 	return &QuotaElem{
 		limit:       limit,
 		ownership:   ownership,
+		policy:      database.QuotaPolicyUnknown,
 		allocations: make(map[string]quotaAllocation),
 		ver:         database.NoTx,
 	}
 }
 
-func (e *QuotaElem) SetLimit(
+func (e *QuotaElem) SetConfig(
 	txCtx database.TxContext,
-	limit database.ValueType,
+	request database.QuotaSetRequest,
 	beforeApply func() error,
 ) (bool, error) {
 	e.mu.Lock()
@@ -53,10 +57,19 @@ func (e *QuotaElem) SetLimit(
 	if e.ownership != database.QuotaOwnershipServer {
 		return false, database.ErrQuotaOwnershipMismatch
 	}
-	if e.used > limit {
+	if request.Policy == database.QuotaPolicyUnknown {
+		request.Policy = database.QuotaPolicyFixed
+	}
+	if e.policy == database.QuotaPolicyUnknown {
+		e.policy = request.Policy
+	}
+	if e.policy != database.QuotaPolicyUnknown && e.policy != request.Policy {
+		return false, database.ErrQuotaPolicyMismatch
+	}
+	if e.used > request.Limit {
 		return false, database.ErrQuotaLimitBelowUsed
 	}
-	if e.limit == limit {
+	if e.limit == request.Limit && e.policy == request.Policy && e.clients == request.Clients {
 		return false, nil
 	}
 
@@ -66,8 +79,11 @@ func (e *QuotaElem) SetLimit(
 		}
 	}
 
-	e.limit = limit
+	e.limit = request.Limit
 	e.ownership = database.QuotaOwnershipServer
+	e.policy = request.Policy
+	e.clients = request.Clients
+	e.configTx = txCtx.Tx
 	e.ver = txCtx.Tx
 
 	return true, nil
@@ -91,11 +107,24 @@ func (e *QuotaElem) Acquire(
 	if e.ownership != request.Ownership {
 		return database.QuotaAcquireResult{}, database.ErrQuotaOwnershipMismatch
 	}
+	if request.Policy == database.QuotaPolicyUnknown {
+		request.Policy = database.QuotaPolicyFixed
+	}
+	if e.policy == database.QuotaPolicyUnknown {
+		e.policy = request.Policy
+	}
+	if e.policy != request.Policy {
+		return database.QuotaAcquireResult{}, database.ErrQuotaPolicyMismatch
+	}
 	if e.limit != request.Limit {
 		return database.QuotaAcquireResult{}, database.ErrQuotaLimitMismatch
 	}
 
 	if allocation, ok := e.allocations[request.ClientID]; ok {
+		if request.Policy == database.QuotaPolicyPerClient &&
+			(request.Amount == 0 || allocation.amount <= request.Amount) {
+			return e.makeResultLocked(txCtx.CurrTime, true, allocation.amount, allocation.expiresAt), nil
+		}
 		if allocation.amount != request.Amount {
 			return database.QuotaAcquireResult{}, database.ErrQuotaAlreadyAcquired
 		}
@@ -103,8 +132,11 @@ func (e *QuotaElem) Acquire(
 		return e.makeResultLocked(txCtx.CurrTime, true, allocation.amount, allocation.expiresAt), nil
 	}
 
-	remaining := e.limit - e.used
-	if remaining < request.Amount {
+	allocated := e.allocateAmountLocked(request.Amount)
+	if allocated <= 0 {
+		return e.makeResultLocked(txCtx.CurrTime, false, 0, 0), nil
+	}
+	if allocated < request.Amount && request.Policy == database.QuotaPolicyFixed {
 		return e.makeResultLocked(txCtx.CurrTime, false, 0, 0), nil
 	}
 
@@ -115,15 +147,15 @@ func (e *QuotaElem) Acquire(
 	}
 
 	e.allocations[request.ClientID] = quotaAllocation{
-		amount:    request.Amount,
+		amount:    allocated,
 		expiresAt: request.ExpiresAt,
 		txAt:      txCtx.CurrTime,
 		tx:        txCtx.Tx,
 	}
-	e.used += request.Amount
+	e.used += allocated
 	e.ver = txCtx.Tx
 
-	result := e.makeResultLocked(txCtx.CurrTime, true, request.Amount, request.ExpiresAt)
+	result := e.makeResultLocked(txCtx.CurrTime, true, allocated, request.ExpiresAt)
 	result.Mutated = true
 
 	return result, nil
@@ -246,6 +278,14 @@ func (e *QuotaElem) RestoreAllocation(elem database.DumpElem) {
 	if e.ownership == database.QuotaOwnershipUnknown {
 		e.ownership = ownership
 	}
+	if elem.Policy != database.QuotaPolicyUnknown {
+		e.policy = elem.Policy
+	} else if e.policy == database.QuotaPolicyUnknown {
+		e.policy = database.QuotaPolicyFixed
+	}
+	if elem.Clients > 0 {
+		e.clients = elem.Clients
+	}
 	if e.allocations == nil {
 		e.allocations = make(map[string]quotaAllocation)
 	}
@@ -270,6 +310,9 @@ func (e *QuotaElem) RestoreConfig(elem database.DumpElem) {
 
 	e.limit = elem.Limit
 	e.ownership = elem.Ownership
+	e.policy = elem.Policy
+	e.clients = elem.Clients
+	e.configTx = elem.Tx
 	e.ver = elem.Tx
 	if e.allocations == nil {
 		e.allocations = make(map[string]quotaAllocation)
@@ -290,17 +333,31 @@ func (e *QuotaElem) Ownership() database.QuotaOwnership {
 	return e.ownership
 }
 
-func (e *QuotaElem) DumpConfig(
-	dumpTx database.Tx,
-) (database.ValueType, database.QuotaOwnership, database.Tx, bool) {
+func (e *QuotaElem) Policy() database.QuotaPolicy {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	if e.ownership != database.QuotaOwnershipServer || e.ver == database.NoTx || e.ver > dumpTx {
-		return 0, database.QuotaOwnershipUnknown, database.NoTx, false
+	return e.policy
+}
+
+func (e *QuotaElem) Clients() uint32 {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return e.clients
+}
+
+func (e *QuotaElem) DumpConfig(
+	dumpTx database.Tx,
+) (database.ValueType, database.QuotaOwnership, database.QuotaPolicy, uint32, database.Tx, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.ownership != database.QuotaOwnershipServer || e.configTx == database.NoTx || e.configTx > dumpTx {
+		return 0, database.QuotaOwnershipUnknown, database.QuotaPolicyUnknown, 0, database.NoTx, false
 	}
 
-	return e.limit, e.ownership, e.ver, true
+	return e.limit, e.ownership, e.policy, e.clients, e.configTx, true
 }
 
 func (e *QuotaElem) cleanExpiredLocked(now database.TxTime) {
@@ -344,4 +401,31 @@ func (e *QuotaElem) remainingLocked() database.ValueType {
 	}
 
 	return remaining
+}
+
+func (e *QuotaElem) allocateAmountLocked(amount database.ValueType) database.ValueType {
+	remaining := e.remainingLocked()
+	if e.policy != database.QuotaPolicyPerClient {
+		if remaining < amount {
+			return 0
+		}
+
+		return amount
+	}
+
+	if e.clients == 0 {
+		return 0
+	}
+	perClient := e.limit / database.ValueType(e.clients)
+	if perClient <= 0 {
+		return 0
+	}
+	if amount > 0 && amount < perClient {
+		perClient = amount
+	}
+	if remaining < perClient {
+		return remaining
+	}
+
+	return perClient
 }
