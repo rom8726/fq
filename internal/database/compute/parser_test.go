@@ -145,10 +145,20 @@ func TestParserParseAndAnalyzeQuery(t *testing.T) {
 			command: compute.RLimitCommandID,
 			args:    []string{"TB", "key", "100", "10", "60"},
 		},
-		"valid quota acquire with ttl": {
-			query:   "QUOTA ACQ pool 10 3 client-1 60",
+		"valid quota lease acquire with ttl": {
+			query:   "QUOTA ACQL pool 10 3 client-1 60",
 			command: compute.QuotaCommandID,
-			args:    []string{"ACQ", "pool", "10", "3", "client-1", "60"},
+			args:    []string{"ACQL", "pool", "10", "3", "client-1", "60"},
+		},
+		"valid quota set": {
+			query:   "QUOTA SET pool 10",
+			command: compute.QuotaCommandID,
+			args:    []string{"SET", "pool", "10"},
+		},
+		"valid server-owned quota acquire with ttl": {
+			query:   "QUOTA ACQ pool 3 client-1 60",
+			command: compute.QuotaCommandID,
+			args:    []string{"ACQ", "pool", "3", "client-1", "60"},
 		},
 		"valid quota release": {
 			query:   "QUOTA REL pool client-1",

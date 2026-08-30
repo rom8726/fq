@@ -53,12 +53,26 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", false, 3, 0, 60)
 	app.RequireQuery("DEL bucket 60", "ok|1")
 	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", true, 1, 2, 60)
-	app.RequireQuotaAcquire("QUOTA ACQ quota 10 4 client-a 60", true, 4, 4, 6, 60)
-	app.RequireQuotaAcquire("QUOTA ACQ quota 10 4 client-a 60", true, 4, 4, 6, 60)
+	app.RequireQuery("QUOTA ACQ server_quota 4 client-a", "err|quota not found")
+	app.RequireQuery("QUOTA SET server_quota 10", "ok|1")
+	app.RequireQuery("QUOTA SET server_quota 10", "ok|0")
+	app.RequireQuery("QUOTA ACQL server_quota 10 4 lease-client", "err|quota ownership mismatch")
+	app.RequireQuotaAcquire("QUOTA ACQ server_quota 4 client-a 60", true, 4, 4, 6, 60)
+	app.RequireQuotaInfo("QUOTA INF server_quota", 10, 4, 6, []testQuotaClient{
+		{clientID: "client-a", amount: 4, expires: true},
+	})
+	app.RequireQuotaAcquire("QUOTA ACQ server_quota 7 client-b", false, 0, 4, 6, 0)
+	app.RequireQuery("QUOTA SET server_quota 3", "err|quota limit is below used amount")
+	app.RequireQuery("QUOTA REL server_quota client-a", "ok|1")
+	app.RequireQuery("QUOTA DEL server_quota", "ok|1")
+	app.RequireQuotaAcquire("QUOTA ACQL quota 10 4 client-a 60", true, 4, 4, 6, 60)
+	app.RequireQuotaAcquire("QUOTA ACQL quota 10 4 client-a 60", true, 4, 4, 6, 60)
+	app.RequireQuery("QUOTA SET quota 10", "err|quota ownership mismatch")
+	app.RequireQuery("QUOTA ACQ quota 4 server-client", "err|quota ownership mismatch")
 	app.RequireQuotaInfo("QUOTA INF quota", 10, 4, 6, []testQuotaClient{
 		{clientID: "client-a", amount: 4, expires: true},
 	})
-	app.RequireQuotaAcquire("QUOTA ACQ quota 10 7 client-b", false, 0, 4, 6, 0)
+	app.RequireQuotaAcquire("QUOTA ACQL quota 10 7 client-b", false, 0, 4, 6, 0)
 	app.RequireQuery("QUOTA DEL quota", "err|quota is not empty")
 	app.RequireQuery("QUOTA REL quota client-a", "ok|1")
 	app.RequireQuery("QUOTA DEL quota", "ok|1")
@@ -510,10 +524,10 @@ func TestTCPDatabaseSlaveStreamsReplicatedQuotaEvents(t *testing.T) {
 		})
 	}()
 
-	masterApp.RequireQuotaAcquire("QUOTA ACQ tenant_b-quota 10 4 client-a", true, 4, 4, 6, 0)
+	masterApp.RequireQuotaAcquire("QUOTA ACQL tenant_b-quota 10 4 client-a", true, 4, 4, 6, 0)
 	requireNoStreamEvent(t, events)
 
-	masterApp.RequireQuotaAcquire("QUOTA ACQ tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
+	masterApp.RequireQuotaAcquire("QUOTA ACQL tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
 	require.Equal(t, "ok|acq;tenant_a-quota;client-a;4;4;6;0", requireStreamEvent(t, events))
 
 	masterApp.RequireQuery("QUOTA REL tenant_a-quota client-a", "ok|1")
@@ -621,13 +635,13 @@ func TestTCPDatabaseQPStreamFiltersQuotaEventsByPrefix(t *testing.T) {
 		})
 	}()
 
-	app.RequireQuotaAcquire("QUOTA ACQ tenant_b-quota 10 4 client-a", true, 4, 4, 6, 0)
+	app.RequireQuotaAcquire("QUOTA ACQL tenant_b-quota 10 4 client-a", true, 4, 4, 6, 0)
 	requireNoStreamEvent(t, events)
 
-	app.RequireQuotaAcquire("QUOTA ACQ tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
+	app.RequireQuotaAcquire("QUOTA ACQL tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
 	require.Equal(t, "ok|acq;tenant_a-quota;client-a;4;4;6;0", requireStreamEvent(t, events))
 
-	app.RequireQuotaAcquire("QUOTA ACQ tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
+	app.RequireQuotaAcquire("QUOTA ACQL tenant_a-quota 10 4 client-a", true, 4, 4, 6, 0)
 	requireNoStreamEvent(t, events)
 
 	app.RequireQuery("QUOTA REL tenant_a-quota client-a", "ok|1")
@@ -681,7 +695,10 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	first.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 	first.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 1, 2, 600)
 	first.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 2, 1, 600)
-	first.RequireQuotaAcquire("QUOTA ACQ durable_quota 10 4 client-a", true, 4, 4, 6, 0)
+	first.RequireQuery("QUOTA SET empty_quota 5", "ok|1")
+	first.RequireQuery("QUOTA SET server_quota 10", "ok|1")
+	first.RequireQuotaAcquire("QUOTA ACQ server_quota 4 client-a", true, 4, 4, 6, 0)
+	first.RequireQuotaAcquire("QUOTA ACQL durable_quota 10 4 client-a", true, 4, 4, 6, 0)
 	first.Close()
 
 	second := startTestDatabase(t, walDir)
@@ -691,12 +708,14 @@ func TestTCPDatabaseRecoversDataFromWALAfterRestart(t *testing.T) {
 	second.RequireQuery("GET limited 60", "ok|2")
 	second.RequireRateLimit("RLIMIT SW sliding 2 60", false, 2, 0, 60)
 	second.RequireRateLimit("RLIMIT TB bucket 3 1 600", true, 3, 0, 600)
+	second.RequireQuotaInfo("QUOTA INF empty_quota", 5, 0, 5, nil)
+	second.RequireQuotaAcquire("QUOTA ACQ server_quota 7 client-b", false, 0, 4, 6, 0)
 	second.RequireQuotaInfo("QUOTA INF durable_quota", 10, 4, 6, []testQuotaClient{
 		{clientID: "client-a", amount: 4},
 	})
-	second.RequireQuotaAcquire("QUOTA ACQ durable_quota 10 7 client-b", false, 0, 4, 6, 0)
+	second.RequireQuotaAcquire("QUOTA ACQL durable_quota 10 7 client-b", false, 0, 4, 6, 0)
 	second.RequireQuery("QUOTA REL durable_quota client-a", "ok|1")
-	second.RequireQuotaAcquire("QUOTA ACQ durable_quota 10 7 client-b", true, 7, 7, 3, 0)
+	second.RequireQuotaAcquire("QUOTA ACQL durable_quota 10 7 client-b", true, 7, 7, 3, 0)
 }
 
 func TestTCPDatabaseRecoversSlidingWindowFromDumpAfterRestart(t *testing.T) {

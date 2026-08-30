@@ -97,20 +97,32 @@ func TestAnalyzeQuery(t *testing.T) {
 			query:  compute.NewQuery(compute.RLimitCommandID, []string{"TB", "key", "100", "10", "60"}),
 		},
 		"invalid number arguments for quota acquire": {
-			tokens: []string{"QUOTA", "ACQ", "pool", "10", "3"},
+			tokens: []string{"QUOTA", "ACQL", "pool", "10", "3"},
 			err:    compute.ErrInvalidArguments,
 		},
 		"invalid quota action": {
-			tokens: []string{"QUOTA", "GET", "pool"},
+			tokens: []string{"QUOTA", "TAKE", "pool"},
 			err:    compute.ErrInvalidArguments,
 		},
-		"valid quota acquire query": {
-			tokens: []string{"QUOTA", "ACQ", "pool", "10", "3", "client-1"},
-			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "10", "3", "client-1"}),
+		"valid quota lease acquire query": {
+			tokens: []string{"QUOTA", "ACQL", "pool", "10", "3", "client-1"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQL", "pool", "10", "3", "client-1"}),
 		},
-		"valid quota acquire query with ttl": {
-			tokens: []string{"QUOTA", "ACQ", "pool", "10", "3", "client-1", "60"},
-			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "10", "3", "client-1", "60"}),
+		"valid quota lease acquire query with ttl": {
+			tokens: []string{"QUOTA", "ACQL", "pool", "10", "3", "client-1", "60"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQL", "pool", "10", "3", "client-1", "60"}),
+		},
+		"valid quota set query": {
+			tokens: []string{"QUOTA", "SET", "pool", "10"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"SET", "pool", "10"}),
+		},
+		"valid server-owned quota acquire query": {
+			tokens: []string{"QUOTA", "ACQ", "pool", "3", "client-1"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "3", "client-1"}),
+		},
+		"valid server-owned quota acquire query with ttl": {
+			tokens: []string{"QUOTA", "ACQ", "pool", "3", "client-1", "60"},
+			query:  compute.NewQuery(compute.QuotaCommandID, []string{"ACQ", "pool", "3", "client-1", "60"}),
 		},
 		"valid quota release query": {
 			tokens: []string{"QUOTA", "REL", "pool", "client-1"},

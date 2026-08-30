@@ -40,6 +40,7 @@ type Engine interface {
 		database.QuotaAcquireRequest,
 		func() error,
 	) (database.QuotaAcquireResult, error)
+	QuotaSet(database.TxContext, string, database.ValueType, func() error) (bool, error)
 	QuotaRelease(database.TxContext, string, string, func() error) (database.QuotaReleaseResult, error)
 	QuotaDelete(database.TxContext, string, func() error) (bool, error)
 	QuotaInfo(database.TxTime, string) database.QuotaInfo
@@ -95,6 +96,8 @@ type WAL interface {
 	)
 	QuotaAcquire(ctx context.Context, txCtx database.TxContext, request database.QuotaAcquireRequest) tools.FutureError
 	QuotaAcquireAsync(ctx context.Context, txCtx database.TxContext, request database.QuotaAcquireRequest)
+	QuotaSet(ctx context.Context, txCtx database.TxContext, name string, limit database.ValueType) tools.FutureError
+	QuotaSetAsync(ctx context.Context, txCtx database.TxContext, name string, limit database.ValueType)
 	QuotaRelease(ctx context.Context, txCtx database.TxContext, name string, clientID string) tools.FutureError
 	QuotaReleaseAsync(ctx context.Context, txCtx database.TxContext, name string, clientID string)
 	QuotaDelete(ctx context.Context, txCtx database.TxContext, name string) tools.FutureError
@@ -365,6 +368,19 @@ func (s *Storage) QuotaAcquire(
 	return result, nil
 }
 
+func (s *Storage) QuotaSet(ctx context.Context, name string, limit database.ValueType) (bool, error) {
+	txCtx := s.makeTxContext()
+
+	changed, err := s.engine.QuotaSet(txCtx, name, limit, func() error {
+		return s.writeQuotaSetWAL(ctx, txCtx, name, limit)
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return changed, nil
+}
+
 func (s *Storage) QuotaRelease(ctx context.Context, name, clientID string) (bool, error) {
 	txCtx := s.makeTxContext()
 
@@ -561,6 +577,26 @@ func (s *Storage) writeQuotaAcquireWAL(
 	}
 
 	s.wal.QuotaAcquireAsync(ctx, txCtx, request)
+
+	return nil
+}
+
+func (s *Storage) writeQuotaSetWAL(
+	ctx context.Context,
+	txCtx database.TxContext,
+	name string,
+	limit database.ValueType,
+) error {
+	if s.wal == nil {
+		return nil
+	}
+
+	if s.syncCommit {
+		future := s.wal.QuotaSet(ctx, txCtx, name, limit)
+		return future.Get()
+	}
+
+	s.wal.QuotaSetAsync(ctx, txCtx, name, limit)
 
 	return nil
 }

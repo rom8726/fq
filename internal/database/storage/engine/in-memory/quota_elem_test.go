@@ -13,10 +13,11 @@ func TestQuotaElemAcquireReleaseAndDelete(t *testing.T) {
 	txCtx := database.TxContext{Tx: 1, CurrTime: 100}
 
 	first, err := table.QuotaAcquire(txCtx, database.QuotaAcquireRequest{
-		Name:     "pool",
-		Limit:    10,
-		Amount:   4,
-		ClientID: "client-a",
+		Name:      "pool",
+		Limit:     10,
+		Amount:    4,
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipClientLease,
 	}, nil)
 	require.NoError(t, err)
 	require.Equal(t, database.QuotaAcquireResult{
@@ -28,10 +29,11 @@ func TestQuotaElemAcquireReleaseAndDelete(t *testing.T) {
 	}, first)
 
 	second, err := table.QuotaAcquire(database.TxContext{Tx: 2, CurrTime: 101}, database.QuotaAcquireRequest{
-		Name:     "pool",
-		Limit:    10,
-		Amount:   7,
-		ClientID: "client-b",
+		Name:      "pool",
+		Limit:     10,
+		Amount:    7,
+		ClientID:  "client-b",
+		Ownership: database.QuotaOwnershipClientLease,
 	}, nil)
 	require.NoError(t, err)
 	require.Equal(t, database.QuotaAcquireResult{
@@ -54,6 +56,83 @@ func TestQuotaElemAcquireReleaseAndDelete(t *testing.T) {
 	require.True(t, deleted)
 }
 
+func TestQuotaElemSetLimitAndServerOwnedAcquire(t *testing.T) {
+	table := NewHashTable()
+
+	_, err := table.QuotaAcquire(database.TxContext{Tx: 1, CurrTime: 100}, database.QuotaAcquireRequest{
+		Name:      "pool",
+		Amount:    4,
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipServer,
+	}, nil)
+	require.ErrorIs(t, err, database.ErrQuotaNotFound)
+
+	changed, err := table.QuotaSet(database.TxContext{Tx: 2, CurrTime: 101}, "pool", 10, nil)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	changed, err = table.QuotaSet(database.TxContext{Tx: 3, CurrTime: 102}, "pool", 10, nil)
+	require.NoError(t, err)
+	require.False(t, changed)
+
+	result, err := table.QuotaAcquire(database.TxContext{Tx: 4, CurrTime: 103}, database.QuotaAcquireRequest{
+		Name:      "pool",
+		Amount:    4,
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipServer,
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, database.QuotaAcquireResult{
+		Acquired:  true,
+		Allocated: 4,
+		Used:      4,
+		Remaining: 6,
+		Mutated:   true,
+	}, result)
+
+	changed, err = table.QuotaSet(database.TxContext{Tx: 5, CurrTime: 104}, "pool", 3, nil)
+	require.ErrorIs(t, err, database.ErrQuotaLimitBelowUsed)
+	require.False(t, changed)
+}
+
+func TestQuotaElemRejectsMixedOwnership(t *testing.T) {
+	table := NewHashTable()
+
+	changed, err := table.QuotaSet(database.TxContext{Tx: 1, CurrTime: 100}, "server-pool", 10, nil)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	_, err = table.QuotaAcquire(database.TxContext{Tx: 2, CurrTime: 101}, database.QuotaAcquireRequest{
+		Name:      "server-pool",
+		Limit:     10,
+		Amount:    4,
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipClientLease,
+	}, nil)
+	require.ErrorIs(t, err, database.ErrQuotaOwnershipMismatch)
+
+	_, err = table.QuotaAcquire(database.TxContext{Tx: 3, CurrTime: 102}, database.QuotaAcquireRequest{
+		Name:      "lease-pool",
+		Limit:     10,
+		Amount:    4,
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipClientLease,
+	}, nil)
+	require.NoError(t, err)
+
+	changed, err = table.QuotaSet(database.TxContext{Tx: 4, CurrTime: 103}, "lease-pool", 10, nil)
+	require.ErrorIs(t, err, database.ErrQuotaOwnershipMismatch)
+	require.False(t, changed)
+
+	_, err = table.QuotaAcquire(database.TxContext{Tx: 5, CurrTime: 104}, database.QuotaAcquireRequest{
+		Name:      "lease-pool",
+		Amount:    4,
+		ClientID:  "client-b",
+		Ownership: database.QuotaOwnershipServer,
+	}, nil)
+	require.ErrorIs(t, err, database.ErrQuotaOwnershipMismatch)
+}
+
 func TestQuotaElemAcquireIsIdempotentForSameClientAndAmount(t *testing.T) {
 	table := NewHashTable()
 	writes := 0
@@ -68,6 +147,7 @@ func TestQuotaElemAcquireIsIdempotentForSameClientAndAmount(t *testing.T) {
 		Limit:     10,
 		Amount:    4,
 		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipClientLease,
 		ExpiresAt: 160,
 	}
 	first, err := table.QuotaAcquire(database.TxContext{Tx: 1, CurrTime: 100}, request, beforeApply)
@@ -87,10 +167,11 @@ func TestQuotaElemAcquireIsIdempotentForSameClientAndAmount(t *testing.T) {
 	require.Equal(t, 1, writes)
 
 	_, err = table.QuotaAcquire(database.TxContext{Tx: 3, CurrTime: 111}, database.QuotaAcquireRequest{
-		Name:     "pool",
-		Limit:    10,
-		Amount:   5,
-		ClientID: "client-a",
+		Name:      "pool",
+		Limit:     10,
+		Amount:    5,
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipClientLease,
 	}, beforeApply)
 	require.ErrorIs(t, err, database.ErrQuotaAlreadyAcquired)
 	require.Equal(t, 1, writes)
@@ -104,15 +185,17 @@ func TestQuotaElemExpiresClientAllocation(t *testing.T) {
 		Limit:     10,
 		Amount:    8,
 		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipClientLease,
 		ExpiresAt: 110,
 	}, nil)
 	require.NoError(t, err)
 
 	result, err := table.QuotaAcquire(database.TxContext{Tx: 2, CurrTime: 110}, database.QuotaAcquireRequest{
-		Name:     "pool",
-		Limit:    10,
-		Amount:   8,
-		ClientID: "client-b",
+		Name:      "pool",
+		Limit:     10,
+		Amount:    8,
+		ClientID:  "client-b",
+		Ownership: database.QuotaOwnershipClientLease,
 	}, nil)
 	require.NoError(t, err)
 	require.True(t, result.Acquired)
@@ -128,14 +211,16 @@ func TestQuotaElemInfoReturnsSortedActiveClients(t *testing.T) {
 		Limit:     10,
 		Amount:    3,
 		ClientID:  "client-b",
+		Ownership: database.QuotaOwnershipClientLease,
 		ExpiresAt: 160,
 	}, nil)
 	require.NoError(t, err)
 	_, err = table.QuotaAcquire(database.TxContext{Tx: 2, CurrTime: 101}, database.QuotaAcquireRequest{
-		Name:     "pool",
-		Limit:    10,
-		Amount:   4,
-		ClientID: "client-a",
+		Name:      "pool",
+		Limit:     10,
+		Amount:    4,
+		ClientID:  "client-a",
+		Ownership: database.QuotaOwnershipClientLease,
 	}, nil)
 	require.NoError(t, err)
 	_, err = table.QuotaAcquire(database.TxContext{Tx: 3, CurrTime: 102}, database.QuotaAcquireRequest{
@@ -143,6 +228,7 @@ func TestQuotaElemInfoReturnsSortedActiveClients(t *testing.T) {
 		Limit:     10,
 		Amount:    2,
 		ClientID:  "client-expired",
+		Ownership: database.QuotaOwnershipClientLease,
 		ExpiresAt: 109,
 	}, nil)
 	require.NoError(t, err)

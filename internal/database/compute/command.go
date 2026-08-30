@@ -22,6 +22,7 @@ const (
 	QStreamCommandID
 	QPStreamCommandID
 	RLimitFixedWindowCommandID
+	QuotaSetCommandID
 )
 
 var (

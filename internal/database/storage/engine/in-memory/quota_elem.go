@@ -22,18 +22,55 @@ type quotaDumpAllocation struct {
 
 type QuotaElem struct {
 	limit       database.ValueType
+	ownership   database.QuotaOwnership
 	used        database.ValueType
 	allocations map[string]quotaAllocation
 	ver         database.Tx
 	mu          sync.RWMutex
 }
 
-func NewQuotaElem(limit database.ValueType) *QuotaElem {
+func NewQuotaElem(limit database.ValueType, ownership database.QuotaOwnership) *QuotaElem {
 	return &QuotaElem{
 		limit:       limit,
+		ownership:   ownership,
 		allocations: make(map[string]quotaAllocation),
 		ver:         database.NoTx,
 	}
+}
+
+func (e *QuotaElem) SetLimit(
+	txCtx database.TxContext,
+	limit database.ValueType,
+	beforeApply func() error,
+) (bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.cleanExpiredLocked(txCtx.CurrTime)
+	if e.ownership == database.QuotaOwnershipUnknown {
+		e.ownership = database.QuotaOwnershipServer
+	}
+	if e.ownership != database.QuotaOwnershipServer {
+		return false, database.ErrQuotaOwnershipMismatch
+	}
+	if e.used > limit {
+		return false, database.ErrQuotaLimitBelowUsed
+	}
+	if e.limit == limit {
+		return false, nil
+	}
+
+	if beforeApply != nil {
+		if err := beforeApply(); err != nil {
+			return false, fmt.Errorf("before apply quota set: %w", err)
+		}
+	}
+
+	e.limit = limit
+	e.ownership = database.QuotaOwnershipServer
+	e.ver = txCtx.Tx
+
+	return true, nil
 }
 
 func (e *QuotaElem) Acquire(
@@ -45,6 +82,15 @@ func (e *QuotaElem) Acquire(
 	defer e.mu.Unlock()
 
 	e.cleanExpiredLocked(txCtx.CurrTime)
+	if request.Ownership == database.QuotaOwnershipUnknown {
+		request.Ownership = database.QuotaOwnershipClientLease
+	}
+	if e.ownership == database.QuotaOwnershipUnknown {
+		e.ownership = request.Ownership
+	}
+	if e.ownership != request.Ownership {
+		return database.QuotaAcquireResult{}, database.ErrQuotaOwnershipMismatch
+	}
 	if e.limit != request.Limit {
 		return database.QuotaAcquireResult{}, database.ErrQuotaLimitMismatch
 	}
@@ -190,8 +236,15 @@ func (e *QuotaElem) RestoreAllocation(elem database.DumpElem) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	ownership := elem.Ownership
+	if ownership == database.QuotaOwnershipUnknown {
+		ownership = database.QuotaOwnershipClientLease
+	}
 	if e.limit == 0 {
 		e.limit = elem.Limit
+	}
+	if e.ownership == database.QuotaOwnershipUnknown {
+		e.ownership = ownership
 	}
 	if e.allocations == nil {
 		e.allocations = make(map[string]quotaAllocation)
@@ -211,11 +264,43 @@ func (e *QuotaElem) RestoreAllocation(elem database.DumpElem) {
 	e.ver = elem.Tx
 }
 
+func (e *QuotaElem) RestoreConfig(elem database.DumpElem) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.limit = elem.Limit
+	e.ownership = elem.Ownership
+	e.ver = elem.Tx
+	if e.allocations == nil {
+		e.allocations = make(map[string]quotaAllocation)
+	}
+}
+
 func (e *QuotaElem) Limit() database.ValueType {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	return e.limit
+}
+
+func (e *QuotaElem) Ownership() database.QuotaOwnership {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return e.ownership
+}
+
+func (e *QuotaElem) DumpConfig(
+	dumpTx database.Tx,
+) (database.ValueType, database.QuotaOwnership, database.Tx, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.ownership != database.QuotaOwnershipServer || e.ver == database.NoTx || e.ver > dumpTx {
+		return 0, database.QuotaOwnershipUnknown, database.NoTx, false
+	}
+
+	return e.limit, e.ownership, e.ver, true
 }
 
 func (e *QuotaElem) cleanExpiredLocked(now database.TxTime) {

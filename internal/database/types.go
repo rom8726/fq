@@ -9,9 +9,18 @@ const (
 	DumpElemKindSlidingWindowBucket uint32 = 1
 	DumpElemKindTokenBucket         uint32 = 2
 	DumpElemKindQuotaAllocation     uint32 = 3
+	DumpElemKindQuotaConfig         uint32 = 4
 )
 
 type ValueType int32
+
+type QuotaOwnership uint32
+
+const (
+	QuotaOwnershipUnknown QuotaOwnership = iota
+	QuotaOwnershipServer
+	QuotaOwnershipClientLease
+)
 
 type Tx uint64
 
@@ -36,6 +45,7 @@ type DumpElem struct {
 	BatchSize uint32
 	Limit     ValueType
 	Value     ValueType
+	Ownership QuotaOwnership
 	ClientID  string
 	ExpiresAt TxTime
 	TxAt      TxTime
@@ -67,6 +77,7 @@ type QuotaAcquireRequest struct {
 	Limit     ValueType
 	Amount    ValueType
 	ClientID  string
+	Ownership QuotaOwnership
 	TTL       uint32
 	ExpiresAt TxTime
 }

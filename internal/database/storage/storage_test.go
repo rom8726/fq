@@ -187,6 +187,20 @@ func (e *txRecordingEngine) QuotaAcquire(
 	return database.QuotaAcquireResult{Acquired: true, Allocated: 1}, nil
 }
 
+func (e *txRecordingEngine) QuotaSet(
+	txCtx database.TxContext,
+	_ string,
+	_ database.ValueType,
+	beforeApply func() error,
+) (bool, error) {
+	e.lastTx = txCtx.Tx
+	if err := beforeApply(); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 func (e *txRecordingEngine) QuotaRelease(
 	txCtx database.TxContext,
 	_ string,

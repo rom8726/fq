@@ -36,7 +36,7 @@ See last benchmark reports: [benchmarks/reports](benchmarks/reports)
 - Atomic fixed-window rate limiter
 - Atomic sliding-window rate limiter
 - Atomic token-bucket rate limiter
-- Atomic client-owned quota allocator with optional TTL
+- Atomic server-owned and client-owned quota allocators with optional TTL
 - Counter commands for frequency capping
 - In-memory storage engine
 - WAL and periodic dumps for recovery
@@ -165,7 +165,9 @@ Rejected rate-limit requests do not change state and are not written to WAL.
 ### Quotas
 
 ```text
-QUOTA ACQ <name> <limit> <amount> <client_id> [ttl]
+QUOTA SET <name> <limit>
+QUOTA ACQ <name> <amount> <client_id> [ttl]
+QUOTA ACQL <name> <limit> <amount> <client_id> [ttl]
 QUOTA REL <name> <client_id>
 QUOTA INF <name>
 QUOTA DEL <name>
@@ -173,20 +175,35 @@ QSTREAM
 QPSTREAM <prefix>
 ```
 
-`QUOTA ACQ` atomically reserves `amount` units from quota `name` for `client_id`.
-The first successful acquire creates the quota and fixes its `limit`; later acquires
-for the same quota must pass the same `limit`, otherwise fq returns an error.
+fq supports two quota ownership models:
+
+- Server-owned quotas: `QUOTA SET` creates or updates quota `name` with `limit`.
+  `QUOTA ACQ` then atomically reserves `amount` units for `client_id` without the
+  client passing the limit. This is the preferred model when quota limits are
+  central policy.
+- Client-owned lease quotas: `QUOTA ACQL` atomically reserves `amount` units from
+  quota `name` for `client_id`, with the client passing `limit`. The first
+  successful acquire creates the quota and fixes its `limit`; later acquires for
+  the same quota must pass the same `limit`, otherwise fq returns an error.
+
+`QUOTA SET` returns `ok|1` when the quota limit was created or changed and `ok|0`
+when the quota already had the same limit. Lowering the limit below the current
+active allocation total returns an error.
+
+Quota ownership models cannot be mixed for the same quota name. A quota created
+with `QUOTA SET` only accepts `QUOTA ACQ`, while a quota created with
+`QUOTA ACQL` only accepts `QUOTA ACQL`.
 
 If `ttl` is provided, the client allocation expires and releases automatically after
 that many seconds. `QUOTA REL` explicitly releases the allocation for one client.
 `QUOTA DEL` deletes the whole quota only when it has no active client allocations.
 `QUOTA INF` returns the current active allocations for a quota.
 
-Repeated `QUOTA ACQ` calls from the same `client_id` with the same `amount` are
-idempotent and return the current allocation without extending its TTL. A repeated
-acquire with a different `amount` returns an error.
+Repeated `QUOTA ACQ` or `QUOTA ACQL` calls from the same `client_id` with the
+same `amount` are idempotent and return the current allocation without extending
+its TTL. A repeated acquire with a different `amount` returns an error.
 
-`QUOTA ACQ` returns:
+`QUOTA ACQ` and `QUOTA ACQL` return:
 
 ```text
 ok|<acquired>;<allocated>;<used>;<remaining>;<expires_after>
@@ -219,20 +236,36 @@ Quota stream events return:
 ok|<event>;<name>;<client_id>;<amount>;<used>;<remaining>;<expires_at>
 ```
 
-`event` is one of `acq`, `rel`, or `del`. Idempotent `QUOTA ACQ` retries do not
+`event` is one of `acq`, `rel`, or `del`. `QUOTA SET` does not emit a stream
+event. Idempotent quota acquire retries do not
 emit events because they do not change state. For `del`, `client_id` is empty and
 the numeric fields are `0`.
 
-Example with limit `10`:
+Server-owned example with limit `10`:
 
 ```text
-[fq]> QUOTA ACQ campaign_42 10 4 worker_a 60
+[fq]> QUOTA SET campaign_42 10
+1
+[fq]> QUOTA ACQ campaign_42 4 worker_a 60
+1;4;4;6;60
+[fq]> QUOTA ACQ campaign_42 7 worker_b
+0;0;4;6;0
+[fq]> QUOTA REL campaign_42 worker_a
+1
+[fq]> QUOTA DEL campaign_42
+1
+```
+
+Client-owned lease example with limit `10`:
+
+```text
+[fq]> QUOTA ACQL campaign_42 10 4 worker_a 60
 1;4;4;6;60
 [fq]> QUOTA INF campaign_42
 10;4;6;worker_a;4;1788019260
-[fq]> QUOTA ACQ campaign_42 10 4 worker_a 60
+[fq]> QUOTA ACQL campaign_42 10 4 worker_a 60
 1;4;4;6;59
-[fq]> QUOTA ACQ campaign_42 10 7 worker_b
+[fq]> QUOTA ACQL campaign_42 10 7 worker_b
 0;0;4;6;0
 [fq]> QUOTA REL campaign_42 worker_a
 1
@@ -248,6 +281,12 @@ GET <key> <window>
 DEL <key> <window>
 MDEL <key> <window> <key> <window> ...
 WATCH <key> <window>
+QUOTA SET <name> <limit>
+QUOTA ACQ <name> <amount> <client_id> [ttl]
+QUOTA ACQL <name> <limit> <amount> <client_id> [ttl]
+QUOTA REL <name> <client_id>
+QUOTA INF <name>
+QUOTA DEL <name>
 STREAM
 PSTREAM <prefix>
 QSTREAM
@@ -260,6 +299,12 @@ MSGSIZE
 - `DEL`: deletes counter and limiter state for the key/window pair
 - `MDEL`: deletes multiple key/window pairs
 - `WATCH`: waits until a key value changes or the request times out
+- `QUOTA SET`: creates or updates a server-owned quota limit
+- `QUOTA ACQ`: reserves from a server-owned quota
+- `QUOTA ACQL`: reserves from a client-owned lease quota
+- `QUOTA REL`: releases one client's quota allocation
+- `QUOTA INF`: returns active allocations for a quota
+- `QUOTA DEL`: deletes an empty quota
 - `STREAM`: streams limit-filled events as `ok|<key>;<window>;<current>;<reset_after>` frames
 - `PSTREAM`: streams the same events, filtered to keys that start with `prefix`
 - `QSTREAM`: streams quota mutation events

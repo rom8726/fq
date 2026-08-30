@@ -33,4 +33,5 @@ func TestPersistentCommandIDsDoNotDrift(t *testing.T) {
 	require.Equal(t, compute.CommandID(16), compute.QStreamCommandID)
 	require.Equal(t, compute.CommandID(17), compute.QPStreamCommandID)
 	require.Equal(t, compute.CommandID(18), compute.RLimitFixedWindowCommandID)
+	require.Equal(t, compute.CommandID(19), compute.QuotaSetCommandID)
 }

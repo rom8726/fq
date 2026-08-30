@@ -395,6 +395,36 @@ func (w *WAL) QuotaAcquireAsync(
 	})
 }
 
+func (w *WAL) QuotaSet(
+	ctx context.Context,
+	txCtx database.TxContext,
+	name string,
+	limit database.ValueType,
+) tools.FutureError {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	return w.push(ctx, txCtx.Tx, compute.QuotaSetCommandID, []string{
+		name,
+		strconv.FormatInt(int64(limit), 10),
+		currTimeStr,
+	})
+}
+
+func (w *WAL) QuotaSetAsync(
+	ctx context.Context,
+	txCtx database.TxContext,
+	name string,
+	limit database.ValueType,
+) {
+	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
+
+	w.pushAsync(ctx, txCtx.Tx, compute.QuotaSetCommandID, []string{
+		name,
+		strconv.FormatInt(int64(limit), 10),
+		currTimeStr,
+	})
+}
+
 func (w *WAL) QuotaRelease(ctx context.Context, txCtx database.TxContext, name, clientID string) tools.FutureError {
 	currTimeStr := strconv.FormatUint(uint64(txCtx.CurrTime), 16)
 

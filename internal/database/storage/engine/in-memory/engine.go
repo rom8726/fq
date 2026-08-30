@@ -51,6 +51,7 @@ type hashTable interface {
 		request database.QuotaAcquireRequest,
 		beforeApply func() error,
 	) (database.QuotaAcquireResult, error)
+	QuotaSet(txCtx database.TxContext, name string, limit database.ValueType, beforeApply func() error) (bool, error)
 	QuotaRelease(
 		txCtx database.TxContext,
 		name string,
@@ -295,6 +296,28 @@ func (e *Engine) QuotaAcquire(
 	return result, err
 }
 
+func (e *Engine) QuotaSet(
+	txCtx database.TxContext,
+	name string,
+	limit database.ValueType,
+	beforeApply func() error,
+) (bool, error) {
+	idx := e.partitionIdx(name)
+	partition := e.partitions[idx]
+	changed, err := partition.QuotaSet(txCtx, name, limit, beforeApply)
+
+	if e.logger.GetLevel() == zerolog.DebugLevel {
+		e.logger.Debug().
+			Str("name", name).
+			Any("limit", limit).
+			Bool("changed", changed).
+			Err(err).
+			Msg("success quota set query")
+	}
+
+	return changed, err
+}
+
 func (e *Engine) QuotaRelease(
 	txCtx database.TxContext,
 	name, clientID string,
@@ -536,6 +559,8 @@ func (e *Engine) applyLog(log *wal.LogData) {
 		e.applyFixedWindowEventFromLog(log)
 	case compute.QuotaAcquireCommandID:
 		e.applyQuotaAcquireFromLog(log)
+	case compute.QuotaSetCommandID:
+		e.applyQuotaSetFromLog(log)
 	case compute.QuotaReleaseCommandID:
 		e.applyQuotaReleaseFromLog(log)
 	case compute.QuotaDeleteCommandID:
@@ -551,6 +576,7 @@ func (e *Engine) walLogPartitionIdx(log *wal.LogData) (int, bool) {
 		compute.RLimitTokenBucketCommandID,
 		compute.RLimitFixedWindowCommandID,
 		compute.QuotaAcquireCommandID,
+		compute.QuotaSetCommandID,
 		compute.QuotaReleaseCommandID,
 		compute.QuotaDeleteCommandID:
 		if len(log.Arguments) == 0 {
@@ -642,6 +668,7 @@ func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
 		Limit:     database.ValueType(limit),
 		Amount:    database.ValueType(amount),
 		ClientID:  log.Arguments[3],
+		Ownership: quotaAcquireOwnership(database.ValueType(limit)),
 		ExpiresAt: database.TxTime(expiresAt),
 	}
 	result, err := e.QuotaAcquire(txCtx, request, nil)
@@ -659,6 +686,40 @@ func (e *Engine) applyQuotaAcquireFromLog(log *wal.LogData) {
 			Remaining: result.Remaining,
 			ExpiresAt: request.ExpiresAt,
 		})
+	}
+}
+
+func quotaAcquireOwnership(limit database.ValueType) database.QuotaOwnership {
+	if limit == 0 {
+		return database.QuotaOwnershipServer
+	}
+
+	return database.QuotaOwnershipClientLease
+}
+
+func (e *Engine) applyQuotaSetFromLog(log *wal.LogData) {
+	if len(log.Arguments) < 3 {
+		e.logger.Error().
+			Uint64("lsn", log.LSN).
+			Int("arguments_count", len(log.Arguments)).
+			Str("command", "QUOTA_SET").
+			Msg("invalid WAL log: insufficient arguments")
+		return
+	}
+
+	limit, err := strconv.ParseUint(log.Arguments[1], 10, 31)
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_SET").Msg("failed to parse limit")
+		return
+	}
+	txCtx, err := parseWALTxContext(log.LSN, log.Arguments[2])
+	if err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_SET").Msg("failed to parse WAL log")
+		return
+	}
+
+	if _, err := e.QuotaSet(txCtx, log.Arguments[0], database.ValueType(limit), nil); err != nil {
+		e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "QUOTA_SET").Msg("failed to apply WAL log")
 	}
 }
 

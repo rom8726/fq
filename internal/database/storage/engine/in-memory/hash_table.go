@@ -109,9 +109,37 @@ func (s *HashTable) QuotaAcquire(
 	request database.QuotaAcquireRequest,
 	beforeApply func() error,
 ) (database.QuotaAcquireResult, error) {
-	v := s.getOrInitQuotaElem(request.Name, request.Limit)
+	switch request.Ownership {
+	case database.QuotaOwnershipServer:
+		s.mu.RLock()
+		v, ok := s.q[request.Name]
+		s.mu.RUnlock()
+		if !ok {
+			return database.QuotaAcquireResult{}, database.ErrQuotaNotFound
+		}
 
-	return v.Acquire(txCtx, request, beforeApply)
+		request.Limit = v.Limit()
+
+		return v.Acquire(txCtx, request, beforeApply)
+	case database.QuotaOwnershipClientLease:
+		v := s.getOrInitQuotaElem(request.Name, request.Limit, database.QuotaOwnershipClientLease)
+
+		return v.Acquire(txCtx, request, beforeApply)
+	default:
+		return database.QuotaAcquireResult{}, database.ErrQuotaOwnershipMismatch
+	}
+
+}
+
+func (s *HashTable) QuotaSet(
+	txCtx database.TxContext,
+	name string,
+	limit database.ValueType,
+	beforeApply func() error,
+) (bool, error) {
+	v := s.getOrInitQuotaElem(name, 0, database.QuotaOwnershipServer)
+
+	return v.SetLimit(txCtx, limit, beforeApply)
 }
 
 func (s *HashTable) QuotaRelease(
@@ -522,6 +550,22 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 
 	now := database.TxTime(time.Now().Unix())
 	for _, item := range qItems {
+		if limit, ownership, tx, ok := item.elem.DumpConfig(dumpTx); ok {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			ch <- database.DumpElem{
+				Kind:      database.DumpElemKindQuotaConfig,
+				Key:       item.key,
+				Limit:     limit,
+				Ownership: ownership,
+				Tx:        tx,
+			}
+		}
+
 		limit := item.elem.Limit()
 		for _, allocation := range item.elem.DumpAllocations(dumpTx, now) {
 			select {
@@ -535,6 +579,7 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 				Key:       item.key,
 				Limit:     limit,
 				Value:     allocation.amount,
+				Ownership: item.elem.Ownership(),
 				ClientID:  allocation.clientID,
 				ExpiresAt: allocation.expiresAt,
 				TxAt:      allocation.txAt,
@@ -562,8 +607,19 @@ func (s *HashTable) RestoreDumpElem(elem database.DumpElem) {
 	}
 
 	if elem.Kind == database.DumpElemKindQuotaAllocation {
-		quotaElem := s.getOrInitQuotaElem(elem.Key, elem.Limit)
+		ownership := elem.Ownership
+		if ownership == database.QuotaOwnershipUnknown {
+			ownership = database.QuotaOwnershipClientLease
+		}
+		quotaElem := s.getOrInitQuotaElem(elem.Key, elem.Limit, ownership)
 		quotaElem.RestoreAllocation(elem)
+
+		return
+	}
+
+	if elem.Kind == database.DumpElemKindQuotaConfig {
+		quotaElem := s.getOrInitQuotaElem(elem.Key, 0, elem.Ownership)
+		quotaElem.RestoreConfig(elem)
 
 		return
 	}
@@ -643,7 +699,11 @@ func (s *HashTable) getOrInitTokenBucketElem(key hashTableKey) *TokenBucketElem 
 	return v
 }
 
-func (s *HashTable) getOrInitQuotaElem(name string, limit database.ValueType) *QuotaElem {
+func (s *HashTable) getOrInitQuotaElem(
+	name string,
+	limit database.ValueType,
+	ownership database.QuotaOwnership,
+) *QuotaElem {
 	s.mu.RLock()
 	v, ok := s.q[name]
 	s.mu.RUnlock()
@@ -655,7 +715,7 @@ func (s *HashTable) getOrInitQuotaElem(name string, limit database.ValueType) *Q
 	s.mu.Lock()
 	v, ok = s.q[name]
 	if !ok {
-		v = NewQuotaElem(limit)
+		v = NewQuotaElem(limit, ownership)
 		s.q[name] = v
 	}
 	s.mu.Unlock()
