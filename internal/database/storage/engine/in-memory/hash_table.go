@@ -558,7 +558,7 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 
 	now := database.TxTime(time.Now().Unix())
 	for _, item := range qItems {
-		if limit, ownership, policy, clients, tx, ok := item.elem.DumpConfig(dumpTx); ok {
+		if config := item.elem.dumpConfig(dumpTx); config.ok {
 			select {
 			case <-ctx.Done():
 				return
@@ -568,16 +568,16 @@ func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- data
 			ch <- database.DumpElem{
 				Kind:      database.DumpElemKindQuotaConfig,
 				Key:       item.key,
-				Limit:     limit,
-				Ownership: ownership,
-				Policy:    policy,
-				Clients:   clients,
-				Tx:        tx,
+				Limit:     config.limit,
+				Ownership: config.ownership,
+				Policy:    config.policy,
+				Clients:   config.clients,
+				Tx:        config.tx,
 			}
 		}
 
 		limit := item.elem.Limit()
-		for _, allocation := range item.elem.DumpAllocations(dumpTx, now) {
+		for _, allocation := range item.elem.dumpAllocations(dumpTx, now) {
 			select {
 			case <-ctx.Done():
 				return

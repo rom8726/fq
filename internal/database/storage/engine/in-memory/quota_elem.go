@@ -20,6 +20,15 @@ type quotaDumpAllocation struct {
 	quotaAllocation
 }
 
+type quotaDumpConfig struct {
+	limit     database.ValueType
+	ownership database.QuotaOwnership
+	policy    database.QuotaPolicy
+	clients   uint32
+	tx        database.Tx
+	ok        bool
+}
+
 type QuotaElem struct {
 	limit       database.ValueType
 	ownership   database.QuotaOwnership
@@ -241,8 +250,7 @@ func (e *QuotaElem) Clean(now database.TxTime) bool {
 	return len(e.allocations) == 0
 }
 
-//nolint:revive // ok
-func (e *QuotaElem) DumpAllocations(dumpTx database.Tx, now database.TxTime) []quotaDumpAllocation {
+func (e *QuotaElem) dumpAllocations(dumpTx database.Tx, now database.TxTime) []quotaDumpAllocation {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -347,17 +355,22 @@ func (e *QuotaElem) Clients() uint32 {
 	return e.clients
 }
 
-func (e *QuotaElem) DumpConfig(
-	dumpTx database.Tx,
-) (database.ValueType, database.QuotaOwnership, database.QuotaPolicy, uint32, database.Tx, bool) {
+func (e *QuotaElem) dumpConfig(dumpTx database.Tx) quotaDumpConfig {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	if e.ownership != database.QuotaOwnershipServer || e.configTx == database.NoTx || e.configTx > dumpTx {
-		return 0, database.QuotaOwnershipUnknown, database.QuotaPolicyUnknown, 0, database.NoTx, false
+		return quotaDumpConfig{}
 	}
 
-	return e.limit, e.ownership, e.policy, e.clients, e.configTx, true
+	return quotaDumpConfig{
+		limit:     e.limit,
+		ownership: e.ownership,
+		policy:    e.policy,
+		clients:   e.clients,
+		tx:        e.configTx,
+		ok:        true,
+	}
 }
 
 func (e *QuotaElem) cleanExpiredLocked(now database.TxTime) {
