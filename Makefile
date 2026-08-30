@@ -1,6 +1,14 @@
 WAL_ROOT = $(PWD)/internal/database/storage/wal
 BIN_DIR = $(PWD)/bin
 
+VERSION_PKG = github.com/fq-db/fq/internal/version
+GIT_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null)
+VERSION ?= $(if $(GIT_VERSION),$(GIT_VERSION),dev)
+COMMIT ?= $(if $(GIT_COMMIT),$(GIT_COMMIT),unknown)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GO_LDFLAGS = -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(BUILD_DATE)
+
 .PHONY: build
 build: build-fq build-cli build-bench build-stress build-results
 
@@ -8,35 +16,35 @@ build: build-fq build-cli build-bench build-stress build-results
 build-fq:
 	@echo "-> Building fq server binary..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(BIN_DIR)/fq ./cmd/fq
+	@go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/fq ./cmd/fq
 	@echo "-> Binary built: $(BIN_DIR)/fq"
 
 .PHONY: build-cli
 build-cli:
 	@echo "-> Building fq CLI client binary..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(BIN_DIR)/fq-cli ./cmd/cli
+	@go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/fq-cli ./cmd/cli
 	@echo "-> Binary built: $(BIN_DIR)/fq-cli"
 
 .PHONY: build-bench
 build-bench:
 	@echo "-> Building fq benchmark binary..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(BIN_DIR)/fq-bench ./cmd/bench
+	@go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/fq-bench ./cmd/bench
 	@echo "-> Binary built: $(BIN_DIR)/fq-bench"
 
 .PHONY: build-stress
 build-stress:
 	@echo "-> Building fq stress binary..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(BIN_DIR)/fq-stress ./cmd/stress
+	@go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/fq-stress ./cmd/stress
 	@echo "-> Binary built: $(BIN_DIR)/fq-stress"
 
 .PHONY: build-results
 build-results:
 	@echo "-> Building fq results capture binary..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(BIN_DIR)/fq-results ./cmd/results
+	@go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/fq-results ./cmd/results
 	@echo "-> Binary built: $(BIN_DIR)/fq-results"
 
 .PHONY: run-server

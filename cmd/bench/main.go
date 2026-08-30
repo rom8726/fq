@@ -27,6 +27,7 @@ import (
 
 	"github.com/fq-db/fq/internal/network"
 	"github.com/fq-db/fq/internal/tools"
+	"github.com/fq-db/fq/internal/version"
 )
 
 const defaultQueryTemplate = "INCR {key} {batch}"
@@ -170,6 +171,12 @@ type latencySummary struct {
 }
 
 func main() {
+	if version.Requested(os.Args[1:]) {
+		fmt.Println(version.String())
+
+		return
+	}
+
 	cfg, err := parseArgs(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -19,7 +19,10 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.Commit={{ .Commit }}
+      - -s -w
+      - -X github.com/fq-db/fq/internal/version.Version={{ .Version }}
+      - -X github.com/fq-db/fq/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/fq-db/fq/internal/version.Date={{ .Date }}
 
   - id: fq-cli
     main: ./cmd/cli
@@ -33,7 +36,10 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.Commit={{ .Commit }}
+      - -s -w
+      - -X github.com/fq-db/fq/internal/version.Version={{ .Version }}
+      - -X github.com/fq-db/fq/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/fq-db/fq/internal/version.Date={{ .Date }}
 
   - id: fq-bench
     main: ./cmd/bench
@@ -47,7 +53,10 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.Commit={{ .Commit }}
+      - -s -w
+      - -X github.com/fq-db/fq/internal/version.Version={{ .Version }}
+      - -X github.com/fq-db/fq/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/fq-db/fq/internal/version.Date={{ .Date }}
 
 archives:
   - id: binaries

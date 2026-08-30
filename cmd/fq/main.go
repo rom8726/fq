@@ -11,15 +11,20 @@ import (
 
 	"github.com/fq-db/fq/internal/config"
 	"github.com/fq-db/fq/internal/initialization"
+	"github.com/fq-db/fq/internal/version"
 )
 
 const (
 	loggerTimestampFormat = "2006-01-02 15:04:05"
 )
 
-var Commit = ""
-
 func main() {
+	if version.Requested(os.Args[1:]) {
+		fmt.Println(version.String())
+
+		return
+	}
+
 	console := consoleLogger()
 	if err := run(console); err != nil {
 		console.Error().Msg(err.Error())
@@ -28,6 +33,7 @@ func main() {
 }
 
 func run(console *zerolog.Logger) error {
+	console.Info().Msg(version.String())
 	console.Info().Msg("init config...")
 	cfg, err := config.Init()
 	if err != nil {

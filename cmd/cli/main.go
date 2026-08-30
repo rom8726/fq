@@ -17,6 +17,7 @@ import (
 
 	"github.com/fq-db/fq/internal/network"
 	"github.com/fq-db/fq/internal/tools"
+	"github.com/fq-db/fq/internal/version"
 )
 
 const (
@@ -24,6 +25,12 @@ const (
 )
 
 func main() {
+	if version.Requested(os.Args[1:]) {
+		fmt.Println(version.String())
+
+		return
+	}
+
 	address := flag.String("address", ":1945", "Address of the database")
 	idleTimeout := flag.Duration("idle_timeout", time.Minute, "Idle timeout for connection")
 	maxMessageSizeStr := flag.String("max_message_size", "4KB", "Max message size for connection")
