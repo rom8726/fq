@@ -25,6 +25,12 @@ const (
 	cleanChunkSize       = 1024
 	cleanChunkTimeBudget = 2 * time.Millisecond
 	keyIndexDegree       = 32
+
+	indexCompactStaleThreshold      = 10_000
+	indexCompactSmallStaleThreshold = 1_000
+	indexCompactSmallLiveThreshold  = 10_000
+	indexCompactLiveStaleRatio      = 4
+	indexCompactScanChunkSize       = 512
 )
 
 type hashTableKey struct {
@@ -39,7 +45,10 @@ type HashTable struct {
 	tb map[hashTableKey]*TokenBucketElem
 	q  map[string]*QuotaElem
 
-	index *btree.BTreeG[hashTableKey]
+	index              *btree.BTreeG[hashTableKey]
+	indexStaleCount    uint64
+	indexCompactAfter  hashTableKey
+	indexCompactActive bool
 }
 
 func NewHashTable() *HashTable {
@@ -252,6 +261,8 @@ func (s *HashTable) FlushDB() {
 	if s.index != nil {
 		s.index = btree.NewG[hashTableKey](keyIndexDegree, lessHashTableKey)
 	}
+	s.indexStaleCount = 0
+	s.resetIndexCompactStateLocked()
 }
 
 func (s *HashTable) Scan(prefix string, after hashTableKey, count uint32) []database.BatchKey {
@@ -423,6 +434,7 @@ func (s *HashTable) deleteExpiredCounters(ctx context.Context, items []cleanCoun
 			item := items[start]
 			if current := s.m[item.key]; current == item.elem && current.ExpiredWithDelta(now) {
 				delete(s.m, item.key)
+				s.markIndexStaleLocked(item.key)
 			}
 			processed++
 		}
@@ -463,6 +475,7 @@ func (s *HashTable) deleteEmptySlidingWindows(
 			item := items[start]
 			if current := s.sw[item.key]; current == item.elem && current.Clean(now) {
 				delete(s.sw, item.key)
+				s.markIndexStaleLocked(item.key)
 			}
 			processed++
 		}
@@ -481,7 +494,6 @@ func (s *HashTable) deleteEmptySlidingWindows(
 	}
 }
 
-//nolint:dupl // ok
 func (s *HashTable) deleteEmptyQuotas(ctx context.Context, items []cleanQuotaItem, now database.TxTime) {
 	for start := 0; start < len(items); {
 		startedAt := time.Now()
@@ -766,6 +778,135 @@ func (s *HashTable) getOrInitTokenBucketElem(key hashTableKey) *TokenBucketElem 
 	s.mu.Unlock()
 
 	return v
+}
+
+func (s *HashTable) CompactIndex(ctx context.Context, maxDeletes int, budget time.Duration) bool {
+	if maxDeletes <= 0 {
+		return false
+	}
+
+	s.mu.RLock()
+	needed := s.shouldCompactIndexLocked()
+	s.mu.RUnlock()
+
+	if !needed {
+		return true
+	}
+
+	startedAt := time.Now()
+	deleted := 0
+
+	for deleted < maxDeletes {
+		if ctx.Err() != nil {
+			return false
+		}
+
+		reachedEnd, chunkDeleted := s.compactIndexChunk(maxDeletes - deleted)
+		deleted += chunkDeleted
+		if reachedEnd {
+			return true
+		}
+
+		if time.Since(startedAt) >= budget {
+			return false
+		}
+
+		runtime.Gosched()
+	}
+
+	return false
+}
+
+func (s *HashTable) compactIndexChunk(maxDeletes int) (reachedEnd bool, deleted int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.index == nil {
+		s.resetIndexCompactStateLocked()
+
+		return true, 0
+	}
+
+	pivot := s.indexCompactAfter
+	resumed := s.indexCompactActive
+	stale := make([]hashTableKey, 0, maxDeletes)
+	scanned := 0
+	reachedEnd = true
+
+	iter := func(item hashTableKey) bool {
+		if resumed && !lessHashTableKey(pivot, item) {
+			return true
+		}
+
+		s.indexCompactAfter = item
+		s.indexCompactActive = true
+		scanned++
+
+		if !s.keyExistsLocked(item) {
+			stale = append(stale, item)
+		}
+
+		if len(stale) >= maxDeletes || scanned >= indexCompactScanChunkSize {
+			reachedEnd = false
+
+			return false
+		}
+
+		return true
+	}
+
+	if resumed {
+		s.index.AscendGreaterOrEqual(pivot, iter)
+	} else {
+		s.index.Ascend(iter)
+	}
+
+	for _, key := range stale {
+		s.index.Delete(key)
+		if s.indexStaleCount > 0 {
+			s.indexStaleCount--
+		}
+	}
+
+	if reachedEnd {
+		s.indexStaleCount = 0
+		s.resetIndexCompactStateLocked()
+	}
+
+	return reachedEnd, len(stale)
+}
+
+func (s *HashTable) shouldCompactIndexLocked() bool {
+	if s.index == nil || s.indexStaleCount == 0 {
+		return false
+	}
+	if s.indexCompactActive {
+		return true
+	}
+
+	live := s.liveKeyCountLocked()
+	if s.indexStaleCount >= indexCompactStaleThreshold &&
+		s.indexStaleCount >= live/indexCompactLiveStaleRatio {
+		return true
+	}
+
+	return s.indexStaleCount >= indexCompactSmallStaleThreshold && live < indexCompactSmallLiveThreshold
+}
+
+func (s *HashTable) liveKeyCountLocked() uint64 {
+	return uint64(len(s.m)) + uint64(len(s.sw)) + uint64(len(s.tb))
+}
+
+func (s *HashTable) resetIndexCompactStateLocked() {
+	s.indexCompactAfter = hashTableKey{}
+	s.indexCompactActive = false
+}
+
+func (s *HashTable) markIndexStaleLocked(key hashTableKey) {
+	if s.index == nil || s.keyExistsLocked(key) {
+		return
+	}
+	s.indexStaleCount++
 }
 
 func (s *HashTable) indexKeyLocked(key hashTableKey) {

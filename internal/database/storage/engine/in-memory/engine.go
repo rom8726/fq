@@ -17,6 +17,9 @@ import (
 
 const (
 	expireDelta = database.TxTime(60)
+
+	indexCompactMaxDeletesPerPartition = 256
+	indexCompactBudgetPerPartition     = time.Millisecond
 )
 
 var (
@@ -72,6 +75,7 @@ type hashTable interface {
 	FlushDB()
 	Scan(prefix string, after hashTableKey, count uint32) []database.BatchKey
 	Clean(ctx context.Context)
+	CompactIndex(ctx context.Context, maxDeletes int, budget time.Duration) bool
 	Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem)
 	RestoreDumpElem(elem database.DumpElem)
 }
@@ -460,6 +464,12 @@ func (e *Engine) FlushDB() {
 func (e *Engine) Clean(ctx context.Context) {
 	for _, partition := range e.partitions {
 		partition.Clean(ctx)
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		partition.CompactIndex(ctx, indexCompactMaxDeletesPerPartition, indexCompactBudgetPerPartition)
 	}
 }
 
