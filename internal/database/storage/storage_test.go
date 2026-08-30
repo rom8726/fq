@@ -243,6 +243,10 @@ func (e *txRecordingEngine) FlushDB() {
 	e.lastTx = 0
 }
 
+func (e *txRecordingEngine) Stats() database.EngineStats {
+	return database.EngineStats{}
+}
+
 func (e *txRecordingEngine) Scan(string, string, uint32) (database.ScanResult, error) {
 	return database.ScanResult{}, nil
 }

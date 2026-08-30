@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -33,6 +34,8 @@ type FSWriter struct {
 	segmentTimestamp int64
 	segmentSequence  int
 	closed           bool
+
+	lastSyncedLSN atomic.Uint64
 
 	logger *zerolog.Logger
 }
@@ -281,10 +284,27 @@ func (w *FSWriter) segmentName(timestamp int64, sequence int) string {
 
 func (w *FSWriter) recordSegmentMaxLSN(batch []Log) {
 	for _, log := range batch {
-		if log.data != nil && log.data.LSN > w.segmentMaxLSN {
+		if log.data == nil {
+			continue
+		}
+		if log.data.LSN > w.segmentMaxLSN {
 			w.segmentMaxLSN = log.data.LSN
 		}
+		if log.data.LSN > w.lastSyncedLSN.Load() {
+			w.lastSyncedLSN.Store(log.data.LSN)
+		}
 	}
+}
+
+func (w *FSWriter) SegmentInfo() (path string, size int) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	return w.segmentPath, w.segmentSize
+}
+
+func (w *FSWriter) LastSyncedLSN() uint64 {
+	return w.lastSyncedLSN.Load()
 }
 
 func (w *FSWriter) flushSegmentMetadata() error {

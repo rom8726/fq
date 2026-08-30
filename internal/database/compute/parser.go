@@ -103,9 +103,25 @@ func (s *tokenScanner) scanQuery(commandID CommandID) (Query, error) {
 		return s.scanQuotaQuery()
 	case MDelCommandID:
 		return s.scanMDelQuery()
+	case InspectCommandID:
+		return s.scanInspectQuery()
 	default:
 		return Query{}, ErrInvalidCommand
 	}
+}
+
+func (s *tokenScanner) scanInspectQuery() (Query, error) {
+	args, count, err := s.scanUpToArguments(1)
+	if err != nil {
+		return Query{}, err
+	}
+	if ok, err := s.done(); err != nil {
+		return Query{}, err
+	} else if !ok {
+		return Query{}, ErrInvalidArguments
+	}
+
+	return NewQueryFromSlots(InspectCommandID, count, args[0], args[1], args[2], args[3], args[4]), nil
 }
 
 func (s *tokenScanner) scanQuotaQuery() (Query, error) {
@@ -277,6 +293,8 @@ func commandIDFromToken(token string) CommandID {
 		return ScanCommandID
 	case asciiEqualFold(token, PScanCommand):
 		return PScanCommandID
+	case asciiEqualFold(token, InspectCommand):
+		return InspectCommandID
 	default:
 		return UnknownCommandID
 	}

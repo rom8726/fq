@@ -144,3 +144,21 @@ type QuotaEvent struct {
 	Remaining ValueType
 	ExpiresAt TxTime
 }
+
+type PartitionStats struct {
+	Index            int
+	Counters         int
+	SlidingWindows   int
+	TokenBuckets     int
+	Quotas           int
+	QuotaAllocations int
+}
+
+type EngineStats struct {
+	Partitions       []PartitionStats
+	Counters         int
+	SlidingWindows   int
+	TokenBuckets     int
+	Quotas           int
+	QuotaAllocations int
+}

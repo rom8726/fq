@@ -122,6 +122,7 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 
 	s.lastSegmentName = response.SegmentName
 	s.lastSegmentOffset = response.NextSegmentOffset
+	s.refreshStatus(true)
 
 	return nil
 }

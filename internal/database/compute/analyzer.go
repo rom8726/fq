@@ -26,6 +26,7 @@ const (
 	truncateQueryArgumentsNumber = 0
 	scanQueryArgumentsNumber     = 2
 	pscanQueryArgumentsNumber    = 3
+	inspectQueryArgumentsNumber  = -5
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -45,6 +46,7 @@ var queryArgumentsNumber = map[CommandID]int{
 	TruncateCommandID: truncateQueryArgumentsNumber,
 	ScanCommandID:     scanQueryArgumentsNumber,
 	PScanCommandID:    pscanQueryArgumentsNumber,
+	InspectCommandID:  inspectQueryArgumentsNumber,
 }
 
 var (
@@ -91,6 +93,10 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 		}
 	case argumentsNumber == -4:
 		if !validQuotaArguments(query.Arguments()) {
+			return Query{}, ErrInvalidArguments
+		}
+	case argumentsNumber == -5:
+		if len(query.Arguments()) > 1 {
 			return Query{}, ErrInvalidArguments
 		}
 	default:

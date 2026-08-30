@@ -24,6 +24,11 @@ type truncatingFSWriter interface {
 	Truncate() error
 }
 
+type segmentInspectableFSWriter interface {
+	SegmentInfo() (path string, size int)
+	LastSyncedLSN() uint64
+}
+
 type fsReader interface {
 	ReadLogs(ctx context.Context) ([]*LogData, error)
 	ReadSegment(ctx context.Context, filename string) ([]*LogData, error)
@@ -52,6 +57,9 @@ type WAL struct {
 	closeDoneCh chan struct{}
 	closeOnce   sync.Once
 	closed      atomic.Bool
+
+	lastFlushAtUnixNano atomic.Int64
+	lastFlushDurationNs atomic.Int64
 
 	logger *zerolog.Logger
 }
@@ -138,9 +146,12 @@ func (w *WAL) Start() {
 			batchSize := len(batch)
 			start := time.Now()
 			w.fsWriter.WriteBatch(batch)
-			observability.ObserveWALFlushLatency(time.Since(start))
+			elapsed := time.Since(start)
+			observability.ObserveWALFlushLatency(elapsed)
 			observability.ObserveWALFlushBatchSize(batchSize)
 			observability.SetWALQueueDepth(len(w.records))
+			w.lastFlushAtUnixNano.Store(start.UnixNano())
+			w.lastFlushDurationNs.Store(int64(elapsed))
 			batch = make([]Log, 0, w.maxBatchSize)
 			stopTimer()
 		}
@@ -214,6 +225,47 @@ func (w *WAL) Start() {
 			}
 		}
 	}()
+}
+
+func (w *WAL) QueueDepth() int {
+	return len(w.records)
+}
+
+func (w *WAL) QueueCapacity() int {
+	return w.queueCapacity
+}
+
+func (w *WAL) Directory() string {
+	return w.directory
+}
+
+func (w *WAL) LastFlush() (at time.Time, duration time.Duration, ok bool) {
+	unixNano := w.lastFlushAtUnixNano.Load()
+	if unixNano == 0 {
+		return time.Time{}, 0, false
+	}
+
+	return time.Unix(0, unixNano), time.Duration(w.lastFlushDurationNs.Load()), true
+}
+
+func (w *WAL) SegmentInfo() (path string, size int, ok bool) {
+	writer, ok := w.fsWriter.(segmentInspectableFSWriter)
+	if !ok {
+		return "", 0, false
+	}
+
+	path, size = writer.SegmentInfo()
+
+	return path, size, true
+}
+
+func (w *WAL) LastSyncedLSN() (lsn uint64, ok bool) {
+	writer, ok := w.fsWriter.(segmentInspectableFSWriter)
+	if !ok {
+		return 0, false
+	}
+
+	return writer.LastSyncedLSN(), true
 }
 
 func (w *WAL) closeWriter() {

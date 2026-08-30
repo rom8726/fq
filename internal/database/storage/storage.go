@@ -48,6 +48,7 @@ type Engine interface {
 	Del(database.TxContext, database.BatchKey) bool
 	MDel(database.TxContext, []database.BatchKey) []bool
 	FlushDB()
+	Stats() database.EngineStats
 	Scan(prefix, cursor string, count uint32) (database.ScanResult, error)
 	Clean(context.Context)
 	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
@@ -142,18 +143,29 @@ type Storage struct {
 
 	tx                      atomic.Uint64
 	dumpTx                  atomic.Uint64
-	limitEvents             map[chan database.LimitEvent]limitEventSubscriber
-	quotaEvents             map[chan database.QuotaEvent]quotaEventSubscriber
+	limitEvents             map[chan database.LimitEvent]*limitEventSubscriber
+	quotaEvents             map[chan database.QuotaEvent]*quotaEventSubscriber
 	limitEventQueueCapacity int
 	eventsMu                sync.RWMutex
+
+	lastDump atomic.Pointer[dumpSnapshot]
+}
+
+type dumpSnapshot struct {
+	at       time.Time
+	duration time.Duration
+	err      error
+	tx       database.Tx
 }
 
 type limitEventSubscriber struct {
-	prefix string
+	prefix  string
+	dropped atomic.Uint64
 }
 
 type quotaEventSubscriber struct {
-	prefix string
+	prefix  string
+	dropped atomic.Uint64
 }
 
 func NewStorage(
@@ -189,8 +201,8 @@ func NewStorage(
 		dumpInterval:            dumpInterval,
 		syncCommit:              syncCommit,
 		limitEventQueueCapacity: limitEventQueueCapacity,
-		limitEvents:             make(map[chan database.LimitEvent]limitEventSubscriber),
-		quotaEvents:             make(map[chan database.QuotaEvent]quotaEventSubscriber),
+		limitEvents:             make(map[chan database.LimitEvent]*limitEventSubscriber),
+		quotaEvents:             make(map[chan database.QuotaEvent]*quotaEventSubscriber),
 	}
 
 	if publisher, ok := engine.(quotaEventPublisher); ok {
@@ -504,6 +516,78 @@ func (s *Storage) Scan(_ context.Context, prefix, cursor string, count uint32) (
 	return s.engine.Scan(prefix, cursor, count)
 }
 
+func (s *Storage) EngineStats() database.EngineStats {
+	return s.engine.Stats()
+}
+
+func (s *Storage) CurrentLSN() uint64 {
+	return s.tx.Load()
+}
+
+func (s *Storage) DumpLSN() uint64 {
+	return s.dumpTx.Load()
+}
+
+func (s *Storage) SyncCommit() bool {
+	return s.syncCommit
+}
+
+var ErrDumpNeverRun = errors.New("dump has never run")
+
+func (s *Storage) LastDump() (at time.Time, duration time.Duration, tx database.Tx, err error) {
+	snap := s.lastDump.Load()
+	if snap == nil {
+		return time.Time{}, 0, 0, ErrDumpNeverRun
+	}
+
+	return snap.at, snap.duration, snap.tx, snap.err
+}
+
+type SubscriberStat struct {
+	Prefix    string
+	HasPrefix bool
+	QueueLen  int
+	QueueCap  int
+	Dropped   uint64
+}
+
+type StreamStats struct {
+	LimitSubscribers []SubscriberStat
+	QuotaSubscribers []SubscriberStat
+}
+
+func (s *Storage) StreamStats() StreamStats {
+	s.eventsMu.RLock()
+	defer s.eventsMu.RUnlock()
+
+	stats := StreamStats{
+		LimitSubscribers: make([]SubscriberStat, 0, len(s.limitEvents)),
+		QuotaSubscribers: make([]SubscriberStat, 0, len(s.quotaEvents)),
+	}
+
+	for ch, sub := range s.limitEvents {
+		stats.LimitSubscribers = append(stats.LimitSubscribers, SubscriberStat{
+			Prefix:    sub.prefix,
+			HasPrefix: sub.prefix != "",
+			QueueLen:  len(ch),
+			QueueCap:  cap(ch),
+			Dropped:   sub.dropped.Load(),
+		})
+	}
+
+	for ch, sub := range s.quotaEvents {
+		stats.QuotaSubscribers = append(stats.QuotaSubscribers, SubscriberStat{
+			Prefix:    sub.prefix,
+			HasPrefix: sub.prefix != "",
+			QueueLen:  len(ch),
+			QueueCap:  cap(ch),
+			Dropped:   sub.dropped.Load(),
+		})
+	}
+
+	return stats
+}
+
 func (s *Storage) writeIncrWAL(ctx context.Context, txCtx database.TxContext, key database.BatchKey) error {
 	if s.wal == nil {
 		return nil
@@ -712,7 +796,7 @@ func (s *Storage) SubscribeLimitEvents(ctx context.Context, prefix string) (<-ch
 	ch := make(chan database.LimitEvent, s.limitEventQueueCapacity)
 
 	s.eventsMu.Lock()
-	s.limitEvents[ch] = limitEventSubscriber{prefix: prefix}
+	s.limitEvents[ch] = &limitEventSubscriber{prefix: prefix}
 	s.eventsMu.Unlock()
 
 	var once sync.Once
@@ -738,7 +822,7 @@ func (s *Storage) SubscribeQuotaEvents(ctx context.Context, prefix string) (<-ch
 	ch := make(chan database.QuotaEvent, s.limitEventQueueCapacity)
 
 	s.eventsMu.Lock()
-	s.quotaEvents[ch] = quotaEventSubscriber{prefix: prefix}
+	s.quotaEvents[ch] = &quotaEventSubscriber{prefix: prefix}
 	s.eventsMu.Unlock()
 
 	var once sync.Once
@@ -789,6 +873,7 @@ func (s *Storage) publishLimitEvent(event database.LimitEvent) {
 		select {
 		case ch <- event:
 		default:
+			subscriber.dropped.Add(1)
 			s.logger.Warn().
 				Str("key", event.Key).
 				Uint32("window", event.Window).
@@ -809,6 +894,7 @@ func (s *Storage) publishQuotaEvent(event database.QuotaEvent) {
 		select {
 		case ch <- event:
 		default:
+			subscriber.dropped.Add(1)
 			s.logger.Warn().
 				Str("event", event.Event).
 				Str("name", event.Name).

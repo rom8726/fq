@@ -84,6 +84,10 @@ func (d *Dumper) currentDumpFilePath() string {
 	return filepath.Join(d.dir, currentDumpFileName)
 }
 
+func (d *Dumper) CurrentDumpPath() string {
+	return d.currentDumpFilePath()
+}
+
 func (d *Dumper) SetWALCleanupLSNProvider(provider WALCleanupLSNProvider) {
 	d.walCleanupLSNProvider = provider
 }

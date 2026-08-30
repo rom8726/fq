@@ -77,6 +77,7 @@ func CreateReplica(
 	return replication.NewSlaveWithFactory(
 		clientFactory,
 		replicationCfg.ReplicaID,
+		masterAddress,
 		fsReader,
 		walStream,
 		dumpStream,

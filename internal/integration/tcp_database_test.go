@@ -1053,6 +1053,7 @@ func startTestDatabaseWithSlaveReplication(t *testing.T, walDir, replicationAddr
 	slave, err := replication.NewSlaveWithFactory(
 		clientFactory,
 		"replica-test",
+		":1946",
 		wal.NewFSReader(walDir, &logger),
 		walStream,
 		dumpStream,

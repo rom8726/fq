@@ -206,6 +206,13 @@ func (e *QuotaElem) Release(
 	}, nil
 }
 
+func (e *QuotaElem) AllocationCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return len(e.allocations)
+}
+
 func (e *QuotaElem) CanDelete(now database.TxTime) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()

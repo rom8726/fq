@@ -3,6 +3,7 @@ package initialization
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
@@ -14,6 +15,7 @@ import (
 	"github.com/fq-db/fq/internal/database/storage/dumper"
 	"github.com/fq-db/fq/internal/database/storage/replication"
 	walPkg "github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/inspect"
 	"github.com/fq-db/fq/internal/network"
 	"github.com/fq-db/fq/internal/observability"
 )
@@ -31,9 +33,11 @@ type Initializer struct {
 	cfg            config.Config
 	maxMessageSize int
 	observability  *observability.Server
+	startedAt      time.Time
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
+	startedAt := time.Now()
 	walStream := make(chan walPkg.Chunk, 1)
 	dumpStream := make(chan database.DumpChunk, 1)
 
@@ -90,6 +94,7 @@ func NewInitializer(cfg config.Config) (*Initializer, error) {
 		cfg:            cfg,
 		maxMessageSize: maxMessageSize,
 		observability:  observability.NewServer(cfg.Observability.Address, cfg.Observability.Pprof, logger),
+		startedAt:      startedAt,
 	}
 
 	initializer.initializeReplication(replica)
@@ -114,6 +119,15 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 	}()
 
 	db := database.NewDatabase(computeLayer, strg, i.logger, i.maxMessageSize)
+	db.SetInspector(inspect.New(inspect.Deps{
+		Cfg:       i.cfg,
+		Storage:   strg,
+		WAL:       i.wal,
+		Dumper:    i.dumper,
+		Master:    i.master,
+		Slave:     i.slave,
+		StartedAt: i.startedAt,
+	}))
 
 	group, groupCtx := errgroup.WithContext(ctx)
 

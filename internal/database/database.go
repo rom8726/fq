@@ -83,11 +83,20 @@ type storageLayer interface {
 	Scan(ctx context.Context, prefix, cursor string, count uint32) (ScanResult, error)
 }
 
+type inspector interface {
+	Report(ctx context.Context, section string) ([]byte, error)
+}
+
 type Database struct {
 	computeLayer   computeLayer
 	storageLayer   storageLayer
 	logger         *zerolog.Logger
 	maxMessageSize int
+	inspector      inspector
+}
+
+func (d *Database) SetInspector(i inspector) {
+	d.inspector = i
 }
 
 func NewDatabase(
@@ -177,6 +186,8 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		response = d.handleScanQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.PScanCommandID:
 		response = d.handlePScanQuery(ctx, query, responseBuffer.buf[:0])
+	case compute.InspectCommandID:
+		return d.handleInspectQuery(ctx, query, write)
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 

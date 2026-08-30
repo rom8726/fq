@@ -73,6 +73,7 @@ type hashTable interface {
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
 	FlushDB()
+	Stats() database.PartitionStats
 	Scan(prefix string, after hashTableKey, count uint32) []database.BatchKey
 	Clean(ctx context.Context)
 	CompactIndex(ctx context.Context, maxDeletes int, budget time.Duration) bool
@@ -459,6 +460,26 @@ func (e *Engine) FlushDB() {
 	for _, partition := range e.partitions {
 		partition.FlushDB()
 	}
+}
+
+func (e *Engine) Stats() database.EngineStats {
+	stats := database.EngineStats{
+		Partitions: make([]database.PartitionStats, len(e.partitions)),
+	}
+
+	for i, partition := range e.partitions {
+		partitionStats := partition.Stats()
+		partitionStats.Index = i
+		stats.Partitions[i] = partitionStats
+
+		stats.Counters += partitionStats.Counters
+		stats.SlidingWindows += partitionStats.SlidingWindows
+		stats.TokenBuckets += partitionStats.TokenBuckets
+		stats.Quotas += partitionStats.Quotas
+		stats.QuotaAllocations += partitionStats.QuotaAllocations
+	}
+
+	return stats
 }
 
 func (e *Engine) Clean(ctx context.Context) {

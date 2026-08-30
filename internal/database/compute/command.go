@@ -27,6 +27,7 @@ const (
 	TruncateCommandID
 	ScanCommandID
 	PScanCommandID
+	InspectCommandID
 )
 
 var (
@@ -47,6 +48,7 @@ var (
 	TruncateCommand = "TRUNCATE"
 	ScanCommand     = "SCAN"
 	PScanCommand    = "PSCAN"
+	InspectCommand  = "INSPECT"
 )
 
 var commandNamesToID = map[string]CommandID{
@@ -67,6 +69,7 @@ var commandNamesToID = map[string]CommandID{
 	TruncateCommand: TruncateCommandID,
 	ScanCommand:     ScanCommandID,
 	PScanCommand:    PScanCommandID,
+	InspectCommand:  InspectCommandID,
 }
 
 func (c CommandID) Int() int {

@@ -43,6 +43,7 @@ See last benchmark reports: [benchmarks/reports](benchmarks/reports)
 - Optional async master-slave replication
 - Replica ack tracking and replication lag metrics
 - Prometheus metrics and health endpoint
+- `INSPECT` diagnostic snapshot command (instance, WAL, dump, replication, engine, streams)
 - CLI client and live benchmark client
 - Go client: [fq-client-go](https://github.com/fq-db/fq-client-go)
 
@@ -359,6 +360,34 @@ Both commands return:
 ok|1
 ```
 
+### Diagnostics
+
+```text
+INSPECT
+INSPECT ALL
+INSPECT WAL
+INSPECT DUMP
+INSPECT REPL
+INSPECT ENGINE
+INSPECT STREAMS
+```
+
+`INSPECT` returns a JSON snapshot of instance state for troubleshooting from the CLI, without going through Prometheus. With no argument it returns a summary: instance info, persistence config, and short aggregates for WAL, dump, replication, engine, and streams, plus a computed `warnings` list (WAL queue pressure, replication lag, stale replicas, a dump that hasn't run within its expected interval, stream subscribers dropping events, and durability reminders for `sync_commit: off` or `persistence.mode: memory`). `INSPECT ALL` returns the same shape without truncation (full replica list, per-partition engine breakdown). A section name (`WAL`, `DUMP`, `REPL`, `ENGINE`, `STREAMS`) returns just that section, untruncated, with no `warnings`.
+
+A field that does not apply to the current instance (for example `wal` fields on a `dump_only` server, or `repl.slave` on a master) is `null` rather than a zero value.
+
+Because a report can exceed one frame, `INSPECT` responses may span multiple frames:
+
+```text
+nxt|<partial JSON>
+nxt|<partial JSON>
+ok|<final partial JSON>
+```
+
+Clients concatenate the payloads of `nxt|` frames and the following terminal `ok|` (or `err|`) frame to reconstruct the full JSON document. A response that fits in one frame is returned directly as `ok|<json>`, so single-frame commands need no special handling. The Go CLI (`fq-cli`) and TCP client already implement this.
+
+`fq-cli` also accepts `HINSPECT` (with the same optional section argument, e.g. `HINSPECT REPL`) as a client-side-only alias: it sends the equivalent `INSPECT` query and renders the JSON as colored, tabular text instead of printing it raw. `HINSPECT` is not a wire command — the server only ever sees `INSPECT`.
+
 ### Counters
 
 ```text
@@ -384,6 +413,7 @@ QPSTREAM <prefix>
 MSGSIZE
 FLUSHDB
 TRUNCATE
+INSPECT [section]
 ```
 
 - `INCR`: increments the counter for a key inside a time window
@@ -408,6 +438,7 @@ TRUNCATE
 - `MSGSIZE`: returns the maximum configured request/response payload size
 - `FLUSHDB`: clears all in-memory database state and persists a WAL recovery barrier
 - `TRUNCATE`: clears all in-memory database state and deletes dump/WAL persistence files
+- `INSPECT`: returns a JSON diagnostic snapshot of instance state; see [Diagnostics](#diagnostics)
 
 Counter commands are useful for frequency capping and quota tracking where the application performs the decision itself.
 

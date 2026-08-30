@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"syscall"
@@ -15,6 +17,7 @@ import (
 	"github.com/peterh/liner"
 	"github.com/rs/zerolog"
 
+	"github.com/fq-db/fq/internal/inspect"
 	"github.com/fq-db/fq/internal/network"
 	"github.com/fq-db/fq/internal/tools"
 	"github.com/fq-db/fq/internal/version"
@@ -22,6 +25,7 @@ import (
 
 const (
 	loggerTimestampFormat = "2006-01-02 15:04:05"
+	wireInspectCommand    = "INSPECT"
 )
 
 func main() {
@@ -117,6 +121,18 @@ func main() {
 				return
 			}
 
+			if isHumanInspectCommand(request) {
+				runHumanInspectCommand(ctx, logger, client, request, start)
+
+				return
+			}
+
+			if isInspectCommand(request) {
+				runInspectCommand(ctx, logger, client, request, start)
+
+				return
+			}
+
 			response, err := client.Send(ctx, []byte(request))
 			elapsed := time.Since(start)
 			if err != nil {
@@ -156,6 +172,114 @@ func parseResp(response []byte) aurora.Value {
 	}
 
 	return aurora.Red("[fq]> " + data)
+}
+
+func fetchChunkedBody(ctx context.Context, client *network.TCPClient, query string) ([]byte, error) {
+	var body bytes.Buffer
+	err := client.Stream(ctx, []byte(query), func(frame []byte) error {
+		idx := bytes.IndexByte(frame, '|')
+		if idx < 0 {
+			return fmt.Errorf("malformed response frame")
+		}
+
+		status := string(frame[:idx])
+		data := frame[idx+1:]
+
+		switch status {
+		case "nxt":
+			body.Write(data)
+			return nil
+		case "ok":
+			body.Write(data)
+			return io.EOF
+		case "err":
+			return fmt.Errorf("%s", data)
+		default:
+			return fmt.Errorf("unexpected frame status %q", status)
+		}
+	})
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
+}
+
+func runInspectCommand(
+	ctx context.Context,
+	logger *zerolog.Logger,
+	client *network.TCPClient,
+	request string,
+	start time.Time,
+) {
+	body, err := fetchChunkedBody(ctx, client, request)
+	elapsed := time.Since(start)
+	if err != nil {
+		fmt.Printf("%s\t\t\t\tElapsed: %s\n", aurora.Red("[fq]> "+err.Error()), elapsed.String())
+
+		return
+	}
+
+	var pretty bytes.Buffer
+	if jsonErr := json.Indent(&pretty, body, "", "  "); jsonErr != nil {
+		logger.Warn().Err(jsonErr).Msg("failed to pretty-print inspect report")
+		fmt.Printf("%s\t\t\t\tElapsed: %s\n", aurora.Green("[fq]> "+string(body)), elapsed.String())
+
+		return
+	}
+
+	fmt.Printf("%s\nElapsed: %s\n", aurora.Green(pretty.String()), elapsed.String())
+}
+
+func runHumanInspectCommand(
+	ctx context.Context,
+	logger *zerolog.Logger,
+	client *network.TCPClient,
+	request string,
+	start time.Time,
+) {
+	wireQuery := toWireInspectQuery(request)
+
+	body, err := fetchChunkedBody(ctx, client, wireQuery)
+	elapsed := time.Since(start)
+	if err != nil {
+		fmt.Printf("%s\nElapsed: %s\n", aurora.Red("error: "+err.Error()), elapsed.String())
+
+		return
+	}
+
+	var report inspect.Report
+	if jsonErr := json.Unmarshal(body, &report); jsonErr != nil {
+		logger.Warn().Err(jsonErr).Msg("failed to parse inspect report")
+		msg := aurora.Red("error: failed to parse inspect report: " + jsonErr.Error())
+		fmt.Printf("%s\nElapsed: %s\n", msg, elapsed.String())
+
+		return
+	}
+
+	renderReport(os.Stdout, &report)
+	fmt.Printf("\nElapsed: %s\n", elapsed.String())
+}
+
+func toWireInspectQuery(request string) string {
+	fields := strings.Fields(request)
+	if len(fields) == 0 {
+		return wireInspectCommand
+	}
+
+	fields[0] = wireInspectCommand
+
+	return strings.Join(fields, " ")
+}
+
+func isInspectCommand(request string) bool {
+	upperRequest := strings.ToUpper(strings.TrimSpace(request))
+	return upperRequest == wireInspectCommand || strings.HasPrefix(upperRequest, wireInspectCommand+" ")
+}
+
+func isHumanInspectCommand(request string) bool {
+	upperRequest := strings.ToUpper(strings.TrimSpace(request))
+	return upperRequest == "HINSPECT" || strings.HasPrefix(upperRequest, "HINSPECT ")
 }
 
 func isWatchCommand(request string) bool {

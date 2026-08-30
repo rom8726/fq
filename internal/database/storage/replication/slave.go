@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,10 +35,24 @@ type TCPClientFactory interface {
 
 var errSlaveClosed = errors.New("slave is shutting down")
 
+type SlaveStatus struct {
+	ReplicaID         string
+	MasterAddress     string
+	Connected         bool
+	LastSegmentName   string
+	LastSegmentOffset int64
+	LastAppliedLSN    uint64
+	ConsecutiveErrors int
+	ReconnectTotal    uint64
+	LastReconnectAt   time.Time
+	UpdatedAt         time.Time
+}
+
 type Slave struct {
 	clientFactory         TCPClientFactory
 	client                TCPClient
 	replicaID             string
+	masterAddress         string
 	walReader             WALReader
 	walStream             chan<- wal.Chunk
 	dumpStream            chan<- database.DumpChunk
@@ -63,14 +78,48 @@ type Slave struct {
 	consecutiveErrors int
 
 	// Reconnection state
-	reconnectMu sync.Mutex
+	reconnectMu     sync.Mutex
+	reconnectTotal  atomic.Uint64
+	lastReconnectAt atomic.Pointer[time.Time]
+
+	status atomic.Pointer[SlaveStatus]
 
 	logger *zerolog.Logger
+}
+
+func (s *Slave) refreshStatus(connected bool) {
+	lastReconnectAt := time.Time{}
+	if p := s.lastReconnectAt.Load(); p != nil {
+		lastReconnectAt = *p
+	}
+
+	s.status.Store(&SlaveStatus{
+		ReplicaID:         s.replicaID,
+		MasterAddress:     s.masterAddress,
+		Connected:         connected,
+		LastSegmentName:   s.lastSegmentName,
+		LastSegmentOffset: s.lastSegmentOffset,
+		LastAppliedLSN:    s.lastAppliedLSN,
+		ConsecutiveErrors: s.consecutiveErrors,
+		ReconnectTotal:    s.reconnectTotal.Load(),
+		LastReconnectAt:   lastReconnectAt,
+		UpdatedAt:         time.Now(),
+	})
+}
+
+func (s *Slave) Status() SlaveStatus {
+	p := s.status.Load()
+	if p == nil {
+		return SlaveStatus{ReplicaID: s.replicaID, MasterAddress: s.masterAddress}
+	}
+
+	return *p
 }
 
 func NewSlave(
 	client TCPClient,
 	replicaID string,
+	masterAddress string,
 	walReader WALReader,
 	walStream chan<- wal.Chunk,
 	dumpStream chan<- database.DumpChunk,
@@ -102,6 +151,7 @@ func NewSlave(
 	slave := &Slave{
 		client:            client,
 		replicaID:         replicaID,
+		masterAddress:     masterAddress,
 		walReader:         walReader,
 		walStream:         walStream,
 		dumpStream:        dumpStream,
@@ -120,6 +170,8 @@ func NewSlave(
 		consecutiveErrors: 0,
 		logger:            logger,
 	}
+	slave.refreshStatus(true)
+
 	return slave, nil
 }
 
@@ -127,6 +179,7 @@ func NewSlave(
 func NewSlaveWithFactory(
 	clientFactory TCPClientFactory,
 	replicaID string,
+	masterAddress string,
 	walReader WALReader,
 	walStream chan<- wal.Chunk,
 	dumpStream chan<- database.DumpChunk,
@@ -164,6 +217,7 @@ func NewSlaveWithFactory(
 		clientFactory:     clientFactory,
 		client:            client,
 		replicaID:         replicaID,
+		masterAddress:     masterAddress,
 		walReader:         walReader,
 		walStream:         walStream,
 		dumpStream:        dumpStream,
@@ -182,6 +236,8 @@ func NewSlaveWithFactory(
 		consecutiveErrors: 0,
 		logger:            logger,
 	}
+	slave.refreshStatus(true)
+
 	return slave, nil
 }
 
@@ -257,6 +313,7 @@ func (s *Slave) Shutdown() {
 // handleSyncError handles synchronization errors with exponential backoff
 func (s *Slave) handleSyncError(err error, syncType string) {
 	s.consecutiveErrors++
+	s.refreshStatus(false)
 	s.logger.Error().
 		Err(err).
 		Str("sync_type", syncType).
@@ -302,6 +359,7 @@ func (s *Slave) resetRetryState() {
 			Msg("synchronization restored, resetting error counter")
 		s.consecutiveErrors = 0
 	}
+	s.refreshStatus(true)
 }
 
 // reconnect attempts to reconnect to master with exponential backoff
@@ -335,6 +393,10 @@ func (s *Slave) reconnect(ctx context.Context) error {
 		if err == nil {
 			s.client = newClient
 			observability.IncReplicationReconnectTotal()
+			now := time.Now()
+			s.reconnectTotal.Add(1)
+			s.lastReconnectAt.Store(&now)
+			s.refreshStatus(true)
 			s.logger.Info().
 				Int("attempt", attempt+1).
 				Int("max_attempts", maxAttempts).

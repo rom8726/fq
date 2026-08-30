@@ -198,6 +198,7 @@ func TestNewSlaveInitializesCursorOffsetFromLastLocalSegment(t *testing.T) {
 	slave, err := NewSlave(
 		client,
 		"replica-1",
+		":1946",
 		scriptedWALReader{},
 		make(chan wal.Chunk, 1),
 		make(chan database.DumpChunk, 1),

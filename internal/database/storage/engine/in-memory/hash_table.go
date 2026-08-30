@@ -250,6 +250,24 @@ func (s *HashTable) Del(key database.BatchKey) bool {
 	return counterFound || slidingWindowFound || tokenBucketFound
 }
 
+func (s *HashTable) Stats() database.PartitionStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	allocations := 0
+	for _, q := range s.q {
+		allocations += q.AllocationCount()
+	}
+
+	return database.PartitionStats{
+		Counters:         len(s.m),
+		SlidingWindows:   len(s.sw),
+		TokenBuckets:     len(s.tb),
+		Quotas:           len(s.q),
+		QuotaAllocations: allocations,
+	}
+}
+
 func (s *HashTable) FlushDB() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -82,6 +82,7 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 		} else {
 			s.readDump = !endOfDump
 		}
+		s.refreshStatus(true)
 
 		return nil
 	}

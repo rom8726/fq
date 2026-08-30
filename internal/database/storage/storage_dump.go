@@ -40,5 +40,12 @@ func (s *Storage) dump(ctx context.Context) error {
 	elapsed := time.Since(start)
 	s.logger.Info().Str("elapsed", elapsed.String()).Msg("Dump creation finished")
 
+	s.lastDump.Store(&dumpSnapshot{
+		at:       start,
+		duration: elapsed,
+		err:      err,
+		tx:       dumpTx,
+	})
+
 	return err
 }
