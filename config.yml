@@ -17,7 +17,7 @@ wal:
   data_directory: ./fq_data/wal/
 engine:
   type: in_memory
-  partitions: 10
+  partitions: 16
   wal_apply_workers: 1
   key_index: false
   clean_interval: 5m
