@@ -19,6 +19,7 @@ engine:
   type: in_memory
   partitions: 10
   wal_apply_workers: 4
+  key_index: false
   clean_interval: 5m
   limit_event_queue_capacity: 16
 dump:

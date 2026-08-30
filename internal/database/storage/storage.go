@@ -48,6 +48,7 @@ type Engine interface {
 	Del(database.TxContext, database.BatchKey) bool
 	MDel(database.TxContext, []database.BatchKey) []bool
 	FlushDB()
+	Scan(prefix, cursor string, count uint32) (database.ScanResult, error)
 	Clean(context.Context)
 	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
 	RestoreDumpElem(context.Context, database.DumpElem) error
@@ -497,6 +498,10 @@ func (s *Storage) Truncate(ctx context.Context) error {
 	s.tx.Store(0)
 
 	return nil
+}
+
+func (s *Storage) Scan(_ context.Context, prefix, cursor string, count uint32) (database.ScanResult, error) {
+	return s.engine.Scan(prefix, cursor, count)
 }
 
 func (s *Storage) writeIncrWAL(ctx context.Context, txCtx database.TxContext, key database.BatchKey) error {

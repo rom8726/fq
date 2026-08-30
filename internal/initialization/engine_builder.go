@@ -33,12 +33,18 @@ func CreateEngine(
 		}
 	}
 
-	return inMemory.NewEngineWithWALApplyWorkers(
-		inMemory.HashTableBuilder,
+	tableBuilder := inMemory.HashTableBuilder
+	if cfg.KeyIndex {
+		tableBuilder = inMemory.IndexedHashTableBuilder
+	}
+
+	return inMemory.NewEngineWithWALApplyWorkersAndKeyIndex(
+		tableBuilder,
 		cfg.PartitionsValue(),
 		logger,
 		walStream,
 		dumpStream,
 		cfg.WALApplyWorkersValue(),
+		cfg.KeyIndex,
 	)
 }

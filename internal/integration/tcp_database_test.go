@@ -145,6 +145,33 @@ func TestTCPDatabaseAcceptsBoundaryInputs(t *testing.T) {
 	app.RequireRateLimit("RLIMIT FW max_limit 2147483647 600", true, 1, 2147483646, 600)
 }
 
+func TestTCPDatabaseScanAndPScan(t *testing.T) {
+	app := startTestDatabaseWithKeyIndex(t, t.TempDir())
+	defer app.Close()
+
+	app.RequireQuery("INCR tenant-a 60", "ok|1")
+	app.RequireQuery("RLIMIT SW tenant-b 10 300", "ok|1;1;9;300")
+	app.RequireQuery("RLIMIT TB other 10 1 60", "ok|1;1;9;0")
+
+	require.ElementsMatch(t, []string{
+		"tenant-a;60",
+		"tenant-b;300",
+		"other;60",
+	}, app.ScanAll("SCAN", "", 1))
+	require.ElementsMatch(t, []string{
+		"tenant-a;60",
+		"tenant-b;300",
+	}, app.ScanAll("PSCAN", "tenant-", 10))
+}
+
+func TestTCPDatabaseScanReturnsErrorWhenIndexIsDisabled(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	app.RequireQuery("SCAN 0 10", "err|scan index is disabled")
+	app.RequireQuery("PSCAN tenant- 0 10", "err|scan index is disabled")
+}
+
 func TestTCPDatabaseCommandsAreCaseInsensitive(t *testing.T) {
 	app := startTestDatabase(t, t.TempDir())
 	defer app.Close()
@@ -883,14 +910,32 @@ func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
 	return startTestDatabaseWithDump(t, walDir, "", false)
 }
 
+func startTestDatabaseWithKeyIndex(t *testing.T, walDir string) *testDatabaseApp {
+	return startTestDatabaseWithDumpAndKeyIndex(t, walDir, "", false, true)
+}
+
 func startTestDatabaseWithDump(t *testing.T, walDir, dumpDir string, restoreDump bool) *testDatabaseApp {
+	return startTestDatabaseWithDumpAndKeyIndex(t, walDir, dumpDir, restoreDump, false)
+}
+
+func startTestDatabaseWithDumpAndKeyIndex(
+	t *testing.T,
+	walDir,
+	dumpDir string,
+	restoreDump bool,
+	scanIndexEnabled bool,
+) *testDatabaseApp {
 	t.Helper()
 
 	logger := zerolog.Nop()
 	walStream := make(chan wal.Chunk, 8)
 	dumpStream := make(chan database.DumpChunk, 1)
 
-	engine, err := inmemory.NewEngine(inmemory.HashTableBuilder, 4, &logger, walStream, dumpStream)
+	tableBuilder := inmemory.HashTableBuilder
+	if scanIndexEnabled {
+		tableBuilder = inmemory.IndexedHashTableBuilder
+	}
+	engine, err := inmemory.NewEngineWithKeyIndex(tableBuilder, 4, &logger, walStream, dumpStream, scanIndexEnabled)
 	require.NoError(t, err)
 
 	walStore := newTestWAL(walDir, walStream, &logger)
@@ -1131,6 +1176,34 @@ func (a *testDatabaseApp) Query(query string) string {
 	require.NoError(a.t, err)
 
 	return string(response)
+}
+
+func (a *testDatabaseApp) ScanAll(command, prefix string, count int) []string {
+	a.t.Helper()
+
+	cursor := "0"
+	var keys []string
+	for {
+		query := fmt.Sprintf("%s %s %d", command, cursor, count)
+		if prefix != "" {
+			query = fmt.Sprintf("%s %s %s %d", command, prefix, cursor, count)
+		}
+		response := a.Query(query)
+		require.True(a.t, strings.HasPrefix(response, "ok|"), response)
+
+		payload := strings.TrimPrefix(response, "ok|")
+		parts := strings.Split(payload, ";")
+		require.NotEmpty(a.t, parts)
+		require.Equal(a.t, 1, len(parts)%2)
+
+		cursor = parts[0]
+		for i := 1; i < len(parts); i += 2 {
+			keys = append(keys, parts[i]+";"+parts[i+1])
+		}
+		if cursor == "0" {
+			return keys
+		}
+	}
 }
 
 func (a *testDatabaseApp) RequireQueryPrefix(query, prefix string) string {

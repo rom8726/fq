@@ -93,6 +93,7 @@ type EngineConfig struct {
 	Partitions              int           `yaml:"partitions"`
 	WALApplyWorkers         int           `yaml:"wal_apply_workers"`
 	LimitEventQueueCapacity int           `yaml:"limit_event_queue_capacity"`
+	KeyIndex                bool          `yaml:"key_index"`
 }
 
 func (cfg EngineConfig) PartitionsValue() int {

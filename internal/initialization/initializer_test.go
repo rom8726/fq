@@ -85,6 +85,19 @@ func TestCreateEngineUsesConfiguredWALApplyWorkers(t *testing.T) {
 	require.Equal(t, int64(4), workers.Int())
 }
 
+func TestCreateEngineUsesConfiguredKeyIndex(t *testing.T) {
+	cfg := testInitializerConfig()
+	cfg.Engine.KeyIndex = true
+
+	initializer, err := NewInitializer(cfg)
+	require.NoError(t, err)
+
+	engine, ok := initializer.engine.(*inmemory.Engine)
+	require.True(t, ok)
+	enabled := reflect.ValueOf(engine).Elem().FieldByName("scanIndexEnabled")
+	require.True(t, enabled.Bool())
+}
+
 func testInitializerConfig() config.Config {
 	return config.Config{
 		Engine: config.EngineConfig{

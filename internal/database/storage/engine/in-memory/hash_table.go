@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/btree"
 
 	"github.com/fq-db/fq/internal/database"
 )
@@ -14,9 +17,14 @@ var HashTableBuilder = func() hashTable {
 	return NewHashTable()
 }
 
+var IndexedHashTableBuilder = func() hashTable {
+	return NewIndexedHashTable()
+}
+
 const (
 	cleanChunkSize       = 1024
 	cleanChunkTimeBudget = 2 * time.Millisecond
+	keyIndexDegree       = 32
 )
 
 type hashTableKey struct {
@@ -30,6 +38,8 @@ type HashTable struct {
 	sw map[hashTableKey]*SlidingWindowElem
 	tb map[hashTableKey]*TokenBucketElem
 	q  map[string]*QuotaElem
+
+	index *btree.BTreeG[hashTableKey]
 }
 
 func NewHashTable() *HashTable {
@@ -39,6 +49,13 @@ func NewHashTable() *HashTable {
 		tb: make(map[hashTableKey]*TokenBucketElem),
 		q:  make(map[string]*QuotaElem),
 	}
+}
+
+func NewIndexedHashTable() *HashTable {
+	table := NewHashTable()
+	table.index = btree.NewG[hashTableKey](keyIndexDegree, lessHashTableKey)
+
+	return table
 }
 
 func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
@@ -218,6 +235,7 @@ func (s *HashTable) Del(key database.BatchKey) bool {
 	if tokenBucketFound {
 		delete(s.tb, htKey)
 	}
+	s.removeIndexKeyIfDeadLocked(htKey)
 	s.mu.Unlock()
 
 	return counterFound || slidingWindowFound || tokenBucketFound
@@ -231,6 +249,41 @@ func (s *HashTable) FlushDB() {
 	s.sw = make(map[hashTableKey]*SlidingWindowElem)
 	s.tb = make(map[hashTableKey]*TokenBucketElem)
 	s.q = make(map[string]*QuotaElem)
+	if s.index != nil {
+		s.index = btree.NewG[hashTableKey](keyIndexDegree, lessHashTableKey)
+	}
+}
+
+func (s *HashTable) Scan(prefix string, after hashTableKey, count uint32) []database.BatchKey {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if count == 0 || s.index == nil {
+		return nil
+	}
+
+	res := make([]database.BatchKey, 0, count)
+	s.index.AscendGreaterOrEqual(after, func(item hashTableKey) bool {
+		if !lessHashTableKey(after, item) {
+			return true
+		}
+		if prefix != "" && !strings.HasPrefix(item.key, prefix) {
+			return item.key < prefix
+		}
+		if !s.keyExistsLocked(item) {
+			return true
+		}
+
+		res = append(res, database.BatchKey{
+			Key:          item.key,
+			BatchSize:    item.batchSize,
+			BatchSizeStr: fmt.Sprintf("%d", item.batchSize),
+		})
+
+		return len(res) < int(count)
+	})
+
+	return res
 }
 
 func (s *HashTable) Clean(ctx context.Context) {
@@ -645,6 +698,7 @@ func (s *HashTable) RestoreDumpElem(elem database.DumpElem) {
 
 	s.mu.Lock()
 	s.m[key] = fqElem
+	s.indexKeyLocked(key)
 	s.mu.Unlock()
 }
 
@@ -665,6 +719,7 @@ func (s *HashTable) getOrInitElem(key hashTableKey) *FqElem {
 	if !ok {
 		v = NewFqElem(key.batchSize)
 		s.m[key] = v
+		s.indexKeyLocked(key)
 	}
 	s.mu.Unlock()
 
@@ -685,6 +740,7 @@ func (s *HashTable) getOrInitSlidingWindowElem(key hashTableKey) *SlidingWindowE
 	if !ok {
 		v = NewSlidingWindowElem(key.batchSize)
 		s.sw[key] = v
+		s.indexKeyLocked(key)
 	}
 	s.mu.Unlock()
 
@@ -705,10 +761,47 @@ func (s *HashTable) getOrInitTokenBucketElem(key hashTableKey) *TokenBucketElem 
 	if !ok {
 		v = NewTokenBucketElem(key.batchSize)
 		s.tb[key] = v
+		s.indexKeyLocked(key)
 	}
 	s.mu.Unlock()
 
 	return v
+}
+
+func (s *HashTable) indexKeyLocked(key hashTableKey) {
+	if s.index == nil {
+		return
+	}
+	s.index.ReplaceOrInsert(key)
+}
+
+func (s *HashTable) removeIndexKeyIfDeadLocked(key hashTableKey) {
+	if s.index == nil || s.keyExistsLocked(key) {
+		return
+	}
+	s.index.Delete(key)
+}
+
+func (s *HashTable) keyExistsLocked(key hashTableKey) bool {
+	if _, ok := s.m[key]; ok {
+		return true
+	}
+	if _, ok := s.sw[key]; ok {
+		return true
+	}
+	if _, ok := s.tb[key]; ok {
+		return true
+	}
+
+	return false
+}
+
+func lessHashTableKey(a, b hashTableKey) bool {
+	if a.key != b.key {
+		return a.key < b.key
+	}
+
+	return a.batchSize < b.batchSize
 }
 
 func (s *HashTable) getOrInitQuotaElem(

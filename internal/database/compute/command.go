@@ -25,6 +25,8 @@ const (
 	QuotaSetCommandID
 	FlushDBCommandID
 	TruncateCommandID
+	ScanCommandID
+	PScanCommandID
 )
 
 var (
@@ -43,6 +45,8 @@ var (
 	QuotaCommand    = "QUOTA"
 	FlushDBCommand  = "FLUSHDB"
 	TruncateCommand = "TRUNCATE"
+	ScanCommand     = "SCAN"
+	PScanCommand    = "PSCAN"
 )
 
 var commandNamesToID = map[string]CommandID{
@@ -61,6 +65,8 @@ var commandNamesToID = map[string]CommandID{
 	QuotaCommand:    QuotaCommandID,
 	FlushDBCommand:  FlushDBCommandID,
 	TruncateCommand: TruncateCommandID,
+	ScanCommand:     ScanCommandID,
+	PScanCommand:    PScanCommandID,
 }
 
 func (c CommandID) Int() int {

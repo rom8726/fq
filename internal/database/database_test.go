@@ -15,6 +15,13 @@ func TestResponseFormatting(t *testing.T) {
 	require.Equal(t, "ok|1", string(makeBoolMsg(true)))
 	require.Equal(t, "ok|0", string(makeBoolMsg(false)))
 	require.Equal(t, "ok|1;0;1", string(appendBoolsMsg(nil, []bool{true, false, true})))
+	require.Equal(t, "ok|cursor;key-a;60;key-b;300", string(appendScanMsg(nil, ScanResult{
+		NextCursor: "cursor",
+		Keys: []BatchKey{
+			{Key: "key-a", BatchSize: 60},
+			{Key: "key-b", BatchSize: 300},
+		},
+	})))
 	require.Equal(t, "ok|1;7;3;60", string(appendRateLimitMsg(nil, RateLimitResult{
 		Allowed:    true,
 		Current:    7,

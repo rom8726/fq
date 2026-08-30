@@ -24,6 +24,8 @@ const (
 	quotaQueryArgumentsNumber    = -4
 	flushDBQueryArgumentsNumber  = 0
 	truncateQueryArgumentsNumber = 0
+	scanQueryArgumentsNumber     = 2
+	pscanQueryArgumentsNumber    = 3
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -41,6 +43,8 @@ var queryArgumentsNumber = map[CommandID]int{
 	QuotaCommandID:    quotaQueryArgumentsNumber,
 	FlushDBCommandID:  flushDBQueryArgumentsNumber,
 	TruncateCommandID: truncateQueryArgumentsNumber,
+	ScanCommandID:     scanQueryArgumentsNumber,
+	PScanCommandID:    pscanQueryArgumentsNumber,
 }
 
 var (

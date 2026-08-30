@@ -224,6 +224,81 @@ func TestEngineRLimitTokenBucketDoesNotExceedCapacityConcurrently(t *testing.T) 
 	require.Equal(t, int32(capacity), allowedCount.Load())
 }
 
+func TestEngineScanReturnsKeysInChunks(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngineWithKeyIndex(IndexedHashTableBuilder, 1, &logger, nil, nil, true)
+	require.NoError(t, err)
+
+	now := database.TxTime(time.Now().Unix())
+	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, database.BatchKey{Key: "alpha", BatchSize: 60, BatchSizeStr: "60"})
+	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, database.BatchKey{Key: "bravo", BatchSize: 60, BatchSizeStr: "60"})
+	engine.Incr(database.TxContext{Tx: 3, CurrTime: now}, database.BatchKey{Key: "charlie", BatchSize: 300, BatchSizeStr: "300"})
+
+	first, err := engine.Scan("", "0", 2)
+	require.NoError(t, err)
+	require.Equal(t, []database.BatchKey{
+		{Key: "alpha", BatchSize: 60, BatchSizeStr: "60"},
+		{Key: "bravo", BatchSize: 60, BatchSizeStr: "60"},
+	}, first.Keys)
+	require.NotEqual(t, "0", first.NextCursor)
+
+	second, err := engine.Scan("", first.NextCursor, 2)
+	require.NoError(t, err)
+	require.Equal(t, []database.BatchKey{
+		{Key: "charlie", BatchSize: 300, BatchSizeStr: "300"},
+	}, second.Keys)
+	require.Equal(t, "0", second.NextCursor)
+}
+
+func TestEnginePScanReturnsOnlyMatchingPrefix(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngineWithKeyIndex(IndexedHashTableBuilder, 1, &logger, nil, nil, true)
+	require.NoError(t, err)
+
+	now := database.TxTime(time.Now().Unix())
+	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, database.BatchKey{Key: "tenant-a", BatchSize: 60, BatchSizeStr: "60"})
+	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, database.BatchKey{Key: "tenant-b", BatchSize: 60, BatchSizeStr: "60"})
+	engine.Incr(database.TxContext{Tx: 3, CurrTime: now}, database.BatchKey{Key: "other", BatchSize: 60, BatchSizeStr: "60"})
+
+	result, err := engine.Scan("tenant-", "0", 10)
+	require.NoError(t, err)
+	require.Equal(t, []database.BatchKey{
+		{Key: "tenant-a", BatchSize: 60, BatchSizeStr: "60"},
+		{Key: "tenant-b", BatchSize: 60, BatchSizeStr: "60"},
+	}, result.Keys)
+	require.Equal(t, "0", result.NextCursor)
+}
+
+func TestEngineScanSkipsStaleIndexKeys(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngineWithKeyIndex(IndexedHashTableBuilder, 1, &logger, nil, nil, true)
+	require.NoError(t, err)
+
+	now := database.TxTime(time.Now().Unix())
+	stale := database.BatchKey{Key: "stale", BatchSize: 60, BatchSizeStr: "60"}
+	live := database.BatchKey{Key: "tenant-live", BatchSize: 60, BatchSizeStr: "60"}
+	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, stale)
+	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, live)
+
+	partition := engine.partitions[0].(*HashTable)
+	partition.mu.Lock()
+	delete(partition.m, hashTableKey{key: stale.Key, batchSize: stale.BatchSize})
+	partition.mu.Unlock()
+
+	result, err := engine.Scan("", "0", 10)
+	require.NoError(t, err)
+	require.Equal(t, []database.BatchKey{live}, result.Keys)
+}
+
+func TestEngineScanReturnsErrorWhenIndexIsDisabled(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngine(HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+
+	_, err = engine.Scan("", "0", 10)
+	require.ErrorIs(t, err, database.ErrScanIndexDisabled)
+}
+
 func requireDumpAck(t *testing.T, applied <-chan error) error {
 	return requireAck(t, applied)
 }

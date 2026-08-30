@@ -12,4 +12,6 @@ var (
 	ErrQuotaLimitBelowUsed    = errors.New("quota limit is below used amount")
 	ErrQuotaOwnershipMismatch = errors.New("quota ownership mismatch")
 	ErrQuotaPolicyMismatch    = errors.New("quota policy mismatch")
+	ErrInvalidScanCursor      = errors.New("invalid scan cursor")
+	ErrScanIndexDisabled      = errors.New("scan index is disabled")
 )

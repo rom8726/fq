@@ -47,6 +47,11 @@ type BatchKey struct {
 	Key          string
 }
 
+type ScanResult struct {
+	NextCursor string
+	Keys       []BatchKey
+}
+
 type DumpElem struct {
 	Kind      uint32
 	Key       string

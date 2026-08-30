@@ -20,6 +20,7 @@ const (
 	minBatchSize = 1
 	maxLimit     = uint64(1<<31 - 1)
 	minLimit     = 1
+	maxScanCount = uint64(10000)
 
 	defaultResponseBufferCapacity = 64
 	maxPooledResponseBufferSize   = 64 << 10
@@ -35,6 +36,7 @@ var (
 	errLimitNotNumber        = errors.New("limit is not a number")
 	errInvalidLimit          = errors.New("invalid limit")
 	errInvalidRLimitAlgo     = errors.New("invalid rate limit algorithm")
+	errInvalidScanCount      = errors.New("invalid scan count")
 
 	okTrueMsg  = []byte("ok|1")
 	okFalseMsg = []byte("ok|0")
@@ -78,6 +80,7 @@ type storageLayer interface {
 	QuotaInfo(ctx context.Context, name string) (QuotaInfo, error)
 	FlushDB(ctx context.Context) error
 	Truncate(ctx context.Context) error
+	Scan(ctx context.Context, prefix, cursor string, count uint32) (ScanResult, error)
 }
 
 type Database struct {
@@ -170,6 +173,10 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		response = d.handleFlushDBQuery(ctx, responseBuffer.buf[:0])
 	case compute.TruncateCommandID:
 		response = d.handleTruncateQuery(ctx, responseBuffer.buf[:0])
+	case compute.ScanCommandID:
+		response = d.handleScanQuery(ctx, query, responseBuffer.buf[:0])
+	case compute.PScanCommandID:
+		response = d.handlePScanQuery(ctx, query, responseBuffer.buf[:0])
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
@@ -193,6 +200,33 @@ func (d *Database) handleTruncateQuery(ctx context.Context, dst []byte) []byte {
 	}
 
 	return appendValueMsg(dst, 1)
+}
+
+func (d *Database) handleScanQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+	return d.handleScan(ctx, "", query.Arg(0), query.Arg(1), dst)
+}
+
+func (d *Database) handlePScanQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
+	prefix, err := makeStreamPrefix(query.Arg(0))
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return d.handleScan(ctx, prefix, query.Arg(1), query.Arg(2), dst)
+}
+
+func (d *Database) handleScan(ctx context.Context, prefix, cursor, countStr string, dst []byte) []byte {
+	count, err := makeScanCount(countStr)
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	result, err := d.storageLayer.Scan(ctx, prefix, cursor, count)
+	if err != nil {
+		return appendErrorMsg(dst, err)
+	}
+
+	return appendScanMsg(dst, result)
 }
 
 func (d *Database) handleQuotaQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
@@ -659,6 +693,24 @@ func makeTTL(ttlStr string) (uint32, error) {
 	return uint32(ttl), nil
 }
 
+func makeScanCount(countStr string) (uint32, error) {
+	count, err := strconv.ParseUint(countStr, 10, 32)
+	if err != nil {
+		return 0, errLimitNotNumber
+	}
+	if count < minLimit || count > maxScanCount {
+		return 0, fmt.Errorf(
+			"%w: %d (must be between %d and %d)",
+			errInvalidScanCount,
+			count,
+			minLimit,
+			maxScanCount,
+		)
+	}
+
+	return uint32(count), nil
+}
+
 func makeQuotaName(name string) (string, error) {
 	return makeStreamPrefix(name)
 }
@@ -710,6 +762,20 @@ func appendBoolsMsg(dst []byte, arr []bool) []byte {
 		if i < len(arr)-1 {
 			dst = append(dst, ';')
 		}
+	}
+
+	return dst
+}
+
+func appendScanMsg(dst []byte, result ScanResult) []byte {
+	dst = append(dst, "ok|"...)
+	dst = append(dst, result.NextCursor...)
+
+	for _, key := range result.Keys {
+		dst = append(dst, ';')
+		dst = append(dst, key.Key...)
+		dst = append(dst, ';')
+		dst = strconv.AppendUint(dst, uint64(key.BatchSize), 10)
 	}
 
 	return dst

@@ -70,6 +70,7 @@ type hashTable interface {
 	Get(key database.BatchKey) (database.ValueType, bool)
 	Del(key database.BatchKey) bool
 	FlushDB()
+	Scan(prefix string, after hashTableKey, count uint32) []database.BatchKey
 	Clean(ctx context.Context)
 	Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem)
 	RestoreDumpElem(elem database.DumpElem)
@@ -79,6 +80,7 @@ type Engine struct {
 	partitions          []hashTable
 	logger              *zerolog.Logger
 	walApplyWorkers     int
+	scanIndexEnabled    bool
 	limitEventPublisher func(database.LimitEvent)
 	quotaEventPublisher func(database.QuotaEvent)
 }
@@ -93,6 +95,17 @@ func NewEngine(
 	return NewEngineWithWALApplyWorkers(tableBuilder, partitionsNumber, logger, walStream, dumpStream, 1)
 }
 
+func NewEngineWithKeyIndex(
+	tableBuilder func() hashTable,
+	partitionsNumber int,
+	logger *zerolog.Logger,
+	walStream <-chan wal.Chunk,
+	dumpStream <-chan database.DumpChunk,
+	scanIndexEnabled bool,
+) (*Engine, error) {
+	return newEngine(tableBuilder, partitionsNumber, logger, walStream, dumpStream, 1, scanIndexEnabled)
+}
+
 func NewEngineWithWALApplyWorkers(
 	tableBuilder func() hashTable,
 	partitionsNumber int,
@@ -100,6 +113,30 @@ func NewEngineWithWALApplyWorkers(
 	walStream <-chan wal.Chunk,
 	dumpStream <-chan database.DumpChunk,
 	walApplyWorkers int,
+) (*Engine, error) {
+	return newEngine(tableBuilder, partitionsNumber, logger, walStream, dumpStream, walApplyWorkers, false)
+}
+
+func NewEngineWithWALApplyWorkersAndKeyIndex(
+	tableBuilder func() hashTable,
+	partitionsNumber int,
+	logger *zerolog.Logger,
+	walStream <-chan wal.Chunk,
+	dumpStream <-chan database.DumpChunk,
+	walApplyWorkers int,
+	scanIndexEnabled bool,
+) (*Engine, error) {
+	return newEngine(tableBuilder, partitionsNumber, logger, walStream, dumpStream, walApplyWorkers, scanIndexEnabled)
+}
+
+func newEngine(
+	tableBuilder func() hashTable,
+	partitionsNumber int,
+	logger *zerolog.Logger,
+	walStream <-chan wal.Chunk,
+	dumpStream <-chan database.DumpChunk,
+	walApplyWorkers int,
+	scanIndexEnabled bool,
 ) (*Engine, error) {
 	if tableBuilder == nil {
 		return nil, ErrInvalidArgument
@@ -127,9 +164,10 @@ func NewEngineWithWALApplyWorkers(
 	}
 
 	engine := &Engine{
-		partitions:      partitions,
-		logger:          logger,
-		walApplyWorkers: walApplyWorkers,
+		partitions:       partitions,
+		logger:           logger,
+		walApplyWorkers:  walApplyWorkers,
+		scanIndexEnabled: scanIndexEnabled,
 	}
 
 	if walStream != nil {

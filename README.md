@@ -192,6 +192,8 @@ QUOTA INF <name>
 QUOTA DEL <name>
 QSTREAM
 QPSTREAM <prefix>
+SCAN <cursor> <count>
+PSCAN <prefix> <cursor> <count>
 FLUSHDB
 TRUNCATE
 ```
@@ -267,6 +269,33 @@ emit stream events. Idempotent quota acquire retries do not
 emit events because they do not change state. For `del`, `client_id` is empty and
 the numeric fields are `0`.
 
+### Scanning Keys
+
+```text
+SCAN <cursor> <count>
+PSCAN <prefix> <cursor> <count>
+```
+
+`SCAN` returns counter/rate-limit key/window pairs in chunks. `PSCAN` does the
+same, filtered to keys that start with `prefix`. Start with cursor `0`; use the
+returned cursor for the next request. A returned cursor of `0` means the scan is
+complete.
+
+Key scanning requires `engine.key_index: true`. The index is disabled by default
+to avoid extra write-path work for deployments that do not need scanning. When it
+is disabled, `SCAN` and `PSCAN` return `err|scan index is disabled`.
+
+Scan responses use:
+
+```text
+ok|<next_cursor>[;<key>;<window>...]
+```
+
+The cursor is opaque. Scan order is stable for existing keys, but scan is not a
+snapshot: keys created or deleted during iteration may appear, disappear, or be
+seen in a later full scan. Expired keys removed from in-memory state are skipped
+even if their index entry has not been compacted yet.
+
 Server-owned example with limit `10`:
 
 ```text
@@ -338,6 +367,8 @@ GET <key> <window>
 DEL <key> <window>
 MDEL <key> <window> <key> <window> ...
 WATCH <key> <window>
+SCAN <cursor> <count>
+PSCAN <prefix> <cursor> <count>
 QUOTA SET <name> <limit>
 QUOTA SETN <name> <limit> <clients>
 QUOTA ACQ <name> <amount> <client_id> [ttl]
@@ -360,6 +391,8 @@ TRUNCATE
 - `DEL`: deletes counter and limiter state for the key/window pair
 - `MDEL`: deletes multiple key/window pairs
 - `WATCH`: waits until a key value changes or the request times out
+- `SCAN`: returns key/window pairs in cursor-based chunks
+- `PSCAN`: returns key/window pairs with a matching key prefix in cursor-based chunks
 - `QUOTA SET`: creates or updates a server-owned quota limit
 - `QUOTA ACQ`: reserves from a server-owned quota
 - `QUOTA SETN`: creates or updates a server-decided quota split across clients

@@ -149,6 +149,16 @@ func TestParserParseAndAnalyzeQuery(t *testing.T) {
 			command: compute.TruncateCommandID,
 			args:    []string{},
 		},
+		"valid scan": {
+			query:   "SCAN 0 100",
+			command: compute.ScanCommandID,
+			args:    []string{"0", "100"},
+		},
+		"valid pscan": {
+			query:   "PSCAN tenant- 0 100",
+			command: compute.PScanCommandID,
+			args:    []string{"tenant-", "0", "100"},
+		},
 		"valid qpstream": {
 			query:   "QPSTREAM tenant-",
 			command: compute.QPStreamCommandID,

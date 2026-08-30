@@ -80,6 +80,14 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"TRUNCATE"},
 			query:  compute.NewQuery(compute.TruncateCommandID, []string{}),
 		},
+		"valid scan query": {
+			tokens: []string{"SCAN", "0", "100"},
+			query:  compute.NewQuery(compute.ScanCommandID, []string{"0", "100"}),
+		},
+		"valid pscan query": {
+			tokens: []string{"PSCAN", "tenant-", "0", "100"},
+			query:  compute.NewQuery(compute.PScanCommandID, []string{"tenant-", "0", "100"}),
+		},
 		"valid stream query": {
 			tokens: []string{"STREAM"},
 			query:  compute.NewQuery(compute.StreamCommandID, []string{}),
