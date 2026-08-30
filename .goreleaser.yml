@@ -67,6 +67,50 @@ archives:
       - config.yml
       - config-slave.yml
 
+nfpms:
+  - id: deb
+    package_name: fq
+    ids:
+      - fq
+      - fq-cli
+    formats:
+      - deb
+    bindir: /usr/bin
+    vendor: fq-db
+    homepage: https://github.com/fq-db/fq
+    maintainer: fq-db maintainers <maintainers@fq-db.io>
+    description: Fast quotas database for rate limiting and quota counters.
+    license: MIT
+    section: database
+    priority: optional
+    contents:
+      - src: packaging/deb/config.yml
+        dst: /etc/fq/config.yml
+        type: config|noreplace
+        file_info:
+          mode: 0644
+      - src: packaging/systemd/fq.service
+        dst: /lib/systemd/system/fq.service
+        file_info:
+          mode: 0644
+      - dst: /var/lib/fq
+        type: dir
+        file_info:
+          mode: 0750
+          owner: fq
+          group: fq
+      - dst: /var/lib/fq/wal
+        type: dir
+        file_info:
+          mode: 0750
+          owner: fq
+          group: fq
+    scripts:
+      preinstall: packaging/deb/preinstall.sh
+      postinstall: packaging/deb/postinstall.sh
+      preremove: packaging/deb/preremove.sh
+      postremove: packaging/deb/postremove.sh
+
 checksum:
   name_template: checksums.txt
 

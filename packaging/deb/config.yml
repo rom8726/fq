@@ -1,0 +1,32 @@
+network:
+  address: ":1945"
+  max_connections: 1000
+  max_message_size: 4096
+  idle_timeout: 10m
+persistence:
+  mode: wal_and_dump
+observability:
+  address: ":2112"
+  pprof: false
+wal:
+  sync_commit: off
+  flushing_batch_length: 8192
+  flushing_batch_timeout: 10ms
+  queue_capacity: 16384
+  max_segment_size: 64MB
+  data_directory: /var/lib/fq/wal/
+engine:
+  type: in_memory
+  partitions: 16
+  wal_apply_workers: 1
+  clean_interval: 5m
+  limit_event_queue_capacity: 16
+dump:
+  interval: 1m
+  directory: /var/lib/fq/
+replication:
+  replica_type: master
+  master_address: ":1946"
+  sync_interval: 1s
+logging:
+  level: info

@@ -80,6 +80,23 @@ Prebuilt binaries for Linux and macOS are attached to each
 - `fq-bench` - benchmark client
 - example configuration files
 
+### Debian Package
+
+Linux releases also include `.deb` packages for amd64 and arm64. The package
+installs:
+
+- `fq` and `fq-cli` to `/usr/bin`
+- the default config to `/etc/fq/config.yml`
+- persistent WAL and dump storage under `/var/lib/fq`
+- a systemd service named `fq.service`
+
+Install and start fq:
+
+```shell
+sudo apt install ./fq_<version>_linux_<arch>.deb
+sudo systemctl start fq
+```
+
 ### From Source
 
 ```shell
