@@ -47,18 +47,6 @@ func (p *Parser) parseTokens(query string) ([]string, error) {
 	return p.machine.parse(query)
 }
 
-func (s *tokenScanner) authTokens(command string) []string {
-	tokens := []string{command}
-	for {
-		token, ok := s.nextOpaque()
-		if !ok {
-			return tokens
-		}
-
-		tokens = append(tokens, token)
-	}
-}
-
 func (p *Parser) ParseAndAnalyzeQuery(_ context.Context, query string) (Query, error) {
 	scanner := tokenScanner{query: query}
 	command, ok, err := scanner.next()
@@ -103,6 +91,18 @@ func isLetter(symbol byte) bool {
 type tokenScanner struct {
 	query string
 	pos   int
+}
+
+func (s *tokenScanner) authTokens(command string) []string {
+	tokens := []string{command}
+	for {
+		token, ok := s.nextOpaque()
+		if !ok {
+			return tokens
+		}
+
+		tokens = append(tokens, token)
+	}
 }
 
 func (s *tokenScanner) scanQuery(commandID CommandID) (Query, error) {
