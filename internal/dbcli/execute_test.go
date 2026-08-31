@@ -14,6 +14,7 @@ import (
 	"github.com/fq-db/fq/internal/dbcli"
 	"github.com/fq-db/fq/internal/inspect"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func startTestServer(t *testing.T, handler network.TCPStreamHandler) string {
@@ -78,7 +79,7 @@ func TestExecutePlainError(t *testing.T) {
 	t.Parallel()
 
 	address := startTestServer(t, func(_ context.Context, _ []byte, write func([]byte) error) error {
-		return write([]byte("err|boom"))
+		return write([]byte("err|9000|boom"))
 	})
 	client := dialTestClient(t, address, time.Minute)
 
@@ -87,7 +88,7 @@ func TestExecutePlainError(t *testing.T) {
 	err := dbcli.Execute(context.Background(), &logger, client, "GET missing", &out, time.Now())
 
 	require.NoError(t, err)
-	require.Contains(t, out.String(), "boom")
+	require.Contains(t, out.String(), "[9000] boom")
 }
 
 func TestExecutePlainMalformedResponse(t *testing.T) {
@@ -102,8 +103,22 @@ func TestExecutePlainMalformedResponse(t *testing.T) {
 	logger := zerolog.Nop()
 	err := dbcli.Execute(context.Background(), &logger, client, "GET malformed", &out, time.Now())
 
-	require.NoError(t, err)
-	require.Contains(t, out.String(), "malformed response: plain-result")
+	require.Error(t, err)
+	require.ErrorIs(t, err, protocol.ErrMalformedResponse)
+}
+
+func TestExecutePrintsErrorWithCode(t *testing.T) {
+	t.Parallel()
+
+	address := startTestServer(t, func(_ context.Context, _ []byte, write func([]byte) error) error {
+		return write([]byte("err|4000|quota not found"))
+	})
+	client := dialTestClient(t, address, time.Minute)
+
+	var out bytes.Buffer
+	logger := zerolog.Nop()
+	require.NoError(t, dbcli.Execute(context.Background(), &logger, client, "QUOTA INF q", &out, time.Now()))
+	require.Contains(t, out.String(), "[4000] quota not found")
 }
 
 func TestExecuteInspect(t *testing.T) {

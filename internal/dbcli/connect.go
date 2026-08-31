@@ -2,18 +2,12 @@ package dbcli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/fq-db/fq/internal/network"
 	"github.com/fq-db/fq/internal/security"
 )
-
-const errorResponsePrefix = "err|"
-
-var ErrAuthenticationRejected = errors.New("authentication rejected")
 
 type ConnectOptions struct {
 	Address        string
@@ -41,32 +35,11 @@ func Connect(ctx context.Context, options ConnectOptions) (*network.TCPClient, e
 		return nil, err
 	}
 
-	if err := Authenticate(ctx, client, options.Token); err != nil {
+	if _, err := client.Hello(ctx, options.Token); err != nil {
 		_ = client.Close()
 
-		return nil, err
+		return nil, fmt.Errorf("handshake: %w", err)
 	}
 
 	return client, nil
-}
-
-func Authenticate(ctx context.Context, client *network.TCPClient, token string) error {
-	if token == "" {
-		return nil
-	}
-
-	response, err := client.Send(ctx, []byte("AUTH "+token))
-	if err != nil {
-		return fmt.Errorf("send auth: %w", err)
-	}
-
-	if len(response) == 0 {
-		return fmt.Errorf("%w: connection closed by server", ErrAuthenticationRejected)
-	}
-
-	if strings.HasPrefix(string(response), errorResponsePrefix) {
-		return fmt.Errorf("%w: %s", ErrAuthenticationRejected, strings.TrimPrefix(string(response), errorResponsePrefix))
-	}
-
-	return nil
 }

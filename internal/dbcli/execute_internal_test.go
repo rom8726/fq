@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func TestTimeoutFor(t *testing.T) {
@@ -21,8 +23,9 @@ func TestTimeoutFor(t *testing.T) {
 	}
 }
 
-func TestParseRespMalformedEmptyResponse(t *testing.T) {
-	if got := fmt.Sprint(parseResp(nil)); !strings.Contains(got, "[fq]> malformed empty response") {
-		t.Fatalf("parseResp(nil) = %q", got)
+func TestRenderProtocolError(t *testing.T) {
+	err := protocol.NewError(protocol.CodeQuotaNotFound, "quota not found")
+	if got := fmt.Sprint(renderProtocolError(err)); !strings.Contains(got, "[4000] quota not found") {
+		t.Fatalf("renderProtocolError(err) = %q", got)
 	}
 }
