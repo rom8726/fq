@@ -343,7 +343,7 @@ type scriptedWALReader struct {
 	err  error
 }
 
-func (r scriptedWALReader) ReadSegmentData(context.Context, []byte) ([]*wal.LogData, error) {
+func (r scriptedWALReader) ReadSegmentData(context.Context, []byte, bool) ([]*wal.LogData, error) {
 	return r.logs, r.err
 }
 

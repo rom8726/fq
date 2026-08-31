@@ -1,7 +1,6 @@
 package replication
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -9,14 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/observability"
 )
 
-const (
-	walReplicationChunkSize = 4 << 20
-	walBatchSizeHeaderSize  = 4
-)
+const walReplicationChunkSize = 4 << 20
 
 func (m *Master) processWAL(request WALRequest) []byte {
 	response := m.synchronizeWAL(request)
@@ -161,14 +158,16 @@ func readCompleteWALChunk(filename string, offset, maxChunkSize int64) ([]byte, 
 		return nil, offset, err
 	}
 
-	completeSize := completeWALBatchesSize(data)
+	hasHeader := offset == 0
+
+	completeSize := format.CompleteFramesSize(data, hasHeader, wal.MaxBatchSize)
 	if completeSize == 0 {
-		firstBatchSize := firstWALBatchSize(data)
-		if firstBatchSize <= 0 || int64(firstBatchSize) > remaining {
+		firstFrameSize := format.FirstFrameSize(data, hasHeader, wal.MaxBatchSize)
+		if firstFrameSize <= 0 || int64(firstFrameSize) > remaining {
 			return nil, offset, nil
 		}
 
-		data = make([]byte, firstBatchSize)
+		data = make([]byte, firstFrameSize)
 		if _, err := file.ReadAt(data, offset); err != nil && err != io.EOF {
 			return nil, offset, err
 		}
@@ -177,32 +176,8 @@ func readCompleteWALChunk(filename string, offset, maxChunkSize int64) ([]byte, 
 	}
 
 	data = data[:completeSize]
+
 	return data, offset + int64(len(data)), nil
-}
-
-func completeWALBatchesSize(data []byte) int {
-	offset := 0
-	completeSize := 0
-	for offset+walBatchSizeHeaderSize <= len(data) {
-		batchSize := int(binary.BigEndian.Uint32(data[offset : offset+walBatchSizeHeaderSize]))
-		nextOffset := offset + walBatchSizeHeaderSize + batchSize
-		if nextOffset > len(data) {
-			break
-		}
-
-		completeSize = nextOffset
-		offset = nextOffset
-	}
-
-	return completeSize
-}
-
-func firstWALBatchSize(data []byte) int {
-	if len(data) < walBatchSizeHeaderSize {
-		return 0
-	}
-
-	return walBatchSizeHeaderSize + int(binary.BigEndian.Uint32(data[:walBatchSizeHeaderSize]))
 }
 
 func isSafeWALSegmentName(segmentName string) bool {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/format"
 )
 
 func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
@@ -39,6 +40,10 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 	}
 
 	defer func() { _ = f.Close() }()
+
+	if err := format.WriteHeader(f, format.MagicDump, dumpFormatVersion); err != nil {
+		return fmt.Errorf("write dump header: %w", err)
+	}
 
 	dumpBatch := make([]database.DumpElem, 0, dumpBatchSize)
 
@@ -172,8 +177,7 @@ func (d *Dumper) writeBatch(f *os.File, elems []database.DumpElem) error {
 		return fmt.Errorf("encode dump elements: %w", err)
 	}
 
-	_, err := f.Write(buffer.Bytes())
-	if err != nil {
+	if _, err := f.Write(format.AppendFrame(nil, buffer.Bytes())); err != nil {
 		return fmt.Errorf("write dump elements: %w", err)
 	}
 

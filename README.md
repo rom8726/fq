@@ -847,6 +847,39 @@ persistence:
 
 Replication requires `wal_and_dump`, because replicas use the initial dump plus continuous WAL replication.
 
+### On-disk Format
+
+WAL segments, dumps, and their `.meta` sidecars share one binary layout. Every file starts with an 8-byte header:
+
+```
+[magic 4B][version uint16 BE][reserved 2B]
+```
+
+Magic is `FQWL` for a WAL segment, `FQDP` for a dump, and `FQMT` for an LSN sidecar (`wal_*.log.meta`, `last_flushdb_lsn.meta`). Each format is versioned independently, and the current version of all three is 1. The reserved bytes are written as zeros and ignored on read.
+
+The header is followed by a stream of frames:
+
+```
+[len uint32 BE][crc32c uint32 BE][payload len bytes]
+```
+
+`len` is the payload size, capped at 100 MB. The CRC32C (Castagnoli) checksum covers the length bytes and the payload together, so a corrupted length field is detected directly instead of derailing the frame stream.
+
+Reaction to a damaged file:
+
+| Damage | Behavior |
+|---|---|
+| Incomplete trailing frame of the last WAL segment | Tail is truncated during recovery, startup continues |
+| Checksum mismatch in any file | Startup fails, error names the file and frame offset |
+| Foreign magic or unknown format version | Startup fails with the expected and actual format |
+| Damaged `wal_*.log.meta` | Warning in the log, the segment is scanned instead of skipped |
+| Damaged `last_flushdb_lsn.meta` | Startup fails |
+| Damaged dump | Startup fails |
+
+A zero-length WAL segment is treated as an empty segment and skipped: it means the process died between creating the file and writing its header.
+
+> **Upgrade note:** files written by builds without format headers are not readable. Clear the WAL and dump directories before upgrading.
+
 ### WAL Commit Mode
 
 `wal.sync_commit` controls when a write command is acknowledged:

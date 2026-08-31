@@ -222,7 +222,7 @@ func TestWALSegmentSyncIsSkippedWhenAlreadySynced(t *testing.T) {
 	}()
 
 	require.NoError(t, fsWriter.rotateSegment())
-	require.NoError(t, fsWriter.writeLogs([]byte("dirty data")))
+	require.NoError(t, fsWriter.writeBytes([]byte("dirty data")))
 
 	require.NoError(t, fsWriter.syncSegment())
 	require.Equal(t, fsWriter.segmentSize, fsWriter.syncedSegmentSize)

@@ -27,7 +27,7 @@ type TCPClient interface {
 }
 
 type WALReader interface {
-	ReadSegmentData(ctx context.Context, data []byte) ([]*wal.LogData, error)
+	ReadSegmentData(ctx context.Context, data []byte, expectHeader bool) ([]*wal.LogData, error)
 }
 
 type TCPClientFactory interface {

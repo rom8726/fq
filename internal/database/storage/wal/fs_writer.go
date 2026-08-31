@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/fq-db/fq/internal/database/storage/format"
 )
 
 var now = time.Now
@@ -117,7 +118,7 @@ func (w *FSWriter) writeBatch(batch []Log) error {
 		}
 	}
 
-	if err := w.writeLogs(data); err != nil {
+	if err := w.writeBytes(data); err != nil {
 		return err
 	}
 
@@ -139,13 +140,11 @@ func encodeLogs(logs []*LogData) ([]byte, error) {
 		return nil, err
 	}
 
-	sizeData := uint32ToBytes(uint32(len(data)))
-
 	buff := bytesBufferPool.Get()
 	defer bytesBufferPool.Put(buff)
 
-	buff.Grow(len(data) + len(sizeData))
-	buff.Write(sizeData)
+	buff.Grow(len(data) + format.FrameHeaderSize)
+	buff.Write(format.FrameHeader(data))
 	buff.Write(data)
 
 	result := make([]byte, buff.Len())
@@ -156,11 +155,11 @@ func encodeLogs(logs []*LogData) ([]byte, error) {
 
 func (w *FSWriter) shouldRotate(nextBatchSize int) bool {
 	return w.maxSegmentSize > 0 &&
-		w.segmentSize > 0 &&
+		w.segmentSize > format.HeaderSize &&
 		w.segmentSize+nextBatchSize > w.maxSegmentSize
 }
 
-func (w *FSWriter) writeLogs(data []byte) error {
+func (w *FSWriter) writeBytes(data []byte) error {
 	writtenBytes, err := w.segment.Write(data)
 	if err != nil {
 		w.logger.Warn().Err(err).Msg("failed to write logs data")
@@ -205,7 +204,7 @@ func (w *FSWriter) rotateSegment() error {
 			w.syncedSegmentSize = 0
 			w.segmentMaxLSN = 0
 
-			return nil
+			return w.writeSegmentHeader()
 		}
 
 		if !errors.Is(err, os.ErrExist) {
@@ -217,6 +216,14 @@ func (w *FSWriter) rotateSegment() error {
 		w.segmentSequence++
 		segmentName = w.segmentName(w.segmentTimestamp, w.segmentSequence)
 	}
+}
+
+func (w *FSWriter) writeSegmentHeader() error {
+	if err := w.writeBytes(segmentHeader()); err != nil {
+		return err
+	}
+
+	return w.syncSegment()
 }
 
 func (w *FSWriter) closeSegment() error {
@@ -339,15 +346,4 @@ func removeWALFiles(directory string) error {
 	}
 
 	return syncDirectory(directory)
-}
-
-func uint32ToBytes(num uint32) []byte {
-	res := make([]byte, 4)
-	binary.BigEndian.PutUint32(res, num)
-
-	return res
-}
-
-func bytesToUint32(arr []byte) uint32 {
-	return binary.BigEndian.Uint32(arr)
 }

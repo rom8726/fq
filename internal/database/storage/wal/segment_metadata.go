@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -30,9 +29,8 @@ func segmentMetadataPath(segmentPath string) string {
 func writeSegmentMetadata(segmentPath string, meta segmentMetadata) error {
 	metadataPath := segmentMetadataPath(segmentPath)
 	tmpPath := fmt.Sprintf("%s.tmp.%d", metadataPath, os.Getpid())
-	data := []byte(strconv.FormatUint(meta.MaxLSN, 10) + "\n")
 
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+	if err := os.WriteFile(tmpPath, encodeLSNFile(meta.MaxLSN), 0o600); err != nil {
 		return fmt.Errorf("write segment metadata: %w", err)
 	}
 
@@ -46,14 +44,16 @@ func writeSegmentMetadata(segmentPath string, meta segmentMetadata) error {
 }
 
 func readSegmentMetadata(segmentPath string) (segmentMetadata, error) {
-	data, err := os.ReadFile(segmentMetadataPath(segmentPath))
+	metadataPath := segmentMetadataPath(segmentPath)
+
+	data, err := os.ReadFile(metadataPath)
 	if err != nil {
 		return segmentMetadata{}, err
 	}
 
-	maxLSN, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	maxLSN, err := decodeLSNFile(data)
 	if err != nil {
-		return segmentMetadata{}, fmt.Errorf("parse segment metadata: %w", err)
+		return segmentMetadata{}, fmt.Errorf("parse segment metadata %s: %w", metadataPath, err)
 	}
 
 	return segmentMetadata{MaxLSN: maxLSN}, nil
@@ -66,9 +66,8 @@ func writeLastFlushDBLSN(directory string, lsn uint64) error {
 
 	path := filepath.Join(directory, lastFlushDBLSNFileName)
 	tmpPath := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
-	data := []byte(strconv.FormatUint(lsn, 10) + "\n")
 
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+	if err := os.WriteFile(tmpPath, encodeLSNFile(lsn), 0o600); err != nil {
 		return fmt.Errorf("write last FLUSHDB LSN: %w", err)
 	}
 
@@ -82,14 +81,16 @@ func writeLastFlushDBLSN(directory string, lsn uint64) error {
 }
 
 func readLastFlushDBLSN(directory string) (uint64, error) {
-	data, err := os.ReadFile(filepath.Join(directory, lastFlushDBLSNFileName))
+	path := filepath.Join(directory, lastFlushDBLSNFileName)
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
 
-	lsn, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	lsn, err := decodeLSNFile(data)
 	if err != nil {
-		return 0, fmt.Errorf("parse last FLUSHDB LSN: %w", err)
+		return 0, fmt.Errorf("parse last FLUSHDB LSN %s: %w", path, err)
 	}
 
 	return lsn, nil
