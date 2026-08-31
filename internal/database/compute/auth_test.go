@@ -67,6 +67,21 @@ func TestAnalyzerAcceptsAuthTokens(t *testing.T) {
 	require.ErrorIs(t, err, compute.ErrInvalidArguments)
 }
 
+func TestParseQueryAndAnalyzerAcceptOpaqueAuthToken(t *testing.T) {
+	logger := zerolog.Nop()
+	parser := compute.NewParser(&logger)
+	analyzer := compute.NewAnalyzer(&logger)
+
+	tokens, err := parser.ParseQuery(context.Background(), "AUTH a+b/c==")
+	require.NoError(t, err)
+	require.Equal(t, []string{"AUTH", "a+b/c=="}, tokens)
+
+	query, err := analyzer.AnalyzeQuery(context.Background(), tokens)
+	require.NoError(t, err)
+	require.Equal(t, compute.AuthCommandID, query.CommandID())
+	require.Equal(t, []string{"a+b/c=="}, query.Arguments())
+}
+
 func TestAuthTokenIsNotLoggedAtDebugLevel(t *testing.T) {
 	var sink bytes.Buffer
 	logger := zerolog.New(&sink).Level(zerolog.DebugLevel)
