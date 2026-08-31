@@ -46,7 +46,7 @@ func TestDialWithRetrySucceedsOnceServerIsUp(t *testing.T) {
 	go func() {
 		time.Sleep(150 * time.Millisecond)
 		_ = server.HandleQueryStreams(ctx, func(_ context.Context, _ []byte, write func([]byte) error) error {
-			return write([]byte("ok|hi"))
+			return write([]byte("ok|1;4096;0;rw"))
 		})
 	}()
 
