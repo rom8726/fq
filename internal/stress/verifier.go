@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fq-db/fq/internal/network"
@@ -40,12 +39,8 @@ func (v *Verifier) Query(ctx context.Context, query string) (string, error) {
 }
 
 func (v *Verifier) ExpectOK(ctx context.Context, query string) error {
-	response, err := v.Query(ctx, query)
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(response, "ok|") {
-		return fmt.Errorf("query %q response = %q, want ok| prefix", query, response)
+	if _, err := v.Query(ctx, query); err != nil {
+		return fmt.Errorf("query %q failed: %w", query, err)
 	}
 
 	return nil
@@ -57,7 +52,7 @@ func (v *Verifier) ExpectValue(ctx context.Context, key string, window, want uin
 		return err
 	}
 
-	wantResponse := "ok|" + strconv.FormatUint(want, 10)
+	wantResponse := strconv.FormatUint(want, 10)
 	if response != wantResponse {
 		return fmt.Errorf("GET %s %d response = %q, want %q", key, window, response, wantResponse)
 	}
@@ -73,10 +68,10 @@ func (v *Verifier) ExpectValueAtLeast(ctx context.Context, key string, window, m
 
 	value, ok := parseOKUint(response)
 	if !ok {
-		return fmt.Errorf("GET %s %d response = %q, want ok|uint", key, window, response)
+		return fmt.Errorf("GET %s %d response = %q, want a uint64", key, window, response)
 	}
 	if value < minValue {
-		return fmt.Errorf("GET %s %d response = %q, want at least ok|%d", key, window, response, minValue)
+		return fmt.Errorf("GET %s %d response = %q, want at least %d", key, window, response, minValue)
 	}
 
 	return nil

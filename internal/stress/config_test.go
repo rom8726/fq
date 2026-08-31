@@ -167,12 +167,12 @@ func TestNormalizeReplicationStressOptionsDefaults(t *testing.T) {
 }
 
 func TestParseOKUint(t *testing.T) {
-	value, ok := parseOKUint("ok|42")
+	value, ok := parseOKUint("42")
 	if !ok || value != 42 {
 		t.Fatalf("parse ok value = %d/%v", value, ok)
 	}
 
-	for _, response := range []string{"err|bad", "ok|", "ok|nope"} {
+	for _, response := range []string{"bad", "", "nope"} {
 		if _, ok := parseOKUint(response); ok {
 			t.Fatalf("parsed invalid response %q", response)
 		}
