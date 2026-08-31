@@ -8,13 +8,15 @@ import (
 )
 
 type TLSOptions struct {
-	CertFile     string
-	KeyFile      string
-	ClientCAFile string
-	CAFile       string
-	ServerName   string
-	SkipVerify   bool
-	MinVersion   string
+	CertFile      string
+	KeyFile       string
+	ClientCAFile  string
+	CAFile        string
+	ServerName    string
+	SkipVerify    bool
+	MinVersion    string
+	Certificates  []tls.Certificate
+	ClientCACerts []*x509.Certificate
 }
 
 func (o TLSOptions) Empty() bool {
@@ -24,7 +26,9 @@ func (o TLSOptions) Empty() bool {
 		o.CAFile == "" &&
 		o.ServerName == "" &&
 		o.MinVersion == "" &&
-		!o.SkipVerify
+		!o.SkipVerify &&
+		len(o.Certificates) == 0 &&
+		len(o.ClientCACerts) == 0
 }
 
 func (o TLSOptions) ServerConfig() (*tls.Config, error) {
@@ -51,10 +55,19 @@ func (o TLSOptions) ServerConfig() (*tls.Config, error) {
 		MinVersion:   version,
 	}
 
-	if o.ClientCAFile != "" {
-		pool, err := certPool(o.ClientCAFile)
-		if err != nil {
-			return nil, err
+	if o.ClientCAFile != "" || len(o.ClientCACerts) > 0 {
+		pool := x509.NewCertPool()
+		if o.ClientCAFile != "" {
+			var err error
+			pool, err = certPool(o.ClientCAFile)
+			if err != nil {
+				return nil, err
+			}
+		}
+		for _, certificate := range o.ClientCACerts {
+			if certificate != nil {
+				pool.AddCert(certificate)
+			}
 		}
 
 		config.ClientCAs = pool
@@ -99,8 +112,9 @@ func (o TLSOptions) ClientConfig() (*tls.Config, error) {
 			return nil, fmt.Errorf("load key pair: %w", err)
 		}
 
-		config.Certificates = []tls.Certificate{certificate}
+		config.Certificates = append(config.Certificates, certificate)
 	}
+	config.Certificates = append(config.Certificates, o.Certificates...)
 
 	return config, nil
 }

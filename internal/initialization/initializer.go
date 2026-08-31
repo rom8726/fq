@@ -39,6 +39,7 @@ type Initializer struct {
 	observability  *observability.Server
 	registry       *security.Registry
 	startedAt      time.Time
+	tuiTLS         security.TLSOptions
 }
 
 func NewInitializer(cfg config.Config) (*Initializer, error) {
@@ -78,7 +79,12 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 		return nil, fmt.Errorf("failed to build auth registry: %w", err)
 	}
 
-	tcpServer, err := CreateNetwork(cfg.Network, registry, logger)
+	networkTLS, tuiTLS, err := interactiveTLSOptions(cfg.Network.TLS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize interactive tls: %w", err)
+	}
+
+	tcpServer, err := CreateNetwork(cfg.Network, registry, logger, networkTLS)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize network: %w", err)
 	}
@@ -115,11 +121,39 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 		observability:  observability.NewServer(cfg.Observability.Address, cfg.Observability.Pprof, logger),
 		registry:       registry,
 		startedAt:      startedAt,
+		tuiTLS:         tuiTLS,
 	}
 
 	initializer.initializeReplication(replica)
 
 	return initializer, nil
+}
+
+func interactiveTLSOptions(cfg config.TLSConfig) (
+	networkTLS security.TLSOptions,
+	tuiTLS security.TLSOptions,
+	err error,
+) {
+	networkTLS = cfg.Options()
+	tuiTLS = cfg.ClientOptions()
+
+	if cfg.ClientCAFile == "" {
+		return networkTLS, tuiTLS, nil
+	}
+
+	caCert, clientCert, err := security.NewEphemeralClientCertificate("fq interactive tui")
+	if err != nil {
+		return security.TLSOptions{}, security.TLSOptions{}, err
+	}
+
+	networkTLS.ClientCACerts = append(networkTLS.ClientCACerts, caCert)
+	tuiTLS.Certificates = append(tuiTLS.Certificates, clientCert)
+
+	return networkTLS, tuiTLS, nil
+}
+
+func (i *Initializer) TUITLSOptions() security.TLSOptions {
+	return i.tuiTLS
 }
 
 func (i *Initializer) IssueEphemeralAdminToken() (string, error) {
