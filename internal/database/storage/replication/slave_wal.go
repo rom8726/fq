@@ -116,7 +116,12 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 		return fmt.Errorf("save wal chunk: %w", err)
 	}
 
-	if err := s.applyDataToEngine(ctx, response.SegmentData, response.SegmentName); err != nil {
+	if err := s.applyDataToEngine(
+		ctx,
+		response.SegmentData,
+		response.SegmentName,
+		response.SegmentOffset == 0,
+	); err != nil {
 		return fmt.Errorf("apply data to engine chunk: %w", err)
 	}
 
@@ -288,13 +293,18 @@ func (s *Slave) sendToWALStream(ctx context.Context, chunk wal.Chunk) (err error
 	}
 }
 
-func (s *Slave) applyDataToEngine(ctx context.Context, segmentData []byte, segmentName string) error {
+func (s *Slave) applyDataToEngine(
+	ctx context.Context,
+	segmentData []byte,
+	segmentName string,
+	expectHeader bool,
+) error {
 	if len(segmentData) == 0 {
 		s.logger.Warn().Str("segment_name", segmentName).Msg("received empty segment data, skipping")
 		return nil
 	}
 
-	logs, err := s.walReader.ReadSegmentData(ctx, segmentData)
+	logs, err := s.walReader.ReadSegmentData(ctx, segmentData, expectHeader)
 	if err != nil {
 		return err
 	}

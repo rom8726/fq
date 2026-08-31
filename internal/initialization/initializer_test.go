@@ -2,6 +2,7 @@ package initialization
 
 import (
 	"context"
+	"crypto/x509"
 	"reflect"
 	"testing"
 	"time"
@@ -96,6 +97,30 @@ func TestCreateEngineUsesConfiguredKeyIndex(t *testing.T) {
 	require.True(t, ok)
 	enabled := reflect.ValueOf(engine).Elem().FieldByName("scanIndexEnabled")
 	require.True(t, enabled.Bool())
+}
+
+func TestInteractiveTLSOptionsAddEphemeralClientCertificateForMTLS(t *testing.T) {
+	serverTLS, tuiTLS, err := interactiveTLSOptions(config.TLSConfig{
+		CertFile:     "/certs/server.crt",
+		KeyFile:      "/certs/server.key",
+		ClientCAFile: "/certs/clients.crt",
+		CAFile:       "/certs/ca.crt",
+		ServerName:   "localhost",
+	})
+	require.NoError(t, err)
+	require.Len(t, serverTLS.ClientCACerts, 1)
+	require.Len(t, tuiTLS.Certificates, 1)
+	require.Equal(t, "/certs/ca.crt", tuiTLS.CAFile)
+	require.Equal(t, "localhost", tuiTLS.ServerName)
+
+	clientCert := tuiTLS.Certificates[0].Leaf
+	pool := x509.NewCertPool()
+	pool.AddCert(serverTLS.ClientCACerts[0])
+	_, err = clientCert.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	})
+	require.NoError(t, err)
 }
 
 func testInitializerConfig() config.Config {

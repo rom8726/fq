@@ -43,7 +43,7 @@ type Dumper struct {
 	walCleanupCtx         context.Context
 	walCleanupCancel      context.CancelFunc
 
-	sessions       map[string]readSession
+	sessions       map[string]*readSession
 	sessMu         sync.Mutex
 	readDumpMu     sync.RWMutex
 	dumpVersion    uint64 // dump version for tracking changes
@@ -60,7 +60,7 @@ func New(engine Engine, wal WAL, dir string) *Dumper {
 		engine:           engine,
 		wal:              wal,
 		dir:              dir,
-		sessions:         make(map[string]readSession),
+		sessions:         make(map[string]*readSession),
 		dumpVersion:      0,
 		sessionTTL:       30 * time.Minute, // default session TTL
 		cleanupStop:      make(chan struct{}),
@@ -172,11 +172,10 @@ func (d *Dumper) invalidateAllSessions() {
 	d.sessMu.Lock()
 	defer d.sessMu.Unlock()
 
-	for uuid, sess := range d.sessions {
+	for _, sess := range d.sessions {
 		if !sess.closed {
 			sess.closed = true
-			sess.buff = nil
-			d.sessions[uuid] = sess
+			sess.data = nil
 		}
 	}
 }

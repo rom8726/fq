@@ -37,6 +37,7 @@ func CreateNetwork(
 	cfg config.NetworkConfig,
 	registry *security.Registry,
 	logger *zerolog.Logger,
+	tlsOptionsOverride ...security.TLSOptions,
 ) (*network.TCPServer, error) {
 	address := defaultServerAddress
 	maxConnectionsNumber := defaultMaxConnectionNumber
@@ -70,7 +71,12 @@ func CreateNetwork(
 		}),
 	}
 
-	tlsConfig, err := cfg.TLS.Options().ServerConfig()
+	tlsOptions := cfg.TLS.Options()
+	if len(tlsOptionsOverride) > 0 {
+		tlsOptions = tlsOptionsOverride[0]
+	}
+
+	tlsConfig, err := tlsOptions.ServerConfig()
 	if err != nil {
 		return nil, fmt.Errorf("network tls: %w", err)
 	}

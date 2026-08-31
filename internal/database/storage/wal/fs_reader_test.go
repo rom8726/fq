@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/storage/format"
+	"github.com/fq-db/fq/internal/database/storage/format/formattest"
 )
 
 func TestReadLogsTruncatesIncompletePayloadTailInLastSegment(t *testing.T) {
@@ -31,7 +33,7 @@ func TestReadLogsTruncatesIncompletePayloadTailInLastSegment(t *testing.T) {
 
 	stat, err := os.Stat(segmentPath)
 	require.NoError(t, err)
-	require.Equal(t, int64(len(validBatch)), stat.Size())
+	require.Equal(t, int64(format.HeaderSize+len(validBatch)), stat.Size())
 
 	logs, err = reader.ReadSegment(context.Background(), segmentPath)
 	require.NoError(t, err)
@@ -56,7 +58,7 @@ func TestReadLogsTruncatesIncompleteHeaderTailInLastSegment(t *testing.T) {
 
 	stat, err := os.Stat(segmentPath)
 	require.NoError(t, err)
-	require.Equal(t, int64(len(validBatch)), stat.Size())
+	require.Equal(t, int64(format.HeaderSize+len(validBatch)), stat.Size())
 }
 
 func TestReadLogsIgnoresSegmentMetadataFiles(t *testing.T) {
@@ -106,24 +108,7 @@ func TestReadLogsRejectsTruncatedNonLastSegment(t *testing.T) {
 	reader := NewFSReader(dir, &logger)
 
 	_, err := reader.ReadLogs(context.Background())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "truncated WAL batch data")
-}
-
-func TestReadLogsRejectsCorruptedCompleteBatchInLastSegment(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	validBatch := mustEncodeLogs(t, []*LogData{testLogData(1)})
-	corruptedBatch := appendCopy(uint32ToBytes(2), 0xff, 0xff)
-	writeWALSegment(t, dir, "wal_1000.log", appendCopy(validBatch, corruptedBatch...))
-
-	logger := zerolog.Nop()
-	reader := NewFSReader(dir, &logger)
-
-	_, err := reader.ReadLogs(context.Background())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to unmarshal WAL batch")
+	require.ErrorIs(t, err, format.ErrIncompleteFrame)
 }
 
 func TestReadSegmentRejectsTruncatedTail(t *testing.T) {
@@ -138,8 +123,7 @@ func TestReadSegmentRejectsTruncatedTail(t *testing.T) {
 	reader := NewFSReader(dir, &logger)
 
 	_, err := reader.ReadSegment(context.Background(), segmentPath)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "truncated WAL batch data")
+	require.ErrorIs(t, err, format.ErrIncompleteFrame)
 }
 
 func testLogData(lsn uint64) *LogData {
@@ -162,6 +146,12 @@ func mustEncodeLogs(t *testing.T, logs []*LogData) []byte {
 func writeWALSegment(t *testing.T, dir, name string, data []byte) string {
 	t.Helper()
 
+	return writeRawWALSegment(t, dir, name, append(segmentHeader(), data...))
+}
+
+func writeRawWALSegment(t *testing.T, dir, name string, data []byte) string {
+	t.Helper()
+
 	path := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 
@@ -174,4 +164,115 @@ func appendCopy(data []byte, extra ...byte) []byte {
 	result = append(result, extra...)
 
 	return result
+}
+
+func TestReadLogsRejectsChecksumMismatchInLastSegment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	segment := formattest.CorruptPayload(t, append(segmentHeader(), batch...), format.HeaderSize)
+	writeRawWALSegment(t, dir, "wal_1000.log", segment)
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	_, err := reader.ReadLogs(context.Background())
+	require.ErrorIs(t, err, format.ErrChecksumMismatch)
+}
+
+func TestReadLogsRejectsChecksumMismatchInMiddleSegment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	segment := formattest.CorruptPayload(t, append(segmentHeader(), batch...), format.HeaderSize)
+	corruptedPath := writeRawWALSegment(t, dir, "wal_1000.log", segment)
+	writeWALSegment(t, dir, "wal_2000.log", mustEncodeLogs(t, []*LogData{testLogData(2)}))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	_, err := reader.ReadLogs(context.Background())
+	require.ErrorIs(t, err, format.ErrChecksumMismatch)
+
+	stat, err := os.Stat(corruptedPath)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(segment)), stat.Size())
+}
+
+func TestReadLogsRejectsForeignMagic(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	segment := formattest.CorruptMagic(t, append(segmentHeader(), batch...))
+	writeRawWALSegment(t, dir, "wal_1000.log", segment)
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	_, err := reader.ReadLogs(context.Background())
+	require.ErrorIs(t, err, format.ErrBadMagic)
+}
+
+func TestReadLogsRejectsUnknownFormatVersion(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
+	segment := formattest.SetVersion(t, append(segmentHeader(), batch...), segmentFormatVersion+1)
+	writeRawWALSegment(t, dir, "wal_1000.log", segment)
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	_, err := reader.ReadLogs(context.Background())
+	require.ErrorIs(t, err, format.ErrUnsupportedVersion)
+}
+
+func TestReadLogsSkipsEmptySegment(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeRawWALSegment(t, dir, "wal_1000.log", nil)
+	writeWALSegment(t, dir, "wal_2000.log", mustEncodeLogs(t, []*LogData{testLogData(2)}))
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(2), logs[0].LSN)
+}
+
+func TestReadSegmentDataAcceptsChunkWithoutHeader(t *testing.T) {
+	t.Parallel()
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(t.TempDir(), &logger)
+
+	logs, err := reader.ReadSegmentData(
+		context.Background(),
+		mustEncodeLogs(t, []*LogData{testLogData(5)}),
+		false,
+	)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(5), logs[0].LSN)
+}
+
+func TestReadSegmentDataAcceptsChunkWithHeader(t *testing.T) {
+	t.Parallel()
+
+	logger := zerolog.Nop()
+	reader := NewFSReader(t.TempDir(), &logger)
+
+	chunk := append(segmentHeader(), mustEncodeLogs(t, []*LogData{testLogData(6)})...)
+
+	logs, err := reader.ReadSegmentData(context.Background(), chunk, true)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(6), logs[0].LSN)
 }

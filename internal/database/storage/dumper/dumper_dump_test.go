@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/format"
+	"github.com/fq-db/fq/internal/database/storage/format/formattest"
 )
 
 func TestDumperWALCleanupUsesDumpTxWithoutProvider(t *testing.T) {
@@ -186,4 +188,143 @@ type staticCleanupLSNProvider struct {
 
 func (p staticCleanupLSNProvider) WALCleanupLSN() (uint64, bool) {
 	return p.lsn, p.ok
+}
+
+func TestDumpFileStartsWithFormatHeader(t *testing.T) {
+	dir := t.TempDir()
+	d := New(emptyDumpEngine{}, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+
+	data, err := os.ReadFile(filepath.Join(dir, currentDumpFileName))
+	require.NoError(t, err)
+
+	rest, err := format.ParseHeader(data, format.MagicDump, dumpFormatVersion)
+	require.NoError(t, err)
+	require.Empty(t, rest)
+}
+
+func TestRestoreReadsBackWrittenElements(t *testing.T) {
+	dir := t.TempDir()
+	engine := &recordingRestoreEngine{}
+	d := New(engine, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+
+	tx, err := d.Restore(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, database.Tx(1), tx)
+	require.Len(t, engine.restored, 1)
+}
+
+func TestRestoreRejectsChecksumMismatch(t *testing.T) {
+	dir := t.TempDir()
+	engine := &recordingRestoreEngine{}
+	d := New(engine, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+
+	dumpPath := filepath.Join(dir, currentDumpFileName)
+	data, err := os.ReadFile(dumpPath)
+	require.NoError(t, err)
+	require.Greater(t, len(data), format.HeaderSize+format.FrameHeaderSize)
+	require.NoError(t, os.WriteFile(dumpPath, formattest.CorruptPayload(t, data, format.HeaderSize), 0o600))
+
+	_, err = d.Restore(context.Background())
+	require.ErrorIs(t, err, format.ErrChecksumMismatch)
+}
+
+func TestRestoreRejectsForeignMagic(t *testing.T) {
+	dir := t.TempDir()
+	d := New(emptyDumpEngine{}, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+
+	dumpPath := filepath.Join(dir, currentDumpFileName)
+	data, err := os.ReadFile(dumpPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dumpPath, formattest.CorruptMagic(t, data), 0o600))
+
+	_, err = d.Restore(context.Background())
+	require.ErrorIs(t, err, format.ErrBadMagic)
+}
+
+func TestRestoreRejectsUnknownFormatVersion(t *testing.T) {
+	dir := t.TempDir()
+	d := New(emptyDumpEngine{}, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+
+	dumpPath := filepath.Join(dir, currentDumpFileName)
+	data, err := os.ReadFile(dumpPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dumpPath, formattest.SetVersion(t, data, dumpFormatVersion+1), 0o600))
+
+	_, err = d.Restore(context.Background())
+	require.ErrorIs(t, err, format.ErrUnsupportedVersion)
+}
+
+func TestRestoreRejectsEmptyDumpFile(t *testing.T) {
+	dir := t.TempDir()
+	d := New(emptyDumpEngine{}, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, currentDumpFileName), nil, 0o600))
+
+	_, err := d.Restore(context.Background())
+	require.ErrorIs(t, err, format.ErrIncompleteFrame)
+}
+
+func TestRestoreReturnsZeroWhenDumpIsMissing(t *testing.T) {
+	d := New(emptyDumpEngine{}, nil, t.TempDir())
+	defer d.Shutdown()
+
+	tx, err := d.Restore(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, tx)
+}
+
+func TestGetNextDataRejectsChecksumMismatch(t *testing.T) {
+	dir := t.TempDir()
+	engine := &recordingRestoreEngine{}
+	d := New(engine, nil, dir)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+
+	dumpPath := filepath.Join(dir, currentDumpFileName)
+	data, err := os.ReadFile(dumpPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dumpPath, formattest.CorruptPayload(t, data, format.HeaderSize), 0o600))
+
+	_, ok, err := d.GetNextData("session-1")
+	require.False(t, ok)
+	require.ErrorIs(t, err, format.ErrChecksumMismatch)
+}
+
+type recordingRestoreEngine struct {
+	restored []database.DumpElem
+}
+
+func (e *recordingRestoreEngine) Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error) {
+	elems := make(chan database.DumpElem, 1)
+	errs := make(chan error, 1)
+
+	elems <- database.DumpElem{Tx: 1, Key: "key"}
+	close(elems)
+	errs <- nil
+	close(errs)
+
+	return elems, errs
+}
+
+func (e *recordingRestoreEngine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
+	e.restored = append(e.restored, elem)
+
+	return nil
 }

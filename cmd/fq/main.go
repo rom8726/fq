@@ -138,7 +138,7 @@ func runInteractive(configPath string) error {
 		MaxMessageSize: maxMessageSize,
 		IdleTimeout:    cfg.Network.IdleTimeout,
 		Token:          token,
-		TLS:            cfg.Network.TLS.ClientOptions(),
+		TLS:            initializer.TUITLSOptions(),
 		Logger:         logger,
 	})
 

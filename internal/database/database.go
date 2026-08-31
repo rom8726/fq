@@ -164,8 +164,10 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		return write(authResponse)
 	}
 
-	if err := session.Authorize(commandRole(query)); err != nil {
-		return write(appendErrorMsg(responseBuffer.buf[:0], err))
+	if requiresAuthorization(query.CommandID()) {
+		if err := session.Authorize(commandRole(query)); err != nil {
+			return write(appendErrorMsg(responseBuffer.buf[:0], err))
+		}
 	}
 
 	var response []byte

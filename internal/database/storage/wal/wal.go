@@ -566,14 +566,20 @@ func (w *WAL) FlushDB(ctx context.Context, txCtx database.TxContext) tools.Futur
 	})
 }
 
-func (w *WAL) Truncate(ctx context.Context) tools.FutureError {
+func (w *WAL) Truncate(ctx context.Context, txCtx database.TxContext) tools.FutureError {
 	return w.control(ctx, func() error {
 		writer, ok := w.fsWriter.(truncatingFSWriter)
-		if !ok {
-			return nil
+		if ok {
+			if err := writer.Truncate(); err != nil {
+				return err
+			}
 		}
 
-		return writer.Truncate()
+		record := NewLog(uint64(txCtx.Tx), compute.TruncateCommandID, nil)
+		w.fsWriter.WriteBatch([]Log{record})
+		future := record.Result()
+
+		return future.Get()
 	})
 }
 

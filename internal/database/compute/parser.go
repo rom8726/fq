@@ -19,7 +19,7 @@ func NewParser(logger *zerolog.Logger) *Parser {
 }
 
 func (p *Parser) ParseQuery(_ context.Context, query string) ([]string, error) {
-	tokens, err := p.machine.parse(query)
+	tokens, err := p.parseTokens(query)
 	if err != nil {
 		return nil, err
 	}
@@ -31,6 +31,20 @@ func (p *Parser) ParseQuery(_ context.Context, query string) ([]string, error) {
 	}
 
 	return tokens, nil
+}
+
+func (p *Parser) parseTokens(query string) ([]string, error) {
+	scanner := tokenScanner{query: query}
+	command, ok, err := scanner.next()
+	if err != nil {
+		return nil, err
+	}
+
+	if ok && commandIDFromToken(command) == AuthCommandID {
+		return scanner.authTokens(command), nil
+	}
+
+	return p.machine.parse(query)
 }
 
 func (p *Parser) ParseAndAnalyzeQuery(_ context.Context, query string) (Query, error) {
@@ -77,6 +91,18 @@ func isLetter(symbol byte) bool {
 type tokenScanner struct {
 	query string
 	pos   int
+}
+
+func (s *tokenScanner) authTokens(command string) []string {
+	tokens := []string{command}
+	for {
+		token, ok := s.nextOpaque()
+		if !ok {
+			return tokens
+		}
+
+		tokens = append(tokens, token)
+	}
 }
 
 func (s *tokenScanner) scanQuery(commandID CommandID) (Query, error) {

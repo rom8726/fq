@@ -101,6 +101,16 @@ run-cli-slave:
 	@echo "-> Running fq CLI client for slave..."
 	@go run ./cmd/cli -address :1947 -token $(FQ_SLAVE_ADMIN_TOKEN)
 
+.PHONY: run-cli-tls
+run-cli-tls:
+	@echo "-> Running fq TLS CLI client..."
+	@go run ./cmd/cli -address localhost:1945 -token "$(FQ_ADMIN_TOKEN)" -tls_ca ./certs/ca.crt -tls_cert ./certs/client.crt -tls_key ./certs/client.key -tls_server_name localhost
+
+.PHONY: run-cli-slave-tls
+run-cli-slave-tls:
+	@echo "-> Running fq TLS CLI client for slave..."
+	@go run ./cmd/cli -address localhost:1947 -token "$(FQ_SLAVE_ADMIN_TOKEN)" -tls_ca ./certs/ca.crt -tls_cert ./certs/client.crt -tls_key ./certs/client.key -tls_server_name localhost
+
 .PHONY: run-bench
 run-bench:
 	@echo "-> Running fq benchmark..."

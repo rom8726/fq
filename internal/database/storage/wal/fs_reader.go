@@ -2,16 +2,16 @@ package wal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
-)
 
-const batchMaxSize = 100 * 1024 * 1024
-const batchSizeHeaderSize = 4
+	"github.com/fq-db/fq/internal/database/storage/format"
+)
 
 type FSReader struct {
 	directory string
@@ -55,8 +55,16 @@ func (r *FSReader) ReadLogsAfter(ctx context.Context, lsn uint64) ([]*LogData, e
 			return nil, fmt.Errorf("failed to read WAL segment %s: %w", filename, err)
 		}
 
+		if len(data) == 0 {
+			if r.logger != nil {
+				r.logger.Warn().Str("segment_path", filename).Msg("skipping empty WAL segment")
+			}
+
+			continue
+		}
+
 		isLastSegment := i == len(filenames)-1
-		segmentedLogs, err := r.readSegmentData(ctx, data, isLastSegment, filename)
+		segmentedLogs, err := r.readSegmentData(ctx, data, true, isLastSegment, filename)
 		if err != nil {
 			return nil, fmt.Errorf("failed to recover WAL segment %s: %w", filename, err)
 		}
@@ -111,99 +119,85 @@ func (r *FSReader) ReadSegment(ctx context.Context, filename string) ([]*LogData
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	return r.readSegmentData(ctx, data, false, filename)
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	return r.readSegmentData(ctx, data, true, false, filename)
 }
 
-func (r *FSReader) ReadSegmentData(ctx context.Context, data []byte) ([]*LogData, error) {
-	return r.readSegmentData(ctx, data, false, "")
+func (r *FSReader) ReadSegmentData(ctx context.Context, data []byte, expectHeader bool) ([]*LogData, error) {
+	return r.readSegmentData(ctx, data, expectHeader, false, "")
 }
 
 func (r *FSReader) readSegmentData(
 	ctx context.Context,
 	data []byte,
+	expectHeader bool,
 	allowTruncatedTail bool,
 	segmentName string,
 ) ([]*LogData, error) {
+	frames := data
+	baseOffset := 0
+
+	if expectHeader {
+		rest, err := format.ParseHeader(data, format.MagicWAL, segmentFormatVersion)
+		if err != nil {
+			if errors.Is(err, format.ErrIncompleteFrame) && allowTruncatedTail {
+				if truncateErr := r.truncateTail(segmentName, 0, err); truncateErr != nil {
+					return nil, truncateErr
+				}
+
+				return nil, nil
+			}
+
+			return nil, fmt.Errorf("WAL segment header: %w", err)
+		}
+
+		frames = rest
+		baseOffset = format.HeaderSize
+	}
+
 	var logs []*LogData
 	offset := 0
 
-	for offset < len(data) {
+	for offset < len(frames) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
 
-		remaining := len(data) - offset
-		if remaining < batchSizeHeaderSize {
-			if allowTruncatedTail {
-				if err := r.truncateTail(segmentName, int64(offset), offset, batchSizeHeaderSize, remaining); err != nil {
-					return nil, err
+		payload, rest, err := format.NextFrame(frames[offset:], MaxBatchSize)
+		if err != nil {
+			if errors.Is(err, format.ErrIncompleteFrame) && allowTruncatedTail {
+				if truncateErr := r.truncateTail(segmentName, int64(baseOffset+offset), err); truncateErr != nil {
+					return nil, truncateErr
 				}
 
 				return logs, nil
 			}
 
-			return nil, fmt.Errorf(
-				"truncated WAL batch header at offset %d: got %d bytes, need %d",
-				offset,
-				remaining,
-				batchSizeHeaderSize,
-			)
+			return nil, fmt.Errorf("WAL segment at offset %d: %w", baseOffset+offset, err)
 		}
-
-		batchOffset := offset
-		batchSize := int(bytesToUint32(data[offset : offset+batchSizeHeaderSize]))
-		offset += batchSizeHeaderSize
-		if batchSize > batchMaxSize {
-			return nil, fmt.Errorf("max batch size in WAL segment exceeded: %d (max: %d)", batchSize, batchMaxSize)
-		}
-
-		remaining = len(data) - offset
-		if batchSize > remaining {
-			if allowTruncatedTail {
-				if err := r.truncateTail(
-					segmentName,
-					int64(batchOffset),
-					batchOffset,
-					batchSize+batchSizeHeaderSize,
-					remaining+batchSizeHeaderSize,
-				); err != nil {
-					return nil, err
-				}
-
-				return logs, nil
-			}
-
-			return nil, fmt.Errorf(
-				"truncated WAL batch data at offset %d: declared %d bytes, got %d",
-				offset,
-				batchSize,
-				remaining,
-			)
-		}
-
-		batchData := data[offset : offset+batchSize]
-		offset += batchSize
 
 		var batch LogDataArray
-		if err := proto.Unmarshal(batchData, &batch); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal WAL batch at offset %d: %w", batchOffset, err)
+		if err := proto.Unmarshal(payload, &batch); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal WAL batch at offset %d: %w", baseOffset+offset, err)
 		}
 
 		logs = append(logs, batch.Elems...)
+		offset = len(frames) - len(rest)
 	}
 
 	return logs, nil
 }
 
-func (r *FSReader) truncateTail(segmentName string, validSize int64, offset, expected, actual int) error {
+func (r *FSReader) truncateTail(segmentName string, validSize int64, reason error) error {
 	if r.logger != nil {
 		r.logger.Warn().
+			Err(reason).
 			Str("segment_name", segmentName).
-			Int("offset", offset).
-			Int("expected_bytes", expected).
-			Int("actual_bytes", actual).
 			Int64("valid_size", validSize).
 			Msg("truncating incomplete WAL tail during recovery")
 	}

@@ -1,47 +1,109 @@
 package replication
 
 import (
-	"encoding/binary"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
+
+	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/storage/format"
+	"github.com/fq-db/fq/internal/database/storage/wal"
 )
 
-func TestReadCompleteWALChunkStopsAtBatchBoundary(t *testing.T) {
-	first := testWALBatch([]byte("first"))
-	second := testWALBatch([]byte("second"))
+func TestReadCompleteWALChunkStopsAtFrameBoundary(t *testing.T) {
+	segment := testWALSegment("first", "second")
 	segmentPath := filepath.Join(t.TempDir(), "wal_1.log")
-	require.NoError(t, os.WriteFile(segmentPath, append(append([]byte{}, first...), second...), 0o644))
+	require.NoError(t, os.WriteFile(segmentPath, segment, 0o644))
 
-	data, nextOffset, err := readCompleteWALChunk(segmentPath, 0, int64(len(first)+2))
+	firstEnd := format.HeaderSize + len(testWALBatch([]byte("first")))
+
+	data, nextOffset, err := readCompleteWALChunk(segmentPath, 0, int64(firstEnd+2))
 
 	require.NoError(t, err)
-	require.Equal(t, first, data)
-	require.Equal(t, int64(len(first)), nextOffset)
+	require.Equal(t, segment[:firstEnd], data)
+	require.Equal(t, int64(firstEnd), nextOffset)
+}
+
+func TestReadCompleteWALChunkFromOffsetHasNoHeader(t *testing.T) {
+	segment := testWALSegment("first", "second")
+	segmentPath := filepath.Join(t.TempDir(), "wal_1.log")
+	require.NoError(t, os.WriteFile(segmentPath, segment, 0o644))
+
+	firstEnd := format.HeaderSize + len(testWALBatch([]byte("first")))
+
+	data, nextOffset, err := readCompleteWALChunk(segmentPath, int64(firstEnd), 1024)
+
+	require.NoError(t, err)
+	require.Equal(t, segment[firstEnd:], data)
+	require.Equal(t, int64(len(segment)), nextOffset)
+}
+
+func TestReadCompleteWALChunkReturnsNothingForHeaderOnlySegment(t *testing.T) {
+	segment := testWALSegment()
+	segmentPath := filepath.Join(t.TempDir(), "wal_1.log")
+	require.NoError(t, os.WriteFile(segmentPath, segment, 0o644))
+
+	data, nextOffset, err := readCompleteWALChunk(segmentPath, 0, 1024)
+
+	require.NoError(t, err)
+	require.Empty(t, data)
+	require.Zero(t, nextOffset)
 }
 
 func TestMasterSynchronizeWALReturnsChunkFromOffset(t *testing.T) {
 	directory := t.TempDir()
-	first := testWALBatch([]byte("first"))
-	second := testWALBatch([]byte("second"))
-	require.NoError(t, os.WriteFile(filepath.Join(directory, "wal_1.log"), append(append([]byte{}, first...), second...), 0o644))
+	segment := testWALSegment("first", "second")
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "wal_1.log"), segment, 0o644))
 	logger := zerolog.Nop()
 	master := &Master{walDirectory: directory, logger: &logger}
+
+	firstEnd := format.HeaderSize + len(testWALBatch([]byte("first")))
 
 	response := master.synchronizeWAL(WALRequest{
 		ReplicaID:       "replica-1",
 		LastSegmentName: "wal_1.log",
-		SegmentOffset:   int64(len(first)),
+		SegmentOffset:   int64(firstEnd),
 	})
 
 	require.True(t, response.Succeed)
 	require.Equal(t, "wal_1.log", response.SegmentName)
-	require.Equal(t, int64(len(first)), response.SegmentOffset)
-	require.Equal(t, int64(len(first)+len(second)), response.NextSegmentOffset)
-	require.Equal(t, second, response.SegmentData)
+	require.Equal(t, int64(firstEnd), response.SegmentOffset)
+	require.Equal(t, int64(len(segment)), response.NextSegmentOffset)
+	require.Equal(t, segment[firstEnd:], response.SegmentData)
+}
+
+func TestMasterChunksSurviveWALReader(t *testing.T) {
+	directory := t.TempDir()
+	logger := zerolog.Nop()
+
+	writer := wal.NewFSWriter(directory, 0, &logger)
+	batch := []wal.Log{wal.NewLog(1, compute.IncrCommandID, []string{"key", "60"})}
+	writer.WriteBatch(batch)
+	for _, record := range batch {
+		result := record.Result()
+		require.NoError(t, result.Get())
+	}
+	require.NoError(t, writer.Close())
+
+	segmentName, err := wal.SegmentLast(directory)
+	require.NoError(t, err)
+	require.NotEmpty(t, segmentName)
+
+	master := &Master{walDirectory: directory, logger: &logger}
+	response := master.synchronizeWAL(WALRequest{ReplicaID: "replica-1", LastSegmentName: segmentName})
+	require.True(t, response.Succeed)
+	require.NotEmpty(t, response.SegmentData)
+	require.Zero(t, response.SegmentOffset)
+
+	reader := wal.NewFSReader(directory, &logger)
+	logs, err := reader.ReadSegmentData(context.Background(), response.SegmentData, response.SegmentOffset == 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(1), logs[0].LSN)
 }
 
 func TestMasterSynchronizeWALRejectsMissingReplicaID(t *testing.T) {
@@ -144,9 +206,14 @@ func TestMasterSynchronizeWALTracksReplicasIndependently(t *testing.T) {
 }
 
 func testWALBatch(payload []byte) []byte {
-	data := make([]byte, walBatchSizeHeaderSize+len(payload))
-	binary.BigEndian.PutUint32(data[:walBatchSizeHeaderSize], uint32(len(payload)))
-	copy(data[walBatchSizeHeaderSize:], payload)
+	return format.AppendFrame(nil, payload)
+}
+
+func testWALSegment(payloads ...string) []byte {
+	data := format.AppendHeader(nil, format.MagicWAL, 1)
+	for _, payload := range payloads {
+		data = format.AppendFrame(data, []byte(payload))
+	}
 
 	return data
 }
