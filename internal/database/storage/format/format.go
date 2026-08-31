@@ -82,6 +82,14 @@ func FrameHeader(payload []byte) []byte {
 	return head
 }
 
+func CheckPayloadSize(payload []byte, maxFrame int) error {
+	if maxFrame > 0 && len(payload) > maxFrame {
+		return fmt.Errorf("%w: %d bytes (max %d)", ErrFrameTooLarge, len(payload), maxFrame)
+	}
+
+	return nil
+}
+
 func AppendFrame(dst, payload []byte) []byte {
 	dst = append(dst, FrameHeader(payload)...)
 

@@ -88,3 +88,36 @@ func TestReadLastFlushDBLSNRejectsForeignMagic(t *testing.T) {
 	_, err = readLastFlushDBLSN(dir)
 	require.ErrorIs(t, err, format.ErrBadMagic)
 }
+
+func TestReadSegmentMetadataRejectsTrailingData(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	segmentPath := writeWALSegment(t, dir, "wal_1000.log", mustEncodeLogs(t, []*LogData{testLogData(7)}))
+	require.NoError(t, writeSegmentMetadata(segmentPath, segmentMetadata{MaxLSN: 7}))
+
+	metadataPath := segmentMetadataPath(segmentPath)
+	data, err := os.ReadFile(metadataPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(metadataPath, append(data, 0x00), 0o600))
+
+	_, err = readSegmentMetadata(segmentPath)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "trailing data")
+}
+
+func TestReadLastFlushDBLSNRejectsSecondFrame(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, writeLastFlushDBLSN(dir, 42))
+
+	path := filepath.Join(dir, lastFlushDBLSNFileName)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, append(data, data[format.HeaderSize:]...), 0o600))
+
+	_, err = readLastFlushDBLSN(dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "trailing data")
+}

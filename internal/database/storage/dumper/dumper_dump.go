@@ -177,6 +177,10 @@ func (d *Dumper) writeBatch(f *os.File, elems []database.DumpElem) error {
 		return fmt.Errorf("encode dump elements: %w", err)
 	}
 
+	if err := format.CheckPayloadSize(buffer.Bytes(), dumpMaxFrameSize); err != nil {
+		return fmt.Errorf("dump batch: %w", err)
+	}
+
 	if _, err := f.Write(format.AppendFrame(nil, buffer.Bytes())); err != nil {
 		return fmt.Errorf("write dump elements: %w", err)
 	}

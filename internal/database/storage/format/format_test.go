@@ -77,6 +77,14 @@ func TestNextFrameRejectsTooLargeFrame(t *testing.T) {
 	require.ErrorIs(t, err, ErrFrameTooLarge)
 }
 
+func TestCheckPayloadSizeRejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, CheckPayloadSize([]byte("payload"), 7))
+	require.NoError(t, CheckPayloadSize([]byte("payload"), 0))
+	require.ErrorIs(t, CheckPayloadSize([]byte("payload"), 6), ErrFrameTooLarge)
+}
+
 func TestParseHeaderRoundTrip(t *testing.T) {
 	t.Parallel()
 

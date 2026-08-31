@@ -140,6 +140,10 @@ func encodeLogs(logs []*LogData) ([]byte, error) {
 		return nil, err
 	}
 
+	if err := format.CheckPayloadSize(data, MaxBatchSize); err != nil {
+		return nil, err
+	}
+
 	buff := bytesBufferPool.Get()
 	defer bytesBufferPool.Put(buff)
 

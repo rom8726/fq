@@ -863,7 +863,7 @@ The header is followed by a stream of frames:
 [len uint32 BE][crc32c uint32 BE][payload len bytes]
 ```
 
-`len` is the payload size, capped at 100 MB. The CRC32C (Castagnoli) checksum covers the length bytes and the payload together, so a corrupted length field is detected directly instead of derailing the frame stream.
+`len` is the payload size, capped at 100 MB. A batch that would exceed the cap fails the write instead of producing a file that cannot be read back. The CRC32C (Castagnoli) checksum covers the length bytes and the payload together, so a corrupted length field is detected directly instead of derailing the frame stream.
 
 Reaction to a damaged file:
 

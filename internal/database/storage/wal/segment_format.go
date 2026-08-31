@@ -33,13 +33,17 @@ func decodeLSNFile(data []byte) (uint64, error) {
 		return 0, err
 	}
 
-	payload, _, err := format.NextFrame(rest, metadataMaxFrameSize)
+	payload, trailing, err := format.NextFrame(rest, metadataMaxFrameSize)
 	if err != nil {
 		return 0, err
 	}
 
 	if len(payload) != lsnPayloadSize {
 		return 0, fmt.Errorf("unexpected LSN payload size: %d", len(payload))
+	}
+
+	if len(trailing) != 0 {
+		return 0, fmt.Errorf("unexpected trailing data after LSN frame: %d bytes", len(trailing))
 	}
 
 	return binary.BigEndian.Uint64(payload), nil
