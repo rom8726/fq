@@ -8,13 +8,16 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func TestTCPClient(t *testing.T) {
 	t.Parallel()
 
 	request := "hello server"
-	response := "hello client"
+	response := "ok|hello client"
+	expectedBody := "hello client"
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -47,7 +50,7 @@ func TestTCPClient(t *testing.T) {
 
 	buffer, err := client.Send(context.Background(), []byte(request))
 	require.NoError(t, err)
-	require.True(t, reflect.DeepEqual([]byte(response), buffer))
+	require.True(t, reflect.DeepEqual([]byte(expectedBody), buffer))
 }
 
 func TestTCPIdleClientConnection(t *testing.T) {
@@ -88,4 +91,87 @@ func TestTCPIdleClientConnection(t *testing.T) {
 
 	_, err = client.Send(context.Background(), []byte(request))
 	require.ErrorIs(t, err, ErrIdleTimeout)
+}
+
+func newTestClient(t *testing.T, respond func(request []byte) []byte) *TCPClient {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = connection.Close() }()
+
+		for {
+			request, readErr := readFrame(connection, 65536)
+			if readErr != nil {
+				return
+			}
+
+			if writeErr := writeFrame(connection, respond(request)); writeErr != nil {
+				return
+			}
+		}
+	}()
+
+	client, err := NewTCPClient(listener.Addr().String(), 2048, time.Minute)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	return client
+}
+
+func TestSendReturnsBodyWithoutPrefix(t *testing.T) {
+	client := newTestClient(t, func(request []byte) []byte {
+		return []byte("ok|42")
+	})
+
+	response, err := client.Send(context.Background(), []byte("GET key 60"))
+	require.NoError(t, err)
+	require.Equal(t, "42", string(response))
+}
+
+func TestSendReturnsTypedProtocolError(t *testing.T) {
+	client := newTestClient(t, func(request []byte) []byte {
+		return []byte("err|4000|quota not found")
+	})
+
+	_, err := client.Send(context.Background(), []byte("QUOTA INF q"))
+
+	var protoErr *protocol.Error
+	require.ErrorAs(t, err, &protoErr)
+	require.Equal(t, protocol.CodeQuotaNotFound, protoErr.Code)
+}
+
+func TestHelloParsesServerInfoAndAppliesMessageSize(t *testing.T) {
+	client := newTestClient(t, func(request []byte) []byte {
+		require.Equal(t, "HELLO 1", string(request))
+
+		return []byte("ok|1;65536;1;admin")
+	})
+
+	info, err := client.Hello(context.Background(), "")
+	require.NoError(t, err)
+	require.Equal(t, uint16(1), info.Version)
+	require.Equal(t, 65536, info.MaxMessageSize)
+	require.True(t, info.AuthRequired)
+	require.Equal(t, "admin", info.Role)
+	require.Equal(t, 65536, client.maxMessageSize)
+}
+
+func TestHelloSendsToken(t *testing.T) {
+	client := newTestClient(t, func(request []byte) []byte {
+		require.Equal(t, "HELLO 1 AUTH s3cret", string(request))
+
+		return []byte("ok|1;4096;1;rw")
+	})
+
+	info, err := client.Hello(context.Background(), "s3cret")
+	require.NoError(t, err)
+	require.Equal(t, "rw", info.Role)
 }

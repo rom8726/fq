@@ -57,7 +57,7 @@ func TestServerAndClientOverTLS(t *testing.T) {
 
 	go func() {
 		_ = server.HandleQueries(ctx, func(_ context.Context, request []byte) ([]byte, error) {
-			return append([]byte("echo:"), request...), nil
+			return append([]byte("ok|echo:"), request...), nil
 		})
 	}()
 
@@ -95,7 +95,7 @@ func TestPlaintextClientCannotTalkToTLSServer(t *testing.T) {
 
 	go func() {
 		_ = server.HandleQueries(ctx, func(_ context.Context, request []byte) ([]byte, error) {
-			return request, nil
+			return append([]byte("ok|"), request...), nil
 		})
 	}()
 
@@ -129,7 +129,7 @@ func TestServerRequiresClientCertificateForMutualTLS(t *testing.T) {
 
 	go func() {
 		_ = server.HandleQueries(ctx, func(_ context.Context, request []byte) ([]byte, error) {
-			return request, nil
+			return append([]byte("ok|"), request...), nil
 		})
 	}()
 
@@ -182,7 +182,7 @@ func TestConnContextRunsOncePerConnection(t *testing.T) {
 		_ = server.HandleQueries(ctx, func(ctx context.Context, _ []byte) ([]byte, error) {
 			value, _ := ctx.Value(testConnKey{}).(string)
 
-			return []byte(value), nil
+			return append([]byte("ok|"), value...), nil
 		})
 	}()
 

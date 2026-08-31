@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"time"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 var ErrIdleTimeout = errors.New("idle timeout")
@@ -72,20 +75,24 @@ func dial(address string, tlsConfig *tls.Config) (net.Conn, error) {
 
 func (c *TCPClient) Send(ctx context.Context, request []byte) ([]byte, error) {
 	var result []byte
-	err := c.Stream(ctx, request, func(message []byte) error {
-		result = make([]byte, len(message))
-		copy(result, message)
+	err := c.Stream(ctx, request, func(kind protocol.Kind, body []byte) error {
+		if kind == protocol.KindNext {
+			return protocol.ErrUnexpectedContinuation
+		}
+
+		result = make([]byte, len(body))
+		copy(result, body)
 
 		return io.EOF
 	})
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 
 	return result, nil
 }
 
-func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]byte) error) error {
+func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func(protocol.Kind, []byte) error) error {
 	if len(request) > c.maxMessageSize {
 		return fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
 	}
@@ -111,13 +118,39 @@ func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]by
 			return c.normalizeTimeoutError(ctx, err)
 		}
 
-		result := make([]byte, len(message))
-		copy(result, message)
+		kind, body, parseErr := protocol.ParseResponse(message)
+		if parseErr != nil {
+			return parseErr
+		}
 
-		if err := handle(result); err != nil {
+		result := make([]byte, len(body))
+		copy(result, body)
+
+		if err := handle(kind, result); err != nil {
 			return err
 		}
 	}
+}
+
+func (c *TCPClient) Hello(ctx context.Context, token string) (protocol.ServerInfo, error) {
+	request := "HELLO " + strconv.FormatUint(uint64(protocol.CurrentVersion), 10)
+	if token != "" {
+		request += " AUTH " + token
+	}
+
+	body, err := c.Send(ctx, []byte(request))
+	if err != nil {
+		return protocol.ServerInfo{}, err
+	}
+
+	info, err := protocol.ParseServerInfo(body)
+	if err != nil {
+		return protocol.ServerInfo{}, err
+	}
+
+	c.SetMaxMessageSizeUnsafe(info.MaxMessageSize)
+
+	return info, nil
 }
 
 func (c *TCPClient) Close() error {
