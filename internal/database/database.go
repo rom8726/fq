@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
 
@@ -28,16 +28,16 @@ const (
 )
 
 var (
-	errInternalConfiguration = errors.New("internal configuration error")
-	errBatchSizeNotNumber    = errors.New("batch is not a number")
-	errInvalidBatchSize      = errors.New("invalid batch size")
-	errInvalidArgumentsCount = errors.New("invalid arguments count")
-	errKeyTooLong            = errors.New("key length exceeds maximum")
-	errKeyEmpty              = errors.New("key cannot be empty")
-	errLimitNotNumber        = errors.New("limit is not a number")
-	errInvalidLimit          = errors.New("invalid limit")
-	errInvalidRLimitAlgo     = errors.New("invalid rate limit algorithm")
-	errInvalidScanCount      = errors.New("invalid scan count")
+	errInternalConfiguration = protocol.NewError(protocol.CodeInternalConfiguration, "internal configuration error")
+	errBatchSizeNotNumber    = protocol.NewError(protocol.CodeBatchSizeNotNumber, "batch is not a number")
+	errInvalidBatchSize      = protocol.NewError(protocol.CodeInvalidBatchSize, "invalid batch size")
+	errInvalidArgumentsCount = protocol.NewError(protocol.CodeInvalidArgumentsCount, "invalid arguments count")
+	errKeyTooLong            = protocol.NewError(protocol.CodeKeyTooLong, "key length exceeds maximum")
+	errKeyEmpty              = protocol.NewError(protocol.CodeKeyEmpty, "key cannot be empty")
+	errLimitNotNumber        = protocol.NewError(protocol.CodeLimitNotNumber, "limit is not a number")
+	errInvalidLimit          = protocol.NewError(protocol.CodeInvalidLimit, "invalid limit")
+	errInvalidRLimitAlgo     = protocol.NewError(protocol.CodeInvalidRLimitAlgo, "invalid rate limit algorithm")
+	errInvalidScanCount      = protocol.NewError(protocol.CodeInvalidScanCount, "invalid scan count")
 
 	okTrueMsg  = []byte("ok|1")
 	okFalseMsg = []byte("ok|0")
@@ -142,7 +142,11 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	if len(queryStr) > d.maxMessageSize {
 		response := appendErrorMsg(
 			responseBuffer.buf[:0],
-			fmt.Errorf("message size %d exceeds maximum %d", len(queryStr), d.maxMessageSize),
+			protocol.Errorf(
+				protocol.CodeMessageTooLarge,
+				"message size %d exceeds maximum %d",
+				len(queryStr), d.maxMessageSize,
+			),
 		)
 
 		return write(response)
