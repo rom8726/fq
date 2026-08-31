@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func TestAnalyzeQuery(t *testing.T) {
@@ -177,5 +178,22 @@ func TestAnalyzeQuery(t *testing.T) {
 			require.Equal(t, test.query, query)
 			require.Equal(t, test.err, err)
 		})
+	}
+}
+
+func TestComputeErrorsCarryCodes(t *testing.T) {
+	cases := []struct {
+		err  error
+		code protocol.Code
+	}{
+		{compute.ErrInvalidSymbol, protocol.CodeInvalidSymbol},
+		{compute.ErrInvalidCommand, protocol.CodeInvalidCommand},
+		{compute.ErrInvalidArguments, protocol.CodeInvalidArguments},
+	}
+
+	for _, tc := range cases {
+		code, ok := protocol.CodeOf(tc.err)
+		require.True(t, ok, tc.err.Error())
+		require.Equal(t, tc.code, code, tc.err.Error())
 	}
 }

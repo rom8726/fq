@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
 
@@ -80,4 +81,22 @@ func TestSessionContextRoundTrip(t *testing.T) {
 
 	require.Same(t, session, security.SessionFrom(ctx))
 	require.Nil(t, security.SessionFrom(context.Background()))
+}
+
+func TestSecurityErrorsCarryCodes(t *testing.T) {
+	cases := []struct {
+		err  error
+		code protocol.Code
+	}{
+		{security.ErrNotAuthenticated, protocol.CodeNotAuthenticated},
+		{security.ErrPermissionDenied, protocol.CodePermissionDenied},
+		{security.ErrAuthenticationFailed, protocol.CodeAuthenticationFailed},
+		{security.ErrTooManyAuthFailures, protocol.CodeTooManyAuthFailures},
+	}
+
+	for _, tc := range cases {
+		code, ok := protocol.CodeOf(tc.err)
+		require.True(t, ok, tc.err.Error())
+		require.Equal(t, tc.code, code, tc.err.Error())
+	}
 }

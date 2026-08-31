@@ -2,11 +2,12 @@ package compute
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/rs/zerolog"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 const (
@@ -52,9 +53,9 @@ var queryArgumentsNumber = map[CommandID]int{
 }
 
 var (
-	ErrInvalidSymbol    = errors.New("invalid symbol")
-	ErrInvalidCommand   = errors.New("invalid command")
-	ErrInvalidArguments = errors.New("invalid arguments")
+	ErrInvalidSymbol    = protocol.NewError(protocol.CodeInvalidSymbol, "invalid symbol")
+	ErrInvalidCommand   = protocol.NewError(protocol.CodeInvalidCommand, "invalid command")
+	ErrInvalidArguments = protocol.NewError(protocol.CodeInvalidArguments, "invalid arguments")
 )
 
 type Analyzer struct {
