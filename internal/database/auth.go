@@ -20,7 +20,6 @@ var commandRoles = map[compute.CommandID]security.Role{
 	compute.PStreamCommandID:  security.RoleRO,
 	compute.QStreamCommandID:  security.RoleRO,
 	compute.QPStreamCommandID: security.RoleRO,
-	compute.InspectCommandID:  security.RoleRO,
 	compute.IncrCommandID:     security.RoleRW,
 	compute.DelCommandID:      security.RoleRW,
 	compute.MDelCommandID:     security.RoleRW,
@@ -28,6 +27,7 @@ var commandRoles = map[compute.CommandID]security.Role{
 	compute.QuotaCommandID:    security.RoleRW,
 	compute.FlushDBCommandID:  security.RoleAdmin,
 	compute.TruncateCommandID: security.RoleAdmin,
+	compute.InspectCommandID:  security.RoleAdmin,
 }
 
 func requiresAuthorization(commandID compute.CommandID) bool {

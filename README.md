@@ -487,9 +487,9 @@ Roles are hierarchical — `admin` includes `rw`, and `rw` includes `ro`:
 
 | Role | Commands |
 |---|---|
-| `ro` | `GET`, `SCAN`, `PSCAN`, `WATCH`, `INSPECT`, `STREAM`, `PSTREAM`, `QSTREAM`, `QPSTREAM`, `QUOTA INF` |
+| `ro` | `GET`, `SCAN`, `PSCAN`, `WATCH`, `STREAM`, `PSTREAM`, `QSTREAM`, `QPSTREAM`, `QUOTA INF` |
 | `rw` | everything in `ro`, plus `INCR`, `DEL`, `MDEL`, `RLIMIT`, and the remaining `QUOTA` subcommands |
-| `admin` | everything in `rw`, plus `FLUSHDB` and `TRUNCATE` |
+| `admin` | everything in `rw`, plus `FLUSHDB`, `TRUNCATE`, and `INSPECT` |
 
 A command the current role does not cover returns `err|permission denied`.
 

@@ -116,7 +116,7 @@ func TestAuthGrantsRoleAndRoleGatesCommands(t *testing.T) {
 
 	require.Equal(t, "ok|1", db.HandleQuery(ctx, "AUTH ro-token-value"))
 	require.Contains(t, db.HandleQuery(ctx, "SCAN cursor 10"), "ok|")
-	require.NotContains(t, db.HandleQuery(ctx, "INSPECT"), "permission denied")
+	require.Contains(t, db.HandleQuery(ctx, "INSPECT"), "permission denied")
 	require.Contains(t, db.HandleQuery(ctx, "INCR key 60"), "permission denied")
 	require.Contains(t, db.HandleQuery(ctx, "DEL key 60"), "permission denied")
 	require.Contains(t, db.HandleQuery(ctx, "FLUSHDB"), "permission denied")
@@ -128,6 +128,7 @@ func TestAuthGrantsRoleAndRoleGatesCommands(t *testing.T) {
 	require.Contains(t, db.HandleQuery(ctx, "FLUSHDB"), "permission denied")
 
 	require.Equal(t, "ok|1", db.HandleQuery(ctx, "AUTH admin-token-value"))
+	require.NotContains(t, db.HandleQuery(ctx, "INSPECT"), "denied")
 	require.NotContains(t, db.HandleQuery(ctx, "FLUSHDB"), "denied")
 	require.NotContains(t, db.HandleQuery(ctx, "TRUNCATE"), "denied")
 }
@@ -172,7 +173,7 @@ func TestCommandRoleMatrix(t *testing.T) {
 	tests := map[compute.CommandID]security.Role{
 		compute.GetCommandID:      security.RoleRO,
 		compute.ScanCommandID:     security.RoleRO,
-		compute.InspectCommandID:  security.RoleRO,
+		compute.InspectCommandID:  security.RoleAdmin,
 		compute.IncrCommandID:     security.RoleRW,
 		compute.MDelCommandID:     security.RoleRW,
 		compute.FlushDBCommandID:  security.RoleAdmin,
