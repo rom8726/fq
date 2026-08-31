@@ -64,7 +64,7 @@ func (d *Database) handleAuthQuery(
 ) ([]byte, error) {
 	arguments := query.Arguments()
 	if len(arguments) != 1 {
-		return appendErrorMsg(dst, errInvalidArgumentsCount), nil
+		return d.appendErrorMsg(dst, errInvalidArgumentsCount), nil
 	}
 
 	if err := session.Authenticate(arguments[0]); err != nil {
@@ -76,7 +76,7 @@ func (d *Database) handleAuthQuery(
 			return nil, err
 		}
 
-		return appendErrorMsg(dst, err), nil
+		return d.appendErrorMsg(dst, err), nil
 	}
 
 	d.logger.Info().Str("role", session.Role().String()).Msg("client authenticated")

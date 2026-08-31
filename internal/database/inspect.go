@@ -23,12 +23,12 @@ var (
 
 func (d *Database) handleInspectQuery(ctx context.Context, query compute.Query, write func([]byte) error) error {
 	if d.inspector == nil {
-		return write(makeErrorMsg(errInspectUnavailable))
+		return write(d.makeErrorMsg(errInspectUnavailable))
 	}
 
 	payload, err := d.inspector.Report(ctx, query.Arg(0))
 	if err != nil {
-		return write(makeErrorMsg(err))
+		return write(d.makeErrorMsg(err))
 	}
 
 	return d.writeChunked(payload, write)
@@ -36,12 +36,12 @@ func (d *Database) handleInspectQuery(ctx context.Context, query compute.Query, 
 
 func (d *Database) writeChunked(payload []byte, write func([]byte) error) error {
 	if len(payload) > maxInspectReportSize {
-		return write(makeErrorMsg(errInspectReportTooLarge))
+		return write(d.makeErrorMsg(errInspectReportTooLarge))
 	}
 
 	budget := d.maxMessageSize - len(protocol.NextPrefix)
 	if budget <= 0 {
-		return write(makeErrorMsg(errMessageSizeTooSmall))
+		return write(d.makeErrorMsg(errMessageSizeTooSmall))
 	}
 
 	for len(payload) > budget {

@@ -56,42 +56,42 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", false, 3, 0, 60)
 	app.RequireQuery("DEL bucket 60", "ok|1")
 	app.RequireRateLimit("RLIMIT TB bucket 3 1 60", true, 1, 2, 60)
-	app.RequireQuery("QUOTA ACQ server_quota 4 client-a", "err|quota not found")
+	app.RequireQuery("QUOTA ACQ server_quota 4 client-a", "err|4000|quota not found")
 	app.RequireQuery("QUOTA SET server_quota 10", "ok|1")
 	app.RequireQuery("QUOTA SET server_quota 10", "ok|0")
-	app.RequireQuery("QUOTA ACQL server_quota 10 4 lease-client", "err|quota ownership mismatch")
+	app.RequireQuery("QUOTA ACQL server_quota 10 4 lease-client", "err|4005|quota ownership mismatch")
 	app.RequireQuotaAcquire("QUOTA ACQ server_quota 4 client-a 60", true, 4, 4, 6, 60)
 	app.RequireQuotaInfo("QUOTA INF server_quota", 10, 4, 6, []testQuotaClient{
 		{clientID: "client-a", amount: 4, expires: true},
 	})
 	app.RequireQuotaAcquire("QUOTA ACQ server_quota 7 client-b", false, 0, 4, 6, 0)
-	app.RequireQuery("QUOTA SET server_quota 3", "err|quota limit is below used amount")
+	app.RequireQuery("QUOTA SET server_quota 3", "err|4004|quota limit is below used amount")
 	app.RequireQuery("QUOTA REL server_quota client-a", "ok|1")
 	app.RequireQuery("QUOTA DEL server_quota", "ok|1")
 	app.RequireQuery("QUOTA SETN negotiated_quota 100000 20", "ok|1")
 	app.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-a", true, 5000, 5000, 95000, 0)
 	app.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-b", true, 5000, 10000, 90000, 0)
 	app.RequireQuotaAcquire("QUOTA ACQN negotiated_quota client-a", true, 5000, 10000, 90000, 0)
-	app.RequireQuery("QUOTA ACQ negotiated_quota 1 fixed-client", "err|quota policy mismatch")
-	app.RequireQuery("QUOTA SET negotiated_quota 10", "err|quota policy mismatch")
+	app.RequireQuery("QUOTA ACQ negotiated_quota 1 fixed-client", "err|4006|quota policy mismatch")
+	app.RequireQuery("QUOTA SET negotiated_quota 10", "err|4006|quota policy mismatch")
 	app.RequireQuery("QUOTA REL negotiated_quota client-a", "ok|1")
 	app.RequireQuery("QUOTA REL negotiated_quota client-b", "ok|1")
 	app.RequireQuery("QUOTA DEL negotiated_quota", "ok|1")
 	app.RequireQuotaAcquire("QUOTA ACQL quota 10 4 client-a 60", true, 4, 4, 6, 60)
 	app.RequireQuotaAcquire("QUOTA ACQL quota 10 4 client-a 60", true, 4, 4, 6, 60)
-	app.RequireQuery("QUOTA SET quota 10", "err|quota ownership mismatch")
-	app.RequireQuery("QUOTA ACQ quota 4 server-client", "err|quota ownership mismatch")
+	app.RequireQuery("QUOTA SET quota 10", "err|4005|quota ownership mismatch")
+	app.RequireQuery("QUOTA ACQ quota 4 server-client", "err|4005|quota ownership mismatch")
 	app.RequireQuotaInfo("QUOTA INF quota", 10, 4, 6, []testQuotaClient{
 		{clientID: "client-a", amount: 4, expires: true},
 	})
 	app.RequireQuotaAcquire("QUOTA ACQL quota 10 7 client-b", false, 0, 4, 6, 0)
-	app.RequireQuery("QUOTA DEL quota", "err|quota is not empty")
+	app.RequireQuery("QUOTA DEL quota", "err|4003|quota is not empty")
 	app.RequireQuery("QUOTA REL quota client-a", "ok|1")
 	app.RequireQuery("QUOTA DEL quota", "ok|1")
 	app.RequireQuery("MDEL key 60 other 60", "ok|1;1")
 	app.RequireQuery("GET key 60", "ok|0")
-	app.RequireQuery("TRUNCATE key 60", "err|invalid arguments")
-	app.RequireQuery("RLIMIT XX limited 2 60", "err|invalid rate limit algorithm")
+	app.RequireQuery("TRUNCATE key 60", "err|1002|invalid arguments")
+	app.RequireQuery("RLIMIT XX limited 2 60", "err|2006|invalid rate limit algorithm")
 }
 
 func TestTCPDatabaseRejectsInvalidInputsWithoutMutatingState(t *testing.T) {
@@ -171,8 +171,8 @@ func TestTCPDatabaseScanReturnsErrorWhenIndexIsDisabled(t *testing.T) {
 	app := startTestDatabase(t, t.TempDir())
 	defer app.Close()
 
-	app.RequireQuery("SCAN 0 10", "err|scan index is disabled")
-	app.RequireQuery("PSCAN tenant- 0 10", "err|scan index is disabled")
+	app.RequireQuery("SCAN 0 10", "err|5000|scan index is disabled")
+	app.RequireQuery("PSCAN tenant- 0 10", "err|5000|scan index is disabled")
 }
 
 func TestTCPDatabaseCommandsAreCaseInsensitive(t *testing.T) {
