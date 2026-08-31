@@ -7,6 +7,11 @@ network:
     tokens:
       - { role: admin, token_env: FQ_SLAVE_ADMIN_TOKEN }
       - { role: ro, token_env: FQ_SLAVE_RO_TOKEN }
+#  tls:
+#    cert_file: ./certs/server.crt
+#    key_file: ./certs/server.key
+#    client_ca_file: ./certs/ca.crt
+#    min_version: "1.3"
 persistence:
   mode: wal_and_dump
 observability:
@@ -36,5 +41,11 @@ replication:
   sync_interval: 1s
   auth:
     token_env: FQ_REPLICATION_TOKEN
+#  tls:
+#    cert_file: ./certs/client.crt
+#    key_file: ./certs/client.key
+#    ca_file: ./certs/ca.crt
+#    server_name: localhost
+#    min_version: "1.3"
 logging:
   level: info
