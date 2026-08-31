@@ -93,11 +93,21 @@ func TestUnauthenticatedCommandsAreRejected(t *testing.T) {
 	db := newTestDatabase(t)
 	ctx, _ := authContext(t)
 
-	for _, query := range []string{"GET key 60", "INCR key 60", "FLUSHDB", "TRUNCATE", "MSGSIZE"} {
+	for _, query := range []string{"GET key 60", "INCR key 60", "FLUSHDB", "TRUNCATE", "INSPECT"} {
 		response := db.HandleQuery(ctx, query)
 		require.True(t, strings.HasPrefix(response, "err|"), query)
 		require.Contains(t, response, "not authenticated", query)
 	}
+}
+
+func TestMsgSizeNeedsNoAuthentication(t *testing.T) {
+	db := newTestDatabase(t)
+	ctx, _ := authContext(t)
+
+	require.Equal(t, "ok|4096", db.HandleQuery(ctx, "MSGSIZE"))
+	require.False(t, requiresAuthorization(compute.MsgSizeCommandID))
+	require.False(t, requiresAuthorization(compute.AuthCommandID))
+	require.True(t, requiresAuthorization(compute.GetCommandID))
 }
 
 func TestAuthGrantsRoleAndRoleGatesCommands(t *testing.T) {
@@ -105,12 +115,11 @@ func TestAuthGrantsRoleAndRoleGatesCommands(t *testing.T) {
 	ctx, _ := authContext(t)
 
 	require.Equal(t, "ok|1", db.HandleQuery(ctx, "AUTH ro-token-value"))
-	require.NotContains(t, db.HandleQuery(ctx, "MSGSIZE"), "denied")
 	require.Contains(t, db.HandleQuery(ctx, "SCAN cursor 10"), "ok|")
+	require.NotContains(t, db.HandleQuery(ctx, "INSPECT"), "permission denied")
 	require.Contains(t, db.HandleQuery(ctx, "INCR key 60"), "permission denied")
 	require.Contains(t, db.HandleQuery(ctx, "DEL key 60"), "permission denied")
 	require.Contains(t, db.HandleQuery(ctx, "FLUSHDB"), "permission denied")
-	require.Contains(t, db.HandleQuery(ctx, "INSPECT"), "permission denied")
 
 	require.Equal(t, "ok|1", db.HandleQuery(ctx, "AUTH rw-token-value"))
 	require.NotContains(t, db.HandleQuery(ctx, "INCR key 60"), "denied")
@@ -162,13 +171,12 @@ func TestRedactQuery(t *testing.T) {
 func TestCommandRoleMatrix(t *testing.T) {
 	tests := map[compute.CommandID]security.Role{
 		compute.GetCommandID:      security.RoleRO,
-		compute.MsgSizeCommandID:  security.RoleRO,
 		compute.ScanCommandID:     security.RoleRO,
+		compute.InspectCommandID:  security.RoleRO,
 		compute.IncrCommandID:     security.RoleRW,
 		compute.MDelCommandID:     security.RoleRW,
 		compute.FlushDBCommandID:  security.RoleAdmin,
 		compute.TruncateCommandID: security.RoleAdmin,
-		compute.InspectCommandID:  security.RoleAdmin,
 	}
 
 	for commandID, want := range tests {

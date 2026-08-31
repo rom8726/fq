@@ -487,11 +487,16 @@ Roles are hierarchical — `admin` includes `rw`, and `rw` includes `ro`:
 
 | Role | Commands |
 |---|---|
-| `ro` | `GET`, `MSGSIZE`, `SCAN`, `PSCAN`, `WATCH`, `STREAM`, `PSTREAM`, `QSTREAM`, `QPSTREAM`, `QUOTA INF` |
+| `ro` | `GET`, `SCAN`, `PSCAN`, `WATCH`, `INSPECT`, `STREAM`, `PSTREAM`, `QSTREAM`, `QPSTREAM`, `QUOTA INF` |
 | `rw` | everything in `ro`, plus `INCR`, `DEL`, `MDEL`, `RLIMIT`, and the remaining `QUOTA` subcommands |
-| `admin` | everything in `rw`, plus `FLUSHDB`, `TRUNCATE`, `INSPECT` |
+| `admin` | everything in `rw`, plus `FLUSHDB` and `TRUNCATE` |
 
 A command the current role does not cover returns `err|permission denied`.
+
+`AUTH` and `MSGSIZE` sit outside the role matrix and answer on an unauthenticated
+connection. `MSGSIZE` reports the maximum frame size, which a client needs to size its
+buffers before it can send anything else, so treating it as protocol negotiation rather
+than as data keeps clients able to connect first and authenticate second.
 
 Leaving `network.auth` out entirely disables authentication on the client port and logs a
 warning at startup. The port is then open to anyone who can reach it, `FLUSHDB` and

@@ -13,7 +13,6 @@ const authFailurePort = "client"
 
 var commandRoles = map[compute.CommandID]security.Role{
 	compute.GetCommandID:      security.RoleRO,
-	compute.MsgSizeCommandID:  security.RoleRO,
 	compute.ScanCommandID:     security.RoleRO,
 	compute.PScanCommandID:    security.RoleRO,
 	compute.WatchCommandID:    security.RoleRO,
@@ -29,6 +28,15 @@ var commandRoles = map[compute.CommandID]security.Role{
 	compute.QuotaCommandID:    security.RoleRW,
 	compute.FlushDBCommandID:  security.RoleAdmin,
 	compute.TruncateCommandID: security.RoleAdmin,
+}
+
+func requiresAuthorization(commandID compute.CommandID) bool {
+	switch commandID {
+	case compute.AuthCommandID, compute.MsgSizeCommandID:
+		return false
+	default:
+		return true
+	}
 }
 
 func commandRole(query compute.Query) security.Role {
