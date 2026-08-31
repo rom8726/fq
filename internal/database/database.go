@@ -160,6 +160,19 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 
 	session := security.SessionFrom(ctx)
 
+	if query.CommandID() == compute.HelloCommandID {
+		helloResponse, helloErr := d.handleHelloQuery(ctx, query, responseBuffer.buf[:0])
+		if helloErr != nil {
+			return helloErr
+		}
+
+		return write(helloResponse)
+	}
+
+	if !protocol.SessionFrom(ctx).Negotiated() {
+		return write(d.appendErrorMsg(responseBuffer.buf[:0], protocol.ErrHandshakeRequired))
+	}
+
 	if query.CommandID() == compute.AuthCommandID {
 		authResponse, authErr := d.handleAuthQuery(session, query, responseBuffer.buf[:0])
 		if authErr != nil {
@@ -183,8 +196,6 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		response = d.handleGetQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.DelCommandID:
 		response = d.handleDelQuery(ctx, query, responseBuffer.buf[:0])
-	case compute.MsgSizeCommandID:
-		response = d.handleMsgSizeQuery(responseBuffer.buf[:0])
 	case compute.MDelCommandID:
 		response = d.handleMDelQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.WatchCommandID:
@@ -503,10 +514,6 @@ func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query, dst
 	}
 
 	return appendBoolsMsg(dst, values)
-}
-
-func (d *Database) handleMsgSizeQuery(dst []byte) []byte {
-	return appendValueMsg(dst, ValueType(d.maxMessageSize))
 }
 
 func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query, dst []byte) []byte {

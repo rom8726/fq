@@ -100,12 +100,12 @@ func TestUnauthenticatedCommandsAreRejected(t *testing.T) {
 	}
 }
 
-func TestMsgSizeNeedsNoAuthentication(t *testing.T) {
+func TestHelloNeedsNoAuthentication(t *testing.T) {
 	db := newTestDatabase(t)
 	ctx, _ := authContext(t)
 
-	require.Equal(t, "ok|4096", db.HandleQuery(ctx, "MSGSIZE"))
-	require.False(t, requiresAuthorization(compute.MsgSizeCommandID))
+	require.Equal(t, "ok|1;4096;1;none", db.HandleQuery(ctx, "HELLO 1"))
+	require.False(t, requiresAuthorization(compute.HelloCommandID))
 	require.False(t, requiresAuthorization(compute.AuthCommandID))
 	require.True(t, requiresAuthorization(compute.GetCommandID))
 }

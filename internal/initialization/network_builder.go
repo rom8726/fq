@@ -11,6 +11,7 @@ import (
 
 	"github.com/fq-db/fq/internal/config"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 	"github.com/fq-db/fq/internal/tools"
 )
@@ -67,7 +68,9 @@ func CreateNetwork(
 
 	options := []network.ServerOption{
 		network.WithConnContext(func(ctx context.Context, _ net.Conn) context.Context {
-			return security.WithSession(ctx, security.NewSession(registry))
+			ctx = security.WithSession(ctx, security.NewSession(registry))
+
+			return protocol.WithSession(ctx, protocol.NewSession())
 		}),
 	}
 

@@ -36,7 +36,7 @@ func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app := startTestDatabase(t, t.TempDir())
 	defer app.Close()
 
-	app.RequireQuery("MSGSIZE", "ok|65536")
+	app.RequireQuery("HELLO 1", "ok|1;65536;0;admin")
 	app.RequireQuery("INCR key 60", "ok|1")
 	app.RequireQuery("INCR key 60", "ok|2")
 	app.RequireQuery("GET key 60", "ok|2")
