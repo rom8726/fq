@@ -12,7 +12,7 @@ func TestCommandNameToCommandID(t *testing.T) {
 	require.Equal(t, compute.IncrCommandID, compute.CommandNameToCommandID("INCR"))
 	require.Equal(t, compute.GetCommandID, compute.CommandNameToCommandID("GET"))
 	require.Equal(t, compute.DelCommandID, compute.CommandNameToCommandID("DEL"))
-	require.Equal(t, compute.MsgSizeCommandID, compute.CommandNameToCommandID("MSGSIZE"))
+	require.Equal(t, compute.HelloCommandID, compute.CommandNameToCommandID("HELLO"))
 	require.Equal(t, compute.StreamCommandID, compute.CommandNameToCommandID("STREAM"))
 	require.Equal(t, compute.PStreamCommandID, compute.CommandNameToCommandID("PSTREAM"))
 	require.Equal(t, compute.QStreamCommandID, compute.CommandNameToCommandID("QSTREAM"))

@@ -41,8 +41,8 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"MDEL", "key1", "600", "key2"},
 			err:    compute.ErrInvalidArguments,
 		},
-		"invalid number arguments for message size query": {
-			tokens: []string{"MSGSIZE", "key"},
+		"invalid number arguments for hello query": {
+			tokens: []string{"HELLO"},
 			err:    compute.ErrInvalidArguments,
 		},
 		"invalid number arguments for rlimit query": {
@@ -69,9 +69,9 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"MDEL", "key1", "60", "key2", "60"},
 			query:  compute.NewQuery(compute.MDelCommandID, []string{"key1", "60", "key2", "60"}),
 		},
-		"valid message size query": {
-			tokens: []string{"MSGSIZE"},
-			query:  compute.NewQuery(compute.MsgSizeCommandID, []string{}),
+		"valid hello query": {
+			tokens: []string{"HELLO", "1"},
+			query:  compute.NewQuery(compute.HelloCommandID, []string{"1"}),
 		},
 		"valid flushdb query": {
 			tokens: []string{"FLUSHDB"},
