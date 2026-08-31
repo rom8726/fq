@@ -639,7 +639,7 @@ func (e *Engine) applyLog(log *wal.LogData) {
 		e.applyQuotaReleaseFromLog(log)
 	case compute.QuotaDeleteCommandID:
 		e.applyQuotaDeleteFromLog(log)
-	case compute.FlushDBCommandID:
+	case compute.FlushDBCommandID, compute.TruncateCommandID:
 		e.FlushDB()
 	}
 }

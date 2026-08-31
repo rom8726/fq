@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/compute"
 	"github.com/fq-db/fq/internal/tools"
 )
 
@@ -258,15 +259,39 @@ func TestWALShutdownUnblocksBackpressuredPush(t *testing.T) {
 	requireFutureError(t, second, nil)
 }
 
+func TestWALTruncateWritesReplicatedMarkerAfterTruncatingSegments(t *testing.T) {
+	writer := &truncateRecordingFSWriter{}
+	logger := zerolog.Nop()
+	wal := NewWAL(writer, nil, nil, time.Hour, 10, 10, "", &logger)
+	wal.Start()
+	defer wal.Shutdown()
+
+	future := wal.Truncate(context.Background(), testTxContext(42))
+
+	requireFutureError(t, future, nil)
+	require.Equal(t, []string{"truncate", "write"}, writer.Ops())
+	logs := writer.Logs()
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(42), logs[0].LSN)
+	require.Equal(t, uint32(compute.TruncateCommandID), logs[0].CommandId)
+	require.Empty(t, logs[0].Arguments)
+}
+
 type recordingFSWriter struct {
 	mutex      sync.Mutex
 	batchSizes []int
 	err        error
+	logs       []*LogData
 }
 
 func (w *recordingFSWriter) WriteBatch(batch []Log) {
 	w.mutex.Lock()
 	w.batchSizes = append(w.batchSizes, len(batch))
+	for _, log := range batch {
+		copied := *log.data
+		copied.Arguments = append([]string(nil), log.data.Arguments...)
+		w.logs = append(w.logs, &copied)
+	}
 	w.mutex.Unlock()
 
 	acknowledgeBatch(batch, w.err)
@@ -280,6 +305,48 @@ func (w *recordingFSWriter) BatchSizes() []int {
 	copy(result, w.batchSizes)
 
 	return result
+}
+
+func (w *recordingFSWriter) Logs() []*LogData {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	result := make([]*LogData, len(w.logs))
+	for i, log := range w.logs {
+		copied := *log
+		copied.Arguments = append([]string(nil), log.Arguments...)
+		result[i] = &copied
+	}
+
+	return result
+}
+
+type truncateRecordingFSWriter struct {
+	recordingFSWriter
+
+	ops []string
+}
+
+func (w *truncateRecordingFSWriter) WriteBatch(batch []Log) {
+	w.recordingFSWriter.WriteBatch(batch)
+	w.mutex.Lock()
+	w.ops = append(w.ops, "write")
+	w.mutex.Unlock()
+}
+
+func (w *truncateRecordingFSWriter) Truncate() error {
+	w.mutex.Lock()
+	w.ops = append(w.ops, "truncate")
+	w.mutex.Unlock()
+
+	return nil
+}
+
+func (w *truncateRecordingFSWriter) Ops() []string {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	return append([]string(nil), w.ops...)
 }
 
 type closeRecordingFSWriter struct {

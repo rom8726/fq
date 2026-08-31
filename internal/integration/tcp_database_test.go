@@ -539,6 +539,50 @@ func TestTCPDatabaseSlaveEventuallyConvergesWithMaster(t *testing.T) {
 	recoveredFromReplicatedWAL.RequireRateLimit("RLIMIT TB replicated_tb 3 1 600", true, 3, 0, 600)
 }
 
+func TestTCPDatabaseSlaveReplicatesFlushDBAndTruncate(t *testing.T) {
+	masterWALDir := t.TempDir()
+	masterDumpDir := t.TempDir()
+	slaveWALDir := t.TempDir()
+	replicationAddress := freeLocalAddress(t)
+
+	masterApp := startTestDatabaseWithMasterReplication(t, masterWALDir, masterDumpDir, replicationAddress)
+	defer masterApp.Close()
+	waitTCPAddress(t, replicationAddress, 16<<20)
+
+	slave := startTestDatabaseWithSlaveReplication(t, slaveWALDir, replicationAddress)
+	defer slave.Close()
+
+	masterApp.RequireQuery("INCR replicated_admin 600", "ok|1")
+	require.Eventually(t, func() bool {
+		return masterApp.MinReplicaAckLSN() >= 1
+	}, 5*time.Second, 25*time.Millisecond)
+	slave.RequireQuery("GET replicated_admin 600", "ok|1")
+
+	masterApp.RequireQuery("FLUSHDB", "ok|1")
+	require.Eventually(t, func() bool {
+		return masterApp.MinReplicaAckLSN() >= 2
+	}, 5*time.Second, 25*time.Millisecond)
+	slave.RequireQuery("GET replicated_admin 600", "ok|0")
+
+	masterApp.RequireQuery("INCR replicated_admin 600", "ok|1")
+	require.Eventually(t, func() bool {
+		return masterApp.MinReplicaAckLSN() >= 3
+	}, 5*time.Second, 25*time.Millisecond)
+	slave.RequireQuery("GET replicated_admin 600", "ok|1")
+
+	masterApp.RequireQuery("TRUNCATE", "ok|1")
+	require.Eventually(t, func() bool {
+		return masterApp.MinReplicaAckLSN() >= 4
+	}, 5*time.Second, 25*time.Millisecond)
+	slave.RequireQuery("GET replicated_admin 600", "ok|0")
+
+	masterApp.RequireQuery("INCR after_truncate 600", "ok|1")
+	require.Eventually(t, func() bool {
+		return masterApp.MinReplicaAckLSN() >= 5
+	}, 5*time.Second, 25*time.Millisecond)
+	slave.RequireQuery("GET after_truncate 600", "ok|1")
+}
+
 func TestTCPDatabaseSlaveStreamsReplicatedQuotaEvents(t *testing.T) {
 	masterWALDir := t.TempDir()
 	masterDumpDir := t.TempDir()
@@ -802,7 +846,7 @@ func TestTCPDatabaseFlushDBRemovesOldDumpBeforeRecovery(t *testing.T) {
 	second.RequireQuery("GET dumped 60", "ok|0")
 }
 
-func TestTCPDatabaseTruncateClearsMemoryDumpAndWAL(t *testing.T) {
+func TestTCPDatabaseTruncateClearsMemoryDumpAndLeavesReplicatedWALMarker(t *testing.T) {
 	walDir := t.TempDir()
 	dumpDir := t.TempDir()
 
@@ -821,7 +865,12 @@ func TestTCPDatabaseTruncateClearsMemoryDumpAndWAL(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	walFiles, err := filepath.Glob(filepath.Join(walDir, "wal_*.log*"))
 	require.NoError(t, err)
-	require.Empty(t, walFiles)
+	require.Len(t, walFiles, 1)
+	logs, err := wal.NewFSReader(walDir, first.logger).ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint32(compute.TruncateCommandID), logs[0].CommandId)
+	require.Equal(t, uint64(3), logs[0].LSN)
 	_, err = os.Stat(filepath.Join(walDir, "last_flushdb_lsn.meta"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 	first.Close()

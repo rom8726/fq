@@ -106,7 +106,7 @@ type WAL interface {
 	QuotaDelete(ctx context.Context, txCtx database.TxContext, name string) tools.FutureError
 	QuotaDeleteAsync(ctx context.Context, txCtx database.TxContext, name string)
 	FlushDB(ctx context.Context, txCtx database.TxContext) tools.FutureError
-	Truncate(ctx context.Context) tools.FutureError
+	Truncate(ctx context.Context, txCtx database.TxContext) tools.FutureError
 	TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (lastLSN uint64, err error)
 }
 
@@ -493,13 +493,14 @@ func (s *Storage) FlushDB(ctx context.Context) error {
 }
 
 func (s *Storage) Truncate(ctx context.Context) error {
+	txCtx := s.makeTxContext()
 	if s.dumper != nil {
 		if err := s.dumper.Truncate(ctx); err != nil {
 			return err
 		}
 	}
 	if s.wal != nil {
-		future := s.wal.Truncate(ctx)
+		future := s.wal.Truncate(ctx, txCtx)
 		if err := future.Get(); err != nil {
 			return err
 		}
@@ -507,7 +508,6 @@ func (s *Storage) Truncate(ctx context.Context) error {
 
 	s.engine.FlushDB()
 	s.dumpTx.Store(0)
-	s.tx.Store(0)
 
 	return nil
 }

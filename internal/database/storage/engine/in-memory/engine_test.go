@@ -102,6 +102,41 @@ func TestEngineAppliesWALChunkConcurrentlyBeforeAck(t *testing.T) {
 	require.Equal(t, database.ValueType(1), value)
 }
 
+func TestEngineAppliesTruncateWALChunkBeforeAck(t *testing.T) {
+	walStream := make(chan wal.Chunk, 1)
+	logger := zerolog.Nop()
+	engine, err := NewEngine(HashTableBuilder, 1, &logger, walStream, nil)
+	require.NoError(t, err)
+	defer close(walStream)
+
+	key := database.BatchKey{
+		BatchSize:    60,
+		BatchSizeStr: "60",
+		Key:          "key",
+	}
+	now := strconv.FormatInt(time.Now().Unix(), 16)
+	applied := make(chan error, 1)
+
+	walStream <- wal.Chunk{
+		Logs: []*wal.LogData{
+			{
+				LSN:       1,
+				CommandId: uint32(compute.IncrCommandID),
+				Arguments: []string{key.Key, key.BatchSizeStr, now},
+			},
+			{
+				LSN:       2,
+				CommandId: uint32(compute.TruncateCommandID),
+			},
+		},
+		Applied: applied,
+	}
+
+	require.NoError(t, requireAck(t, applied))
+	_, found := engine.Get(key)
+	require.False(t, found)
+}
+
 func TestEngineRLimitFixedWindowDoesNotExceedLimitConcurrently(t *testing.T) {
 	logger := zerolog.Nop()
 	engine, err := NewEngine(HashTableBuilder, 1, &logger, nil, nil)
