@@ -17,12 +17,12 @@ RUN go build --ldflags "-w -s -extldflags -static \
     -X 'github.com/fq-db/fq/internal/version.Date=${BUILD_DATE}'" -o ./bin/fq-cli ./cmd/cli/
 
 FROM alpine:latest
-WORKDIR /app
+WORKDIR /var/lib/fq
+RUN mkdir -p /var/lib/fq/fq_data/wal /var/lib/fq/certs /etc/fq
+RUN chown nobody: /var/lib/fq -R
 COPY --from=build /go/src/github.com/fq-db/fq/bin/fq ./fq
 COPY --from=build /go/src/github.com/fq-db/fq/bin/fq-cli ./fq-cli
-COPY --from=build /go/src/github.com/fq-db/fq/config.yml ./config.yml
-RUN mkdir -p /app/fq_data/wal
-RUN chown nobody: /app -R
+COPY --from=build /go/src/github.com/fq-db/fq/config.yml /etc/fq/config.yml
 
 USER nobody
-CMD ["/app/fq"]
+ENTRYPOINT ["/var/lib/fq/fq"]

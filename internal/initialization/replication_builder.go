@@ -2,6 +2,7 @@ package initialization
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -41,6 +42,11 @@ func CreateReplica(
 		return nil, errors.New("replica type is incorrect")
 	}
 
+	secret := replicationCfg.Auth.ResolvedSecret()
+	if secret.Empty() {
+		return nil, errors.New("replication auth secret is required")
+	}
+
 	if replicationCfg.MasterAddress != "" {
 		masterAddress = replicationCfg.MasterAddress
 	}
@@ -61,22 +67,40 @@ func CreateReplica(
 	idleTimeout := syncInterval * 3
 
 	if replicaType == config.ReplicaTypeMaster {
-		server, err := network.NewTCPServer(masterAddress, maxReplicasNumber, maxMessageSize, idleTimeout, logger)
+		serverTLS, err := replicationCfg.TLS.Options().ServerConfig()
+		if err != nil {
+			return nil, fmt.Errorf("replication tls: %w", err)
+		}
+
+		var options []network.ServerOption
+		if serverTLS != nil {
+			options = append(options, network.WithTLS(serverTLS))
+		}
+
+		server, err := network.NewTCPServer(
+			masterAddress, maxReplicasNumber, maxMessageSize, idleTimeout, logger, options...,
+		)
 		if err != nil {
 			return nil, err
 		}
 
-		return replication.NewMaster(server, walDirectory, dumperSrv, logger)
+		return replication.NewMaster(server, walDirectory, dumperSrv, secret, logger)
+	}
+
+	clientTLS, err := replicationCfg.TLS.Options().ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("replication tls: %w", err)
 	}
 
 	// Create client factory for reconnection support
-	clientFactory := replication.NewTCPClientFactory(masterAddress, maxMessageSize, idleTimeout)
+	clientFactory := replication.NewTCPClientFactory(masterAddress, maxMessageSize, idleTimeout, clientTLS)
 
 	fsReader := wal.NewFSReader(walDirectory, logger)
 
 	return replication.NewSlaveWithFactory(
 		clientFactory,
 		replicationCfg.ReplicaID,
+		secret,
 		masterAddress,
 		fsReader,
 		walStream,

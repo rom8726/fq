@@ -27,6 +27,7 @@ const (
 	scanQueryArgumentsNumber     = 2
 	pscanQueryArgumentsNumber    = 3
 	inspectQueryArgumentsNumber  = -5
+	authQueryArgumentsNumber     = 1
 )
 
 var queryArgumentsNumber = map[CommandID]int{
@@ -47,6 +48,7 @@ var queryArgumentsNumber = map[CommandID]int{
 	ScanCommandID:     scanQueryArgumentsNumber,
 	PScanCommandID:    pscanQueryArgumentsNumber,
 	InspectCommandID:  inspectQueryArgumentsNumber,
+	AuthCommandID:     authQueryArgumentsNumber,
 }
 
 var (

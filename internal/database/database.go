@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/security"
 )
 
 const (
@@ -130,7 +131,7 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write func([]byte) error) error {
 	if d.logger.GetLevel() == zerolog.DebugLevel {
 		d.logger.Debug().
-			Str("query", queryStr).
+			Str("query", redactQuery(queryStr)).
 			Msg("handling query")
 	}
 
@@ -149,6 +150,21 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 
 	query, err := d.computeLayer.HandleQuery(ctx, queryStr)
 	if err != nil {
+		return write(appendErrorMsg(responseBuffer.buf[:0], err))
+	}
+
+	session := security.SessionFrom(ctx)
+
+	if query.CommandID() == compute.AuthCommandID {
+		authResponse, authErr := d.handleAuthQuery(session, query, responseBuffer.buf[:0])
+		if authErr != nil {
+			return authErr
+		}
+
+		return write(authResponse)
+	}
+
+	if err := session.Authorize(commandRole(query)); err != nil {
 		return write(appendErrorMsg(responseBuffer.buf[:0], err))
 	}
 

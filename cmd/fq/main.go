@@ -18,7 +18,7 @@ import (
 
 const (
 	loggerTimestampFormat = "2006-01-02 15:04:05"
-	defaultConfigPath     = "config.yml"
+	defaultConfigPath     = "/etc/fq/config.yml"
 )
 
 func main() {
@@ -28,16 +28,14 @@ func main() {
 		return
 	}
 
-	interactive := flag.Bool("i", false, "start in interactive mode (split-pane log + embedded CLI)")
-	flag.Parse()
-
-	configPath := defaultConfigPath
-	if flag.NArg() > 0 {
-		configPath = flag.Arg(0)
+	opts, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
 
-	if *interactive {
-		if err := runInteractive(configPath); err != nil {
+	if opts.interactive {
+		if err := runInteractive(opts.configPath); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -46,10 +44,31 @@ func main() {
 	}
 
 	console := consoleLogger()
-	if err := run(console, configPath); err != nil {
+	if err := run(console, opts.configPath); err != nil {
 		console.Error().Msg(err.Error())
 		os.Exit(1)
 	}
+}
+
+type options struct {
+	configPath  string
+	interactive bool
+}
+
+func parseArgs(args []string) (options, error) {
+	flags := flag.NewFlagSet("fq", flag.ContinueOnError)
+	interactive := flags.Bool("i", false, "start in interactive mode (split-pane log + embedded CLI)")
+	configPath := flags.String("c", defaultConfigPath, "path to config file")
+
+	if err := flags.Parse(args); err != nil {
+		return options{}, err
+	}
+
+	if flags.NArg() > 0 {
+		*configPath = flags.Arg(0)
+	}
+
+	return options{configPath: *configPath, interactive: *interactive}, nil
 }
 
 func run(console *zerolog.Logger, configPath string) error {
@@ -104,6 +123,11 @@ func runInteractive(configPath string) error {
 		return fmt.Errorf("parse max message size: %w", err)
 	}
 
+	token, err := initializer.IssueEphemeralAdminToken()
+	if err != nil {
+		return fmt.Errorf("issue interactive token: %w", err)
+	}
+
 	serverErr := make(chan error, 1)
 	go func() {
 		serverErr <- initializer.StartDatabase(ctx)
@@ -113,6 +137,8 @@ func runInteractive(configPath string) error {
 		Address:        cfg.Network.Address,
 		MaxMessageSize: maxMessageSize,
 		IdleTimeout:    cfg.Network.IdleTimeout,
+		Token:          token,
+		TLS:            cfg.Network.TLS.ClientOptions(),
 		Logger:         logger,
 	})
 

@@ -26,7 +26,7 @@ func (p *Parser) ParseQuery(_ context.Context, query string) ([]string, error) {
 
 	if p.logger.GetLevel() == zerolog.DebugLevel {
 		p.logger.Debug().
-			Strs("tokens", tokens).
+			Strs("tokens", redactAuthTokens(tokens)).
 			Msg("query parsed")
 	}
 
@@ -55,7 +55,7 @@ func (p *Parser) ParseAndAnalyzeQuery(_ context.Context, query string) (Query, e
 
 	if p.logger.GetLevel() == zerolog.DebugLevel {
 		p.logger.Debug().
-			Strs("tokens", append([]string{command}, result.Arguments()...)).
+			Strs("tokens", redactAuthTokens(append([]string{command}, result.Arguments()...))).
 			Msg("query parsed")
 		p.logger.Debug().Msg("query analyzed")
 	}
@@ -105,9 +105,41 @@ func (s *tokenScanner) scanQuery(commandID CommandID) (Query, error) {
 		return s.scanMDelQuery()
 	case InspectCommandID:
 		return s.scanInspectQuery()
+	case AuthCommandID:
+		return s.scanAuthQuery()
 	default:
 		return Query{}, ErrInvalidCommand
 	}
+}
+
+func (s *tokenScanner) scanAuthQuery() (Query, error) {
+	token, ok := s.nextOpaque()
+	if !ok {
+		return Query{}, ErrInvalidArguments
+	}
+
+	if _, more := s.nextOpaque(); more {
+		return Query{}, ErrInvalidArguments
+	}
+
+	return NewQuery(AuthCommandID, []string{token}), nil
+}
+
+func (s *tokenScanner) nextOpaque() (string, bool) {
+	for s.pos < len(s.query) && isWhiteSpace(s.query[s.pos]) {
+		s.pos++
+	}
+
+	if s.pos == len(s.query) {
+		return "", false
+	}
+
+	start := s.pos
+	for s.pos < len(s.query) && !isWhiteSpace(s.query[s.pos]) {
+		s.pos++
+	}
+
+	return s.query[start:s.pos], true
 }
 
 func (s *tokenScanner) scanInspectQuery() (Query, error) {
@@ -295,6 +327,8 @@ func commandIDFromToken(token string) CommandID {
 		return PScanCommandID
 	case asciiEqualFold(token, InspectCommand):
 		return InspectCommandID
+	case asciiEqualFold(token, AuthCommand):
+		return AuthCommandID
 	default:
 		return UnknownCommandID
 	}
@@ -327,4 +361,12 @@ func asciiEqualFold(left, right string) bool {
 	}
 
 	return true
+}
+
+func redactAuthTokens(tokens []string) []string {
+	if len(tokens) < 2 || !asciiEqualFold(tokens[0], AuthCommand) {
+		return tokens
+	}
+
+	return tokens[:1]
 }

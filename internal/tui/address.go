@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/fq-db/fq/internal/dbcli"
 	"github.com/fq-db/fq/internal/network"
 )
 
@@ -24,9 +25,7 @@ func dialAddress(address string) string {
 
 func dialWithRetry(
 	ctx context.Context,
-	address string,
-	maxMessageSize int,
-	idleTimeout time.Duration,
+	options dbcli.ConnectOptions,
 	maxWait time.Duration,
 	retryInterval time.Duration,
 ) (*network.TCPClient, error) {
@@ -34,14 +33,14 @@ func dialWithRetry(
 	var lastErr error
 
 	for {
-		client, err := network.NewTCPClient(address, maxMessageSize, idleTimeout)
+		client, err := dbcli.Connect(ctx, options)
 		if err == nil {
 			return client, nil
 		}
 		lastErr = err
 
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("connect to %s: %w", address, lastErr)
+			return nil, fmt.Errorf("connect to %s: %w", options.Address, lastErr)
 		}
 
 		select {

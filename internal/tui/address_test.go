@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
+	"github.com/fq-db/fq/internal/dbcli"
 	"github.com/fq-db/fq/internal/network"
 )
 
@@ -49,7 +50,12 @@ func TestDialWithRetrySucceedsOnceServerIsUp(t *testing.T) {
 		})
 	}()
 
-	client, err := dialWithRetry(context.Background(), address, 4096, time.Minute, 2*time.Second, 20*time.Millisecond)
+	client, err := dialWithRetry(
+		context.Background(),
+		dbcli.ConnectOptions{Address: address, MaxMessageSize: 4096, IdleTimeout: time.Minute},
+		2*time.Second,
+		20*time.Millisecond,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, client)
 	_ = client.Close()
@@ -63,6 +69,11 @@ func TestDialWithRetryGivesUpAfterMaxWait(t *testing.T) {
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())
 
-	_, err = dialWithRetry(context.Background(), address, 4096, time.Minute, 100*time.Millisecond, 10*time.Millisecond)
+	_, err = dialWithRetry(
+		context.Background(),
+		dbcli.ConnectOptions{Address: address, MaxMessageSize: 4096, IdleTimeout: time.Minute},
+		100*time.Millisecond,
+		10*time.Millisecond,
+	)
 	require.Error(t, err)
 }

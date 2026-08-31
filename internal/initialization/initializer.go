@@ -2,6 +2,8 @@ package initialization
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/fq-db/fq/internal/inspect"
 	"github.com/fq-db/fq/internal/network"
 	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/security"
 )
 
 type Initializer struct {
@@ -34,6 +37,7 @@ type Initializer struct {
 	cfg            config.Config
 	maxMessageSize int
 	observability  *observability.Server
+	registry       *security.Registry
 	startedAt      time.Time
 }
 
@@ -69,7 +73,12 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 		return nil, fmt.Errorf("failed to initialize engine: %w", err)
 	}
 
-	tcpServer, err := CreateNetwork(cfg.Network, logger)
+	registry, err := BuildRegistry(cfg.Network.Auth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build auth registry: %w", err)
+	}
+
+	tcpServer, err := CreateNetwork(cfg.Network, registry, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize network: %w", err)
 	}
@@ -104,12 +113,31 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 		cfg:            cfg,
 		maxMessageSize: maxMessageSize,
 		observability:  observability.NewServer(cfg.Observability.Address, cfg.Observability.Pprof, logger),
+		registry:       registry,
 		startedAt:      startedAt,
 	}
 
 	initializer.initializeReplication(replica)
 
 	return initializer, nil
+}
+
+func (i *Initializer) IssueEphemeralAdminToken() (string, error) {
+	if !i.registry.Enabled() {
+		return "", nil
+	}
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate ephemeral token: %w", err)
+	}
+
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	if err := i.registry.Add(token, security.RoleAdmin); err != nil {
+		return "", fmt.Errorf("register ephemeral token: %w", err)
+	}
+
+	return token, nil
 }
 
 func (i *Initializer) StartDatabase(ctx context.Context) error {

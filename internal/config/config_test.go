@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/fq-db/fq/internal/security"
 )
 
 func TestValidateAcceptsValidConfig(t *testing.T) {
@@ -412,6 +414,10 @@ func validConfig() Config {
 			ReplicaID:     "replica-test",
 			MasterAddress: "localhost:1946",
 			SyncInterval:  time.Second,
+			Auth: &ReplicationAuthConfig{
+				TokenEnv: "FQ_TEST_REPLICATION",
+				secret:   security.Secret("replication-token-value"),
+			},
 		},
 	}
 }

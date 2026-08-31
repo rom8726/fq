@@ -15,7 +15,7 @@ const defaultFlushingBatchSize = 100
 const defaultFlushingBatchTimeout = time.Millisecond * 10
 const defaultWALQueueCapacityMultiplier = 4
 const defaultMaxSegmentSize = 10 << 20
-const defaultWALDataDirectory = "/app/fq_data/wal"
+const defaultWALDataDirectory = "/var/lib/fq/data/wal"
 
 func CreateWAL(
 	cfg *config.WALConfig,

@@ -33,7 +33,7 @@ func (e *walSegmentOffsetMismatchError) Error() string {
 }
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
-	request := NewWALRequest(s.replicaID, s.lastSegmentName, s.lastSegmentOffset, s.lastAppliedLSN)
+	request := NewWALRequest(s.secret.Reveal(), s.replicaID, s.lastSegmentName, s.lastSegmentOffset, s.lastAppliedLSN)
 
 	requestData, err := Encode(&request)
 	if err != nil {

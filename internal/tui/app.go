@@ -13,6 +13,7 @@ import (
 
 	"github.com/fq-db/fq/internal/dbcli"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/security"
 )
 
 const (
@@ -33,6 +34,8 @@ type Config struct {
 	Address        string
 	MaxMessageSize int
 	IdleTimeout    time.Duration
+	Token          string
+	TLS            security.TLSOptions
 	Logger         *zerolog.Logger
 }
 
@@ -142,9 +145,13 @@ func (a *App) Run(ctx context.Context, cancel context.CancelFunc, cfg Config) er
 func (a *App) connectAndServe(ctx context.Context, cancel context.CancelFunc, cfg Config) {
 	client, err := dialWithRetry(
 		ctx,
-		dialAddress(cfg.Address),
-		cfg.MaxMessageSize,
-		cfg.IdleTimeout,
+		dbcli.ConnectOptions{
+			Address:        dialAddress(cfg.Address),
+			MaxMessageSize: cfg.MaxMessageSize,
+			IdleTimeout:    cfg.IdleTimeout,
+			Token:          cfg.Token,
+			TLS:            cfg.TLS,
+		},
 		connectMaxWait,
 		connectRetryInterval,
 	)

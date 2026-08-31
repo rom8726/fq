@@ -11,6 +11,7 @@ import (
 
 	"github.com/fq-db/fq/internal/database"
 	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/security"
 )
 
 func TestSynchronizeDumpWaitsForEngineAckBeforeMarkingApplied(t *testing.T) {
@@ -134,7 +135,16 @@ func newTestSlave(t *testing.T, client TCPClient, dumpStream chan<- database.Dum
 
 	logger := zerolog.Nop()
 	slave, err := NewSlave(
-		client, "replica-test", ":1946", testWALReader{}, nil, dumpStream, t.TempDir(), time.Millisecond, &logger,
+		client,
+		"replica-test",
+		security.Secret("replication-token-value"),
+		":1946",
+		testWALReader{},
+		nil,
+		dumpStream,
+		t.TempDir(),
+		time.Millisecond,
+		&logger,
 	)
 	require.NoError(t, err)
 

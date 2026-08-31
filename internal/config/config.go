@@ -12,6 +12,7 @@ import (
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"gopkg.in/yaml.v3"
 
+	"github.com/fq-db/fq/internal/security"
 	"github.com/fq-db/fq/internal/tools"
 )
 
@@ -70,6 +71,88 @@ type NetworkConfig struct {
 	MaxConnections int           `yaml:"max_connections"`
 	MaxMessageSize string        `yaml:"max_message_size"`
 	IdleTimeout    time.Duration `yaml:"idle_timeout"`
+	Auth           AuthConfig    `yaml:"auth"`
+	TLS            TLSConfig     `yaml:"tls"`
+}
+
+type AuthConfig struct {
+	Tokens []TokenConfig `yaml:"tokens"`
+}
+
+//nolint:tagliatelle // it's ok
+type TokenConfig struct {
+	Role      string `yaml:"role"`
+	TokenEnv  string `yaml:"token_env"`
+	TokenFile string `yaml:"token_file"`
+
+	role   security.Role
+	secret security.Secret
+}
+
+func (cfg TokenConfig) ResolvedRole() security.Role {
+	return cfg.role
+}
+
+func (cfg TokenConfig) ResolvedSecret() security.Secret {
+	return cfg.secret
+}
+
+//nolint:tagliatelle // it's ok
+type ReplicationAuthConfig struct {
+	TokenEnv  string `yaml:"token_env"`
+	TokenFile string `yaml:"token_file"`
+
+	secret security.Secret
+}
+
+func (cfg *ReplicationAuthConfig) ResolvedSecret() security.Secret {
+	if cfg == nil {
+		return ""
+	}
+
+	return cfg.secret
+}
+
+//nolint:tagliatelle // it's ok
+type TLSConfig struct {
+	CertFile     string `yaml:"cert_file"`
+	KeyFile      string `yaml:"key_file"`
+	ClientCAFile string `yaml:"client_ca_file"`
+	CAFile       string `yaml:"ca_file"`
+	ServerName   string `yaml:"server_name"`
+	SkipVerify   bool   `yaml:"skip_verify"`
+	MinVersion   string `yaml:"min_version"`
+}
+
+func (cfg TLSConfig) Options() security.TLSOptions {
+	return security.TLSOptions{
+		CertFile:     cfg.CertFile,
+		KeyFile:      cfg.KeyFile,
+		ClientCAFile: cfg.ClientCAFile,
+		CAFile:       cfg.CAFile,
+		ServerName:   cfg.ServerName,
+		SkipVerify:   cfg.SkipVerify,
+		MinVersion:   cfg.MinVersion,
+	}
+}
+
+func (cfg TLSConfig) ClientOptions() security.TLSOptions {
+	options := security.TLSOptions{
+		CAFile:     cfg.CAFile,
+		ServerName: cfg.ServerName,
+		SkipVerify: cfg.SkipVerify,
+		MinVersion: cfg.MinVersion,
+	}
+
+	if options.CAFile == "" && !options.SkipVerify {
+		options.CAFile = cfg.CertFile
+	}
+
+	return options
+}
+
+func (cfg TLSConfig) Enabled() bool {
+	return !cfg.Options().Empty()
 }
 
 func (cfg NetworkConfig) ParseMaxMessageSize() (int, error) {
@@ -132,11 +215,14 @@ type DumpConfig struct {
 	Directory string        `yaml:"directory"`
 }
 
+//nolint:tagliatelle // it's ok
 type ReplicationConfig struct {
-	ReplicaType   string        `yaml:"replica_type"`
-	ReplicaID     string        `yaml:"replica_id"`
-	MasterAddress string        `yaml:"master_address"`
-	SyncInterval  time.Duration `yaml:"sync_interval"`
+	ReplicaType   string                 `yaml:"replica_type"`
+	ReplicaID     string                 `yaml:"replica_id"`
+	MasterAddress string                 `yaml:"master_address"`
+	SyncInterval  time.Duration          `yaml:"sync_interval"`
+	Auth          *ReplicationAuthConfig `yaml:"auth"`
+	TLS           TLSConfig              `yaml:"tls"`
 }
 
 func Load(path string) (Config, error) {
@@ -163,7 +249,89 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("validate config: %w", err)
 	}
 
+	if err := resolveSecrets(&cfg); err != nil {
+		return Config{}, fmt.Errorf("resolve secrets: %w", err)
+	}
+
 	return cfg, nil
+}
+
+func resolveSecrets(cfg *Config) error {
+	seen := make(map[security.Secret]struct{}, len(cfg.Network.Auth.Tokens))
+
+	for i := range cfg.Network.Auth.Tokens {
+		token := &cfg.Network.Auth.Tokens[i]
+
+		role, err := security.ParseRole(token.Role)
+		if err != nil {
+			return fmt.Errorf("network auth token %d: %w", i, err)
+		}
+
+		secret, err := security.LoadSecret(token.TokenEnv, token.TokenFile)
+		if err != nil {
+			return fmt.Errorf("network auth token %d: %w", i, err)
+		}
+
+		if _, found := seen[secret]; found {
+			return fmt.Errorf("network auth token %d: %w", i, security.ErrDuplicateToken)
+		}
+
+		seen[secret] = struct{}{}
+		token.role = role
+		token.secret = secret
+	}
+
+	if cfg.Replication.Auth != nil {
+		secret, err := security.LoadSecret(cfg.Replication.Auth.TokenEnv, cfg.Replication.Auth.TokenFile)
+		if err != nil {
+			return fmt.Errorf("replication auth: %w", err)
+		}
+
+		cfg.Replication.Auth.secret = secret
+	}
+
+	return nil
+}
+
+func validateAuthConfig(cfg AuthConfig) error {
+	for i := range cfg.Tokens {
+		token := cfg.Tokens[i]
+
+		if _, err := security.ParseRole(token.Role); err != nil {
+			return fmt.Errorf("token %d: %w", i, err)
+		}
+
+		if (token.TokenEnv == "") == (token.TokenFile == "") {
+			return fmt.Errorf("token %d: %w", i, security.ErrSecretSourceAmbiguous)
+		}
+	}
+
+	return nil
+}
+
+func validateTLSConfig(cfg TLSConfig) error {
+	if (cfg.CertFile == "") != (cfg.KeyFile == "") {
+		return security.ErrTLSKeyPairIncomplete
+	}
+
+	switch cfg.MinVersion {
+	case "", "1.2", "1.3":
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", security.ErrTLSUnknownMinVersion, cfg.MinVersion)
+	}
+}
+
+func validateReplicationAuthConfig(cfg *ReplicationAuthConfig) error {
+	if cfg == nil {
+		return security.ErrSecretSourceAmbiguous
+	}
+
+	if (cfg.TokenEnv == "") == (cfg.TokenFile == "") {
+		return security.ErrSecretSourceAmbiguous
+	}
+
+	return nil
 }
 
 func decode(data []byte, cfg *Config) error {
@@ -215,6 +383,14 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("validate network section: %w", err)
 	}
 
+	if err := validateAuthConfig(cfg.Network.Auth); err != nil {
+		return fmt.Errorf("validate network auth section: %w", err)
+	}
+
+	if err := validateTLSConfig(cfg.Network.TLS); err != nil {
+		return fmt.Errorf("validate network tls section: %w", err)
+	}
+
 	err = validation.ValidateStruct(&cfg.Observability,
 		validation.Field(&cfg.Observability.Address, addressIfSetRule),
 	)
@@ -252,6 +428,16 @@ func validate(cfg *Config) error {
 	)
 	if err != nil {
 		return fmt.Errorf("validate replication section: %w", err)
+	}
+
+	if cfg.Replication.ReplicaType != "" {
+		if err := validateReplicationAuthConfig(cfg.Replication.Auth); err != nil {
+			return fmt.Errorf("validate replication auth section: %w", err)
+		}
+	}
+
+	if err := validateTLSConfig(cfg.Replication.TLS); err != nil {
+		return fmt.Errorf("validate replication tls section: %w", err)
 	}
 
 	if cfg.Replication.ReplicaType != "" && cfg.PersistenceMode() != PersistenceModeWALAndDump {

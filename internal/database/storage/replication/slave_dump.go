@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Slave) synchronizeDump(ctx context.Context) error {
-	request := NewDumpRequest(s.sessionUUID, s.dumpLastSegmentNumber)
+	request := NewDumpRequest(s.secret.Reveal(), s.sessionUUID, s.dumpLastSegmentNumber)
 
 	requestData, err := Encode(&request)
 	if err != nil {

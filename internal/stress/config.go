@@ -1,6 +1,8 @@
 package stress
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -10,6 +12,9 @@ import (
 
 const (
 	defaultMaxMessageSize = 64 << 10
+	//nolint:gosec // environment variable name, not a credential
+	replicationTokenEnv   = "FQ_STRESS_REPLICATION_TOKEN"
+	replicationTokenBytes = 24
 	defaultIdleTimeout    = time.Second
 )
 
@@ -48,6 +53,21 @@ type Environment struct {
 	SyncInterval   time.Duration
 	RepositoryDir  string
 	FQBinary       string
+
+	ReplicationToken string
+}
+
+func (env *Environment) ReplicationTokenEnv() string {
+	return replicationTokenEnv + "=" + env.ReplicationToken
+}
+
+func newReplicationToken() (string, error) {
+	raw := make([]byte, replicationTokenBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate replication token: %w", err)
+	}
+
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func NewEnvironment(opts Options) (*Environment, error) {
@@ -67,6 +87,11 @@ func NewEnvironment(opts Options) (*Environment, error) {
 		return nil, err
 	}
 
+	replicationToken, err := newReplicationToken()
+	if err != nil {
+		return nil, err
+	}
+
 	env := &Environment{
 		RootDir:        rootDir,
 		ConfigPath:     filepath.Join(rootDir, "config.yml"),
@@ -82,6 +107,8 @@ func NewEnvironment(opts Options) (*Environment, error) {
 		SyncInterval:   opts.SyncInterval,
 		RepositoryDir:  opts.RepositoryDir,
 		FQBinary:       opts.FQBinary,
+
+		ReplicationToken: replicationToken,
 	}
 	if env.DumpInterval <= 0 {
 		env.DumpInterval = time.Hour
@@ -207,14 +234,19 @@ func (env *Environment) replicationConfig() string {
 		return fmt.Sprintf(`replication:
   replica_type: master
   master_address: %q
-  sync_interval: %s`, env.MasterAddress, formatConfigDuration(env.SyncInterval))
+  sync_interval: %s
+  auth:
+    token_env: %s`, env.MasterAddress, formatConfigDuration(env.SyncInterval), replicationTokenEnv)
 	}
 
 	return fmt.Sprintf(`replication:
   replica_type: slave
   replica_id: %q
   master_address: %q
-  sync_interval: %s`, env.ReplicaID, env.MasterAddress, formatConfigDuration(env.SyncInterval))
+  sync_interval: %s
+  auth:
+    token_env: %s`,
+		env.ReplicaID, env.MasterAddress, formatConfigDuration(env.SyncInterval), replicationTokenEnv)
 }
 
 func formatConfigDuration(duration time.Duration) string {

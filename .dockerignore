@@ -8,6 +8,7 @@
 app/data
 app/data-slave
 bin
+certs
 dist
 *.test
 *.out

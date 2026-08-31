@@ -9,6 +9,7 @@ import (
 )
 
 type Request struct {
+	AuthToken string
 	DumpRequest
 	WALRequest
 }
@@ -39,8 +40,9 @@ type WALResponse struct {
 	SegmentData       []byte
 }
 
-func NewDumpRequest(sessionUUID string, lastSegmentNumber uint64) Request {
+func NewDumpRequest(authToken, sessionUUID string, lastSegmentNumber uint64) Request {
 	return Request{
+		AuthToken: authToken,
 		DumpRequest: DumpRequest{
 			SessionUUID:       sessionUUID,
 			LastSegmentNumber: lastSegmentNumber,
@@ -48,8 +50,13 @@ func NewDumpRequest(sessionUUID string, lastSegmentNumber uint64) Request {
 	}
 }
 
-func NewWALRequest(replicaID, lastSegmentName string, segmentOffset int64, lastAppliedLSN uint64) Request {
+func NewWALRequest(
+	authToken, replicaID, lastSegmentName string,
+	segmentOffset int64,
+	lastAppliedLSN uint64,
+) Request {
 	return Request{
+		AuthToken: authToken,
 		WALRequest: WALRequest{
 			ReplicaID:       replicaID,
 			LastSegmentName: lastSegmentName,

@@ -18,6 +18,7 @@ import (
 	"github.com/fq-db/fq/internal/database"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/security"
 )
 
 type TCPClient interface {
@@ -52,6 +53,7 @@ type Slave struct {
 	clientFactory         TCPClientFactory
 	client                TCPClient
 	replicaID             string
+	secret                security.Secret
 	masterAddress         string
 	walReader             WALReader
 	walStream             chan<- wal.Chunk
@@ -119,6 +121,7 @@ func (s *Slave) Status() SlaveStatus {
 func NewSlave(
 	client TCPClient,
 	replicaID string,
+	secret security.Secret,
 	masterAddress string,
 	walReader WALReader,
 	walStream chan<- wal.Chunk,
@@ -151,6 +154,7 @@ func NewSlave(
 	slave := &Slave{
 		client:            client,
 		replicaID:         replicaID,
+		secret:            secret,
 		masterAddress:     masterAddress,
 		walReader:         walReader,
 		walStream:         walStream,
@@ -179,6 +183,7 @@ func NewSlave(
 func NewSlaveWithFactory(
 	clientFactory TCPClientFactory,
 	replicaID string,
+	secret security.Secret,
 	masterAddress string,
 	walReader WALReader,
 	walStream chan<- wal.Chunk,
@@ -217,6 +222,7 @@ func NewSlaveWithFactory(
 		clientFactory:     clientFactory,
 		client:            client,
 		replicaID:         replicaID,
+		secret:            secret,
 		masterAddress:     masterAddress,
 		walReader:         walReader,
 		walStream:         walStream,

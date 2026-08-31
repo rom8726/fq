@@ -9,6 +9,17 @@ COMMIT ?= $(if $(GIT_COMMIT),$(GIT_COMMIT),unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GO_LDFLAGS = -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(BUILD_DATE)
 
+# Fixed tokens for local development only. Never reuse these anywhere else.
+FQ_ADMIN_TOKEN ?= dev-admin-3f9a21c7b45e
+FQ_RW_TOKEN ?= dev-rw-8c1d64e0a7b2
+FQ_RO_TOKEN ?= dev-ro-5b7e03f9c8d1
+FQ_SLAVE_ADMIN_TOKEN ?= dev-slave-admin-42a9c1
+FQ_SLAVE_RO_TOKEN ?= dev-slave-ro-7e30b8d5
+FQ_REPLICATION_TOKEN ?= dev-replication-9d24f6a1c3
+
+FQ_MASTER_ENV = FQ_ADMIN_TOKEN=$(FQ_ADMIN_TOKEN) FQ_RW_TOKEN=$(FQ_RW_TOKEN) FQ_RO_TOKEN=$(FQ_RO_TOKEN) FQ_REPLICATION_TOKEN=$(FQ_REPLICATION_TOKEN)
+FQ_SLAVE_ENV = FQ_SLAVE_ADMIN_TOKEN=$(FQ_SLAVE_ADMIN_TOKEN) FQ_SLAVE_RO_TOKEN=$(FQ_SLAVE_RO_TOKEN) FQ_REPLICATION_TOKEN=$(FQ_REPLICATION_TOKEN)
+
 .PHONY: build
 build: build-fq build-cli build-bench build-stress build-results
 
@@ -47,70 +58,89 @@ build-results:
 	@go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/fq-results ./cmd/results
 	@echo "-> Binary built: $(BIN_DIR)/fq-results"
 
+.PHONY: certs
+certs:
+	@echo "-> Generating development TLS certificates..."
+	@./scripts/gen-certs.sh
+
+.PHONY: certs-force
+certs-force:
+	@echo "-> Regenerating development TLS certificates..."
+	@CERT_FORCE=1 ./scripts/gen-certs.sh
+
+.PHONY: certs-clean
+certs-clean:
+	@echo "-> Removing development TLS certificates..."
+	@rm -rf ./certs
+
 .PHONY: run-server
 run-server:
 	@echo "-> Running fq server (master)..."
 	@mkdir -p ./fq_data/wal
-	@go run ./cmd/fq
+	@$(FQ_MASTER_ENV) go run ./cmd/fq -c ./config.yml
 
 .PHONY: run-interactive
 run-interactive:
 	@echo "-> Running fq server with interactive TUI..."
 	@mkdir -p ./fq_data/wal
-	@go run ./cmd/fq -i
+	@$(FQ_MASTER_ENV) go run ./cmd/fq -i -c ./config.yml
 
 .PHONY: run-slave
 run-slave:
 	@echo "-> Running fq server (slave replica)..."
 	@mkdir -p ./fq_data-slave/wal
-	@go run ./cmd/fq config-slave.yml
+	@$(FQ_SLAVE_ENV) go run ./cmd/fq -c ./config-slave.yml
 
 .PHONY: run-cli
 run-cli:
 	@echo "-> Running fq CLI client..."
-	@go run ./cmd/cli -address :1945
+	@go run ./cmd/cli -address :1945 -token $(FQ_ADMIN_TOKEN)
 
 .PHONY: run-cli-slave
 run-cli-slave:
 	@echo "-> Running fq CLI client for slave..."
-	@go run ./cmd/cli -address :1947
+	@go run ./cmd/cli -address :1947 -token $(FQ_SLAVE_ADMIN_TOKEN)
 
 .PHONY: run-bench
 run-bench:
 	@echo "-> Running fq benchmark..."
-	@go run ./cmd/bench -address :1945
+	@go run ./cmd/bench -address :1945 -token $(FQ_ADMIN_TOKEN)
 
 .PHONY: docker-run-interactive
 docker-run-interactive:
 	@echo "-> Running fq Docker image with interactive TUI..."
-	@docker run --rm -it \
+	@docker run --rm -it --entrypoint /var/lib/fq/fq \
 		-p 1945:1945 \
 		-p 1946:1946 \
 		-p 2112:2112 \
+		-e FQ_ADMIN_TOKEN=$(FQ_ADMIN_TOKEN) \
+		-e FQ_RW_TOKEN=$(FQ_RW_TOKEN) \
+		-e FQ_RO_TOKEN=$(FQ_RO_TOKEN) \
+		-e FQ_REPLICATION_TOKEN=$(FQ_REPLICATION_TOKEN) \
 		ghcr.io/fq-db/fq:latest -i
 
 .PHONY: bench-smoke
 bench-smoke:
 	@echo "-> Running fq benchmark smoke profile..."
 	@mkdir -p ./benchmarks/results
-	@go run ./cmd/bench -profile ./benchmarks/profiles/smoke.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/smoke.yml -token $(FQ_ADMIN_TOKEN)
 
 .PHONY: bench-release
 bench-release:
 	@echo "-> Running fq benchmark release profile (uniform counter)..."
 	@mkdir -p ./benchmarks/results
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-uniform-counter.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-uniform-counter.yml -token $(FQ_ADMIN_TOKEN)
 
 .PHONY: bench-release-all
 bench-release-all:
 	@echo "-> Running fq benchmark release profiles..."
 	@mkdir -p ./benchmarks/results
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-hot-counter.yml
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-uniform-counter.yml
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-fw.yml
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw-uniform.yml
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw-zipfian.yml
-	@go run ./cmd/bench -profile ./benchmarks/profiles/release-tb.yml
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-hot-counter.yml -token $(FQ_ADMIN_TOKEN)
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-uniform-counter.yml -token $(FQ_ADMIN_TOKEN)
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-fw.yml -token $(FQ_ADMIN_TOKEN)
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw-uniform.yml -token $(FQ_ADMIN_TOKEN)
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-sw-zipfian.yml -token $(FQ_ADMIN_TOKEN)
+	@go run ./cmd/bench -profile ./benchmarks/profiles/release-tb.yml -token $(FQ_ADMIN_TOKEN)
 
 .PHONY: stress-smoke
 stress-smoke:

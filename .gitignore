@@ -25,6 +25,9 @@ go.work.sum
 bin/
 dist/
 
+# TLS material
+certs/
+
 # Runtime data
 app/data/
 app/data-slave/

@@ -2,11 +2,19 @@ package replication
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog"
+
+	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/security"
 )
+
+var errReplicationUnauthorized = errors.New("replication request is not authorized")
+
+const authFailurePort = "replication"
 
 type TCPServer interface {
 	Start(context.Context, func(context.Context, []byte) ([]byte, error)) error
@@ -17,6 +25,7 @@ type Master struct {
 	walDirectory string
 	dumpProvider DumpProvider
 	tracker      *ReplicaTracker
+	secret       security.Secret
 	logger       *zerolog.Logger
 }
 
@@ -24,6 +33,7 @@ func NewMaster(
 	server TCPServer,
 	walDirectory string,
 	dumpProvider DumpProvider,
+	secret security.Secret,
 	logger *zerolog.Logger,
 ) (*Master, error) {
 	if server == nil {
@@ -39,8 +49,17 @@ func NewMaster(
 		walDirectory: walDirectory,
 		dumpProvider: dumpProvider,
 		tracker:      NewReplicaTracker(),
+		secret:       secret,
 		logger:       logger,
 	}, nil
+}
+
+func (m *Master) authorize(token string) bool {
+	if m.secret.Empty() {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare([]byte(token), []byte(m.secret.Reveal())) == 1
 }
 
 func (m *Master) ReplicaCursors() []ReplicaCursor {
@@ -81,6 +100,14 @@ func (m *Master) Start(ctx context.Context) error {
 				Int("request_size", len(requestData)).
 				Msg("failed to decode replication request, connection may be closing")
 			return nil, fmt.Errorf("failed to decode replication request: %w", err)
+		}
+
+		if !m.authorize(request.AuthToken) {
+			observability.IncAuthFailures(authFailurePort)
+
+			m.logger.Warn().Msg("replication request rejected: invalid auth token")
+
+			return nil, errReplicationUnauthorized
 		}
 
 		if request.SessionUUID != "" {

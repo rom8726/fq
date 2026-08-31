@@ -13,7 +13,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/fq-db/fq/internal/dbcli"
-	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/security"
 	"github.com/fq-db/fq/internal/tools"
 	"github.com/fq-db/fq/internal/version"
 )
@@ -30,6 +30,12 @@ func main() {
 	address := flag.String("address", ":1945", "Address of the database")
 	idleTimeout := flag.Duration("idle_timeout", time.Minute, "Idle timeout for connection")
 	maxMessageSizeStr := flag.String("max_message_size", "4KB", "Max message size for connection")
+	token := flag.String("token", os.Getenv("FQ_TOKEN"), "Authentication token")
+	tlsCA := flag.String("tls_ca", "", "CA certificate file used to verify the server")
+	tlsCert := flag.String("tls_cert", "", "Client certificate file for mutual TLS")
+	tlsKey := flag.String("tls_key", "", "Client key file for mutual TLS")
+	tlsServerName := flag.String("tls_server_name", "", "Expected server name in the certificate")
+	tlsSkipVerify := flag.Bool("tls_skip_verify", false, "Skip server certificate verification")
 	flag.Parse()
 
 	logger := consoleLogger()
@@ -38,7 +44,19 @@ func main() {
 		logger.Fatal().Err(err).Msg("failed to parse max message size")
 	}
 
-	client, err := network.NewTCPClient(*address, maxMessageSize, *idleTimeout)
+	client, err := dbcli.Connect(context.Background(), dbcli.ConnectOptions{
+		Address:        *address,
+		MaxMessageSize: maxMessageSize,
+		IdleTimeout:    *idleTimeout,
+		Token:          *token,
+		TLS: security.TLSOptions{
+			CAFile:     *tlsCA,
+			CertFile:   *tlsCert,
+			KeyFile:    *tlsKey,
+			ServerName: *tlsServerName,
+			SkipVerify: *tlsSkipVerify,
+		},
+	})
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to connect with server")
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fq-db/fq/internal/database"
 	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/security"
 )
 
 func TestSaveWALChunkAppendsAtOffset(t *testing.T) {
@@ -198,6 +199,7 @@ func TestNewSlaveInitializesCursorOffsetFromLastLocalSegment(t *testing.T) {
 	slave, err := NewSlave(
 		client,
 		"replica-1",
+		security.Secret("replication-token-value"),
 		":1946",
 		scriptedWALReader{},
 		make(chan wal.Chunk, 1),

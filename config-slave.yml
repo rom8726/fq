@@ -3,6 +3,10 @@ network:
   max_connections: 1000
   max_message_size: 4096
   idle_timeout: 10m
+  auth:
+    tokens:
+      - { role: admin, token_env: FQ_SLAVE_ADMIN_TOKEN }
+      - { role: ro, token_env: FQ_SLAVE_RO_TOKEN }
 persistence:
   mode: wal_and_dump
 observability:
@@ -30,5 +34,7 @@ replication:
   replica_id: "replica-1"
   master_address: ":1946"
   sync_interval: 1s
+  auth:
+    token_env: FQ_REPLICATION_TOKEN
 logging:
   level: info

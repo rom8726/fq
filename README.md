@@ -21,6 +21,7 @@ See last benchmark reports: [benchmarks/reports](benchmarks/reports)
 - [Features](#features)
 - [Installation](#installation)
 - [Commands](#commands)
+- [Security](#security)
 - [Quick Start](#quick-start)
 - [Benchmarking](#benchmarking)
 - [Stress testing](#stress-testing)
@@ -56,6 +57,7 @@ docker run --rm \
   -p 1945:1945 \
   -p 1946:1946 \
   -p 2112:2112 \
+  -e FQ_ADMIN_TOKEN -e FQ_RW_TOKEN -e FQ_RO_TOKEN -e FQ_REPLICATION_TOKEN \
   ghcr.io/fq-db/fq:latest
 ```
 
@@ -66,8 +68,9 @@ docker run --rm \
   -p 1945:1945 \
   -p 1946:1946 \
   -p 2112:2112 \
-  -v "$PWD/config.yml:/app/config.yml:ro" \
-  -v "$PWD/fq_data:/app/fq_data" \
+  -e FQ_ADMIN_TOKEN -e FQ_RW_TOKEN -e FQ_RO_TOKEN -e FQ_REPLICATION_TOKEN \
+  -v "$PWD/config.yml:/etc/fq/config.yml:ro" \
+  -v "$PWD/fq_data:/var/lib/fq/fq_data" \
   ghcr.io/fq-db/fq:latest
 ```
 
@@ -414,6 +417,7 @@ MSGSIZE
 FLUSHDB
 TRUNCATE
 INSPECT [section]
+AUTH <token>
 ```
 
 - `INCR`: increments the counter for a key inside a time window
@@ -439,6 +443,192 @@ INSPECT [section]
 - `FLUSHDB`: clears all in-memory database state and persists a WAL recovery barrier
 - `TRUNCATE`: clears all in-memory database state and deletes dump/WAL persistence files
 - `INSPECT`: returns a JSON diagnostic snapshot of instance state; see [Diagnostics](#diagnostics)
+- `AUTH`: authenticates the connection and assigns it a role; see [Security](#security)
+
+## Security
+
+Both listening ports can require a shared secret, and both can be wrapped in TLS.
+
+### Client port authentication
+
+Configure one token per role under `network.auth`. Secrets are never written inline in
+YAML: each entry names either an environment variable or a file to read.
+
+```yaml
+network:
+  address: ":1945"
+  auth:
+    tokens:
+      - { role: admin, token_env: FQ_ADMIN_TOKEN }
+      - { role: rw, token_env: FQ_RW_TOKEN }
+      - { role: ro, token_file: /run/secrets/fq_ro_token }
+```
+
+A secret must be at least 16 characters after trimming surrounding whitespace, and no two
+entries may resolve to the same value.
+
+Once at least one token is configured, a connection must issue `AUTH <token>` before any
+other command:
+
+```text
+[fq]> GET user_42 60
+not authenticated
+[fq]> AUTH s3cret-admin-token-value
+1
+[fq]> GET user_42 60
+7
+```
+
+`AUTH` returns `ok|1` on success and `err|authentication failed` on a wrong token. Five
+failed attempts on one connection close it. The token is treated as an opaque literal, so
+base64 values containing `=` or `+` work as-is, and it is never written to the logs.
+
+Roles are hierarchical — `admin` includes `rw`, and `rw` includes `ro`:
+
+| Role | Commands |
+|---|---|
+| `ro` | `GET`, `MSGSIZE`, `SCAN`, `PSCAN`, `WATCH`, `STREAM`, `PSTREAM`, `QSTREAM`, `QPSTREAM`, `QUOTA INF` |
+| `rw` | everything in `ro`, plus `INCR`, `DEL`, `MDEL`, `RLIMIT`, and the remaining `QUOTA` subcommands |
+| `admin` | everything in `rw`, plus `FLUSHDB`, `TRUNCATE`, `INSPECT` |
+
+A command the current role does not cover returns `err|permission denied`.
+
+Leaving `network.auth` out entirely disables authentication on the client port and logs a
+warning at startup. The port is then open to anyone who can reach it, `FLUSHDB` and
+`TRUNCATE` included.
+
+### Replication authentication
+
+Replication has no unauthenticated mode. When `replication.replica_type` is set, a secret
+is required, and the server refuses to start without one:
+
+```yaml
+replication:
+  replica_type: master
+  master_address: ":1946"
+  sync_interval: 1s
+  auth:
+    token_env: FQ_REPLICATION_TOKEN
+```
+
+The master and its replicas share one secret. The replica sends it with every dump and WAL
+request; the master compares it in constant time and drops the connection on a mismatch, so
+a peer that cannot present the secret can neither register as a replica nor pull the dump.
+
+### TLS
+
+Both ports accept an optional `tls` block. Setting `client_ca_file` on a server turns on
+mutual TLS, requiring and verifying a client certificate.
+
+```yaml
+network:
+  tls:
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    client_ca_file: ./certs/ca.crt
+    min_version: "1.3"
+
+replication:
+  tls:
+    cert_file: ./certs/repl-server.crt
+    key_file: ./certs/repl-server.key
+    client_ca_file: ./certs/ca.crt
+```
+
+The `replication.tls` block is read according to `replica_type`. A master uses `cert_file`,
+`key_file`, `client_ca_file`, and `min_version`. A replica uses `ca_file`, `server_name`,
+`skip_verify`, and — for mutual TLS — its own `cert_file` and `key_file`.
+
+`min_version` accepts `1.2` (the default) and `1.3`.
+
+#### Development certificates
+
+`make certs` writes a local CA plus a server and a client certificate into `./certs`:
+
+```shell
+make certs
+```
+
+| File | Use |
+|---|---|
+| `ca.crt` | trust anchor: `ca_file` on clients, `client_ca_file` on servers |
+| `server.crt` / `server.key` | server keypair for `network.tls` or `replication.tls` |
+| `client.crt` / `client.key` | client keypair for mutual TLS |
+
+The server certificate carries subject alternative names for `localhost`, `127.0.0.1`, and
+`::1`. Override them when the server is reached under another name, and set the validity
+window or output directory the same way:
+
+```shell
+CERT_HOSTS=fq.internal,10.0.0.7 CERT_DAYS=90 CERT_DIR=./certs make certs
+```
+
+The script refuses to overwrite an existing `server.crt`; `make certs-force` replaces the
+whole set and `make certs-clean` removes it. `certs/` is in `.gitignore` and
+`.dockerignore`, so private keys stay out of commits and out of the Docker build context —
+generate certificates on the machine that needs them rather than committing them. Container
+images ship an empty `/var/lib/fq/certs` for mounting real material:
+
+```shell
+docker run --rm \
+  -p 1945:1945 -p 1946:1946 -p 2112:2112 \
+  -e FQ_ADMIN_TOKEN -e FQ_REPLICATION_TOKEN \
+  -v "$PWD/certs:/var/lib/fq/certs:ro" \
+  -v "$PWD/config.yml:/etc/fq/config.yml:ro" \
+  ghcr.io/fq-db/fq:latest
+```
+
+These certificates exist for local development and testing. Use certificates from your own
+CA in production.
+
+When TLS is enabled on the client port, local clients need trust settings of their own.
+`fq -i` reads `network.tls.ca_file`, `server_name`, and `skip_verify`; if `ca_file` is
+unset it falls back to trusting `network.tls.cert_file` directly, which covers a
+self-signed certificate. The server certificate must cover the address clients dial.
+
+### Client flags
+
+`fq-cli` and `fq-bench` take the same connection flags:
+
+```shell
+fq-cli -address :1945 -token "$FQ_ADMIN_TOKEN"
+
+fq-cli -address fq.internal:1945   -token "$FQ_ADMIN_TOKEN"   -tls_ca ./certs/ca.crt   -tls_cert ./certs/client.crt   -tls_key ./certs/client.key   -tls_server_name fq.internal
+```
+
+`-token` defaults to the `FQ_TOKEN` environment variable. `-tls_skip_verify` disables
+server certificate verification and should stay off outside local testing.
+
+Running `fq -i` connects the embedded CLI to its own port using an in-memory admin token
+generated at startup, so the interactive mode needs no token of its own.
+
+#### Development tokens
+
+The `run-*` and `bench-*` Makefile targets read fixed tokens declared at the top of the
+`Makefile`, so `make run-server` and `make run-cli` work together out of the box:
+
+```make
+FQ_ADMIN_TOKEN ?= dev-admin-3f9a21c7b45e
+FQ_RW_TOKEN ?= dev-rw-8c1d64e0a7b2
+FQ_RO_TOKEN ?= dev-ro-5b7e03f9c8d1
+FQ_SLAVE_ADMIN_TOKEN ?= dev-slave-admin-42a9c1
+FQ_SLAVE_RO_TOKEN ?= dev-slave-ro-7e30b8d5
+FQ_REPLICATION_TOKEN ?= dev-replication-9d24f6a1c3
+```
+
+Each is declared with `?=`, so an environment variable of the same name wins:
+
+```shell
+FQ_ADMIN_TOKEN=$(openssl rand -base64 32) make run-server
+```
+
+These values are committed to the repository and are therefore public. They exist so the
+local dev loop runs without setup; generate real secrets for anything reachable by others.
+
+### Monitoring
+
+Rejected authentication attempts on either port increment
+`fq_auth_failures_total{port="client"|"replication"}` on the observability endpoint.
 
 Counter commands are useful for frequency capping and quota tracking where the application performs the decision itself.
 
@@ -476,7 +666,7 @@ Or start the server with the built-in interactive TUI:
 
 ```shell
 make run-interactive
-# or: bin/fq -i
+# or: bin/fq -i -c ./config.yml
 ```
 
 Or run the interactive TUI from Docker:
@@ -485,9 +675,14 @@ Or run the interactive TUI from Docker:
 make docker-run-interactive
 # or:
 docker run --rm -it \
+  --entrypoint /var/lib/fq/fq \
   -p 1945:1945 \
   -p 1946:1946 \
   -p 2112:2112 \
+  -e FQ_ADMIN_TOKEN=dev-admin-3f9a21c7b45e \
+  -e FQ_RW_TOKEN=dev-rw-8c1d64e0a7b2 \
+  -e FQ_RO_TOKEN=dev-ro-5b7e03f9c8d1 \
+  -e FQ_REPLICATION_TOKEN=dev-replication-9d24f6a1c3 \
   ghcr.io/fq-db/fq:latest -i
 ```
 
@@ -713,7 +908,7 @@ make run-slave
 Or directly:
 
 ```shell
-go run ./cmd/fq config-slave.yml
+go run ./cmd/fq -c ./config-slave.yml
 ```
 
 Master configuration:
@@ -725,6 +920,8 @@ replication:
   replica_type: master
   master_address: ":1946"
   sync_interval: 1s
+  auth:
+    token_env: FQ_REPLICATION_TOKEN
 ```
 
 Slave configuration:
@@ -737,7 +934,13 @@ replication:
   replica_id: "replica-1"
   master_address: ":1946"
   sync_interval: 1s
+  auth:
+    token_env: FQ_REPLICATION_TOKEN
 ```
+
+Both nodes must resolve `replication.auth` to the same secret; the master rejects any peer
+that does not present it. Replication will not start without a secret configured. See
+[Security](#security) for the full options, including TLS on the replication channel.
 
 Replication is currently async. Writes are acknowledged by the master according to `wal.sync_commit`; they do not wait for replica acknowledgement.
 

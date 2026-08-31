@@ -55,6 +55,11 @@ var (
 		Name: "fq_replication_known_replicas",
 		Help: "Number of replicas known by the master replication tracker.",
 	})
+
+	authFailuresTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "fq_auth_failures_total",
+		Help: "Total number of rejected authentication attempts.",
+	}, []string{"port"})
 )
 
 func init() {
@@ -70,7 +75,12 @@ func init() {
 		replicationReplicaLastAppliedLSN,
 		replicationReplicaLastAckTimestamp,
 		replicationKnownReplicas,
+		authFailuresTotal,
 	)
+}
+
+func IncAuthFailures(port string) {
+	authFailuresTotal.WithLabelValues(port).Inc()
 }
 
 func IncTCPActiveConnections() {

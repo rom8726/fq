@@ -1,13 +1,13 @@
 FROM alpine:3.22
 
 ARG TARGETPLATFORM
-WORKDIR /app
+WORKDIR /var/lib/fq
+RUN mkdir -p /var/lib/fq/fq_data/wal /var/lib/fq/certs /etc/fq && chown nobody: /var/lib/fq -R
+
 COPY ${TARGETPLATFORM}/fq ./fq
 COPY ${TARGETPLATFORM}/fq-cli ./fq-cli
-COPY config.yml ./config.yml
-
-RUN mkdir -p /app/fq_data/wal && chown nobody: /app -R
+COPY config.yml /etc/fq/config.yml
 
 USER nobody
 EXPOSE 1945 1946 2112
-ENTRYPOINT ["/app/fq"]
+ENTRYPOINT ["/var/lib/fq/fq"]

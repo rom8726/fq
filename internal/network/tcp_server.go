@@ -3,6 +3,7 @@ package network
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -37,6 +38,8 @@ type TCPServer struct {
 	idleTimeout time.Duration
 	messageSize int
 	logger      *zerolog.Logger
+	tlsConfig   *tls.Config
+	connContext func(context.Context, net.Conn) context.Context
 }
 
 type frameBuffer struct {
@@ -52,6 +55,7 @@ func NewTCPServer(
 	maxMessageSize int,
 	idleTimeout time.Duration,
 	logger *zerolog.Logger,
+	options ...ServerOption,
 ) (*TCPServer, error) {
 	if logger == nil {
 		return nil, errors.New("logger is invalid")
@@ -69,13 +73,19 @@ func NewTCPServer(
 		return nil, errors.New("max message size exceeds frame limit")
 	}
 
-	return &TCPServer{
+	server := &TCPServer{
 		address:     address,
 		semaphore:   tools.NewSemaphore(maxConnectionsNumber),
 		idleTimeout: idleTimeout,
 		messageSize: maxMessageSize,
 		logger:      logger,
-	}, nil
+	}
+
+	for _, option := range options {
+		option(server)
+	}
+
+	return server, nil
 }
 
 func (s *TCPServer) HandleQueries(ctx context.Context, handler TCPHandler) error {
@@ -93,6 +103,10 @@ func (s *TCPServer) HandleQueryStreams(ctx context.Context, handler TCPStreamHan
 	listener, err := net.Listen("tcp", s.address)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
+	}
+
+	if s.tlsConfig != nil {
+		listener = tls.NewListener(listener, s.tlsConfig)
 	}
 
 	var wg sync.WaitGroup
@@ -150,6 +164,10 @@ func (s *TCPServer) Start(ctx context.Context, handler func(context.Context, []b
 }
 
 func (s *TCPServer) handleConnection(ctx context.Context, connection net.Conn, handler TCPStreamHandler) {
+	if s.connContext != nil {
+		ctx = s.connContext(ctx, connection)
+	}
+
 	stopClose := make(chan struct{})
 	frames := frameBuffer{}
 	go func() {

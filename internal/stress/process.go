@@ -67,12 +67,14 @@ func serverCommand(ctx context.Context, env *Environment) *exec.Cmd {
 	if env.FQBinary != "" {
 		cmd := exec.CommandContext(ctx, env.FQBinary, env.ConfigPath)
 		cmd.Dir = env.RepositoryDir
+		cmd.Env = append(os.Environ(), env.ReplicationTokenEnv())
 
 		return cmd
 	}
 
 	cmd := exec.CommandContext(ctx, "go", "run", "./cmd/fq", env.ConfigPath)
 	cmd.Dir = env.RepositoryDir
+	cmd.Env = append(os.Environ(), env.ReplicationTokenEnv())
 
 	return cmd
 }

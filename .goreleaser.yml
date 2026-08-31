@@ -114,6 +114,12 @@ nfpms:
           mode: 0750
           owner: fq
           group: fq
+      - dst: /var/lib/fq/certs
+        type: dir
+        file_info:
+          mode: 0750
+          owner: fq
+          group: fq
     scripts:
       preinstall: packaging/deb/preinstall.sh
       postinstall: packaging/deb/postinstall.sh

@@ -27,7 +27,10 @@ import (
 	"github.com/fq-db/fq/internal/database/storage/replication"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/security"
 )
+
+const testReplicationToken = "replication-token-value"
 
 func TestTCPDatabaseCommandsEndToEnd(t *testing.T) {
 	app := startTestDatabase(t, t.TempDir())
@@ -1049,10 +1052,11 @@ func startTestDatabaseWithSlaveReplication(t *testing.T, walDir, replicationAddr
 	require.NoError(t, err)
 
 	walStore := newTestWAL(walDir, walStream, &logger)
-	clientFactory := replication.NewTCPClientFactory(replicationAddress, 16<<20, time.Second)
+	clientFactory := replication.NewTCPClientFactory(replicationAddress, 16<<20, time.Second, nil)
 	slave, err := replication.NewSlaveWithFactory(
 		clientFactory,
 		"replica-test",
+		security.Secret(testReplicationToken),
 		":1946",
 		wal.NewFSReader(walDir, &logger),
 		walStream,
@@ -1366,7 +1370,9 @@ func (a *testDatabaseApp) StartReplication() {
 
 	replicationServer, err := network.NewTCPServer(a.replicationAddr, 5, 16<<20, time.Second, a.logger)
 	require.NoError(a.t, err)
-	master, err := replication.NewMaster(replicationServer, a.walDir, a.dumper, a.logger)
+	master, err := replication.NewMaster(
+		replicationServer, a.walDir, a.dumper, security.Secret(testReplicationToken), a.logger,
+	)
 	require.NoError(a.t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +20,12 @@ type TCPClient struct {
 	bufferPool     *bytesPool
 }
 
-func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration) (*TCPClient, error) {
+func NewTCPClient(
+	address string,
+	maxMessageSize int,
+	idleTimeout time.Duration,
+	options ...ClientOption,
+) (*TCPClient, error) {
 	if maxMessageSize <= 0 {
 		return nil, fmt.Errorf("invalid max message size: %d", maxMessageSize)
 	}
@@ -28,9 +34,14 @@ func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration)
 		return nil, fmt.Errorf("max message size exceeds frame limit: %d", maxMessageSize)
 	}
 
-	connection, err := net.Dial("tcp", address)
+	settings := clientOptions{}
+	for _, option := range options {
+		option(&settings)
+	}
+
+	connection, err := dial(address, settings.tlsConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to dial: %w", err)
+		return nil, err
 	}
 
 	return &TCPClient{
@@ -39,6 +50,24 @@ func NewTCPClient(address string, maxMessageSize int, idleTimeout time.Duration)
 		idleTimeout:    idleTimeout,
 		bufferPool:     newBytesPool(maxMessageSize),
 	}, nil
+}
+
+func dial(address string, tlsConfig *tls.Config) (net.Conn, error) {
+	if tlsConfig == nil {
+		connection, err := net.Dial("tcp", address)
+		if err != nil {
+			return nil, fmt.Errorf("failed to dial: %w", err)
+		}
+
+		return connection, nil
+	}
+
+	connection, err := tls.Dial("tcp", address, tlsConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial tls: %w", err)
+	}
+
+	return connection, nil
 }
 
 func (c *TCPClient) Send(ctx context.Context, request []byte) ([]byte, error) {

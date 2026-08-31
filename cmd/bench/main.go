@@ -25,7 +25,9 @@ import (
 	"github.com/guptarohit/asciigraph"
 	"gopkg.in/yaml.v3"
 
+	"github.com/fq-db/fq/internal/dbcli"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/security"
 	"github.com/fq-db/fq/internal/tools"
 	"github.com/fq-db/fq/internal/version"
 )
@@ -57,6 +59,12 @@ type benchConfig struct {
 	outputFormat    string
 	outputFile      string
 	seed            int64
+	token           string
+	tlsCA           string
+	tlsCert         string
+	tlsKey          string
+	tlsServerName   string
+	tlsSkipVerify   bool
 }
 
 type benchProfile struct {
@@ -99,6 +107,12 @@ type flagValues struct {
 	outputFormat    string
 	outputFile      string
 	seed            int64
+	token           string
+	tlsCA           string
+	tlsCert         string
+	tlsKey          string
+	tlsServerName   string
+	tlsSkipVerify   bool
 }
 
 type result struct {
@@ -258,6 +272,7 @@ func defaultBenchConfig() benchConfig {
 		outputFormat:    "text",
 		outputFile:      "",
 		seed:            1,
+		token:           os.Getenv("FQ_TOKEN"),
 	}
 }
 
@@ -281,6 +296,12 @@ func flagValuesFromConfig(cfg benchConfig) flagValues {
 		outputFormat:    cfg.outputFormat,
 		outputFile:      cfg.outputFile,
 		seed:            cfg.seed,
+		token:           cfg.token,
+		tlsCA:           cfg.tlsCA,
+		tlsCert:         cfg.tlsCert,
+		tlsKey:          cfg.tlsKey,
+		tlsServerName:   cfg.tlsServerName,
+		tlsSkipVerify:   cfg.tlsSkipVerify,
 	}
 }
 
@@ -298,6 +319,12 @@ func defineFlags(flags *flag.FlagSet, values *flagValues) {
 	flags.StringVar(&values.queryTemplate, "query", values.queryTemplate, "query template; supports {key}, {batch}, {worker}, {n}")
 	flags.StringVar(&values.keyPrefix, "key_prefix", values.keyPrefix, "key prefix for generated queries")
 	flags.StringVar(&values.keyDistribution, "key_distribution", values.keyDistribution, "key distribution: sequential, uniform, or zipfian")
+	flags.StringVar(&values.token, "token", values.token, "authentication token")
+	flags.StringVar(&values.tlsCA, "tls_ca", values.tlsCA, "CA certificate file used to verify the server")
+	flags.StringVar(&values.tlsCert, "tls_cert", values.tlsCert, "client certificate file for mutual TLS")
+	flags.StringVar(&values.tlsKey, "tls_key", values.tlsKey, "client key file for mutual TLS")
+	flags.StringVar(&values.tlsServerName, "tls_server_name", values.tlsServerName, "expected server name in the certificate")
+	flags.BoolVar(&values.tlsSkipVerify, "tls_skip_verify", values.tlsSkipVerify, "skip server certificate verification")
 	flags.Uint64Var(&values.keyStart, "key_start", values.keyStart, "first generated key id")
 	flags.Uint64Var(&values.keyRange, "key_range", values.keyRange, "number of distinct generated keys")
 	flags.Uint64Var(&values.keys, "keys", values.keys, "deprecated alias for key_range")
@@ -344,6 +371,24 @@ func applyFlagOverrides(cfg *benchConfig, values flagValues, explicit map[string
 			return fmt.Errorf("parse max_message_size: %w", err)
 		}
 		cfg.maxMessageSize = maxMessageSize
+	}
+	if isExplicit(explicit, "token") {
+		cfg.token = values.token
+	}
+	if isExplicit(explicit, "tls_ca") {
+		cfg.tlsCA = values.tlsCA
+	}
+	if isExplicit(explicit, "tls_cert") {
+		cfg.tlsCert = values.tlsCert
+	}
+	if isExplicit(explicit, "tls_key") {
+		cfg.tlsKey = values.tlsKey
+	}
+	if isExplicit(explicit, "tls_server_name") {
+		cfg.tlsServerName = values.tlsServerName
+	}
+	if isExplicit(explicit, "tls_skip_verify") {
+		cfg.tlsSkipVerify = values.tlsSkipVerify
 	}
 	if isExplicit(explicit, "query") {
 		cfg.queryTemplate = values.queryTemplate
@@ -522,7 +567,19 @@ func formatSize(size int) string {
 }
 
 func runWorker(ctx context.Context, cfg benchConfig, workerID int, results chan<- result) {
-	client, err := network.NewTCPClient(cfg.address, cfg.maxMessageSize, cfg.idleTimeout)
+	client, err := dbcli.Connect(ctx, dbcli.ConnectOptions{
+		Address:        cfg.address,
+		MaxMessageSize: cfg.maxMessageSize,
+		IdleTimeout:    cfg.idleTimeout,
+		Token:          cfg.token,
+		TLS: security.TLSOptions{
+			CAFile:     cfg.tlsCA,
+			CertFile:   cfg.tlsCert,
+			KeyFile:    cfg.tlsKey,
+			ServerName: cfg.tlsServerName,
+			SkipVerify: cfg.tlsSkipVerify,
+		},
+	})
 	if err != nil {
 		sendResult(ctx, results, result{at: time.Now(), err: err, errText: err.Error()})
 		return
