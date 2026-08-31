@@ -334,6 +334,20 @@ func validateReplicationAuthConfig(cfg *ReplicationAuthConfig) error {
 	return nil
 }
 
+func validateReplicationTLSConfig(replicaType string, cfg TLSConfig) error {
+	if err := validateTLSConfig(cfg); err != nil {
+		return err
+	}
+
+	if replicaType == ReplicaTypeMaster &&
+		!cfg.Options().Empty() &&
+		(cfg.CertFile == "" || cfg.KeyFile == "") {
+		return security.ErrTLSCertRequired
+	}
+
+	return nil
+}
+
 func decode(data []byte, cfg *Config) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
@@ -436,7 +450,7 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	if err := validateTLSConfig(cfg.Replication.TLS); err != nil {
+	if err := validateReplicationTLSConfig(cfg.Replication.ReplicaType, cfg.Replication.TLS); err != nil {
 		return fmt.Errorf("validate replication tls section: %w", err)
 	}
 

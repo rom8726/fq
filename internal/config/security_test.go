@@ -117,6 +117,26 @@ func TestValidateRejectsUnknownTLSMinVersion(t *testing.T) {
 	require.Error(t, validate(&cfg))
 }
 
+func TestValidateRejectsReplicationMasterTLSWithoutServerCertificate(t *testing.T) {
+	cfg := validConfig()
+	cfg.Replication.ReplicaType = ReplicaTypeMaster
+	cfg.Replication.ReplicaID = ""
+	cfg.Replication.TLS = TLSConfig{ClientCAFile: "/tmp/clients.crt"}
+
+	require.ErrorIs(t, validate(&cfg), security.ErrTLSCertRequired)
+}
+
+func TestValidateAllowsReplicationSlaveClientTLSWithoutServerCertificate(t *testing.T) {
+	cfg := validConfig()
+	cfg.Replication.ReplicaType = ReplicaTypeSlave
+	cfg.Replication.TLS = TLSConfig{
+		CAFile:     "/tmp/ca.crt",
+		ServerName: "fq-master",
+	}
+
+	require.NoError(t, validate(&cfg))
+}
+
 func TestValidateAllowsEmptyNetworkAuth(t *testing.T) {
 	cfg := validConfig()
 	cfg.Network.Auth = AuthConfig{}
