@@ -93,9 +93,12 @@ func redactQuery(query string) string {
 	switch {
 	case strings.EqualFold(fields[0], compute.AuthCommand):
 		return compute.AuthCommand + " [REDACTED]"
-	case strings.EqualFold(fields[0], compute.HelloCommand) && len(fields) > 3 &&
-		strings.EqualFold(fields[2], compute.AuthCommand):
-		return strings.Join(fields[:3], " ") + " [REDACTED]"
+	case strings.EqualFold(fields[0], compute.HelloCommand) && len(fields) > 2:
+		if len(fields) == 4 && strings.EqualFold(fields[2], compute.AuthCommand) {
+			return strings.Join(fields[:3], " ") + " [REDACTED]"
+		}
+
+		return strings.Join(fields[:2], " ") + " [REDACTED]"
 	default:
 		return query
 	}

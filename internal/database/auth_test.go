@@ -167,6 +167,12 @@ func TestRedactQuery(t *testing.T) {
 	require.Equal(t, "AUTH [REDACTED]", redactQuery("AUTH"))
 	require.Equal(t, "GET key 60", redactQuery("GET key 60"))
 	require.Equal(t, "AUTHENTICATE x", redactQuery("AUTHENTICATE x"))
+	require.Equal(t, "HELLO 1", redactQuery("HELLO 1"))
+	require.Equal(t, "HELLO 1 AUTH [REDACTED]", redactQuery("HELLO 1 AUTH super-secret"))
+	require.Equal(t, "HELLO AUTH [REDACTED]", redactQuery("HELLO AUTH realtoken"))
+	require.Equal(t, "HELLO 1 [REDACTED]", redactQuery("HELLO 1 2 AUTH realtoken"))
+	require.NotContains(t, redactQuery("HELLO AUTH realtoken"), "realtoken")
+	require.NotContains(t, redactQuery("HELLO 1 2 AUTH realtoken"), "realtoken")
 }
 
 func TestCommandRoleMatrix(t *testing.T) {

@@ -98,3 +98,20 @@ func TestAuthTokenIsNotLoggedAtDebugLevel(t *testing.T) {
 	require.NotContains(t, sink.String(), "supersecrettoken")
 	require.Contains(t, sink.String(), "AUTH")
 }
+
+func TestHelloTokenIsNotLoggedAtDebugLevel(t *testing.T) {
+	var sink bytes.Buffer
+	logger := zerolog.New(&sink).Level(zerolog.DebugLevel)
+	parser := compute.NewParser(&logger)
+
+	_, err := parser.ParseAndAnalyzeQuery(context.Background(), "HELLO 1 AUTH super-secret-token")
+	require.NoError(t, err)
+
+	tokens, err := parser.ParseQuery(context.Background(), "HELLO 1 AUTH supersecrettoken")
+	require.NoError(t, err)
+	require.Len(t, tokens, 4)
+
+	require.NotContains(t, sink.String(), "super-secret-token")
+	require.NotContains(t, sink.String(), "supersecrettoken")
+	require.Contains(t, sink.String(), "HELLO")
+}
