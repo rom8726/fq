@@ -408,6 +408,9 @@ events. Use `-report_file` to write it to a stable path and `-keep_data` to keep
 generated stress directory after a successful run. Failed runs keep their generated
 directory automatically.
 
+The GitHub Actions `Stress` workflow runs `crash-loop`, `dump-recovery`, and
+`replication-stress` nightly and uploads the JSON reports as run artifacts.
+
 ## Release results capture
 
 Create a timestamped results directory with hardware/runtime metadata,
