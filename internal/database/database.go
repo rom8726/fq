@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -12,6 +11,8 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
 
@@ -28,16 +29,16 @@ const (
 )
 
 var (
-	errInternalConfiguration = errors.New("internal configuration error")
-	errBatchSizeNotNumber    = errors.New("batch is not a number")
-	errInvalidBatchSize      = errors.New("invalid batch size")
-	errInvalidArgumentsCount = errors.New("invalid arguments count")
-	errKeyTooLong            = errors.New("key length exceeds maximum")
-	errKeyEmpty              = errors.New("key cannot be empty")
-	errLimitNotNumber        = errors.New("limit is not a number")
-	errInvalidLimit          = errors.New("invalid limit")
-	errInvalidRLimitAlgo     = errors.New("invalid rate limit algorithm")
-	errInvalidScanCount      = errors.New("invalid scan count")
+	errInternalConfiguration = protocol.NewError(protocol.CodeInternalConfiguration, "internal configuration error")
+	errBatchSizeNotNumber    = protocol.NewError(protocol.CodeBatchSizeNotNumber, "batch is not a number")
+	errInvalidBatchSize      = protocol.NewError(protocol.CodeInvalidBatchSize, "invalid batch size")
+	errInvalidArgumentsCount = protocol.NewError(protocol.CodeInvalidArgumentsCount, "invalid arguments count")
+	errKeyTooLong            = protocol.NewError(protocol.CodeKeyTooLong, "key length exceeds maximum")
+	errKeyEmpty              = protocol.NewError(protocol.CodeKeyEmpty, "key cannot be empty")
+	errLimitNotNumber        = protocol.NewError(protocol.CodeLimitNotNumber, "limit is not a number")
+	errInvalidLimit          = protocol.NewError(protocol.CodeInvalidLimit, "invalid limit")
+	errInvalidRLimitAlgo     = protocol.NewError(protocol.CodeInvalidRLimitAlgo, "invalid rate limit algorithm")
+	errInvalidScanCount      = protocol.NewError(protocol.CodeInvalidScanCount, "invalid scan count")
 
 	okTrueMsg  = []byte("ok|1")
 	okFalseMsg = []byte("ok|0")
@@ -122,12 +123,15 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 		return nil
 	})
 	if err != nil {
-		return string(makeErrorMsg(err))
+		return string(d.makeErrorMsg(err))
 	}
 
 	return response
 }
 
+// HandleQueryStream ...
+//
+//nolint:gocyclo,gocritic // need refactoring
 func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write func([]byte) error) error {
 	if d.logger.GetLevel() == zerolog.DebugLevel {
 		d.logger.Debug().
@@ -140,9 +144,13 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 
 	// Validate message size
 	if len(queryStr) > d.maxMessageSize {
-		response := appendErrorMsg(
+		response := d.appendErrorMsg(
 			responseBuffer.buf[:0],
-			fmt.Errorf("message size %d exceeds maximum %d", len(queryStr), d.maxMessageSize),
+			protocol.Errorf(
+				protocol.CodeMessageTooLarge,
+				"message size %d exceeds maximum %d",
+				len(queryStr), d.maxMessageSize,
+			),
 		)
 
 		return write(response)
@@ -150,14 +158,39 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 
 	query, err := d.computeLayer.HandleQuery(ctx, queryStr)
 	if err != nil {
-		return write(appendErrorMsg(responseBuffer.buf[:0], err))
+		return write(d.appendErrorMsg(responseBuffer.buf[:0], err))
 	}
 
 	session := security.SessionFrom(ctx)
 
+	if query.CommandID() == compute.HelloCommandID {
+		helloResponse, helloErr := d.handleHelloQuery(ctx, query, responseBuffer.buf[:0])
+		if helloErr != nil {
+			if len(helloResponse) > 0 {
+				if writeErr := write(helloResponse); writeErr != nil {
+					return writeErr
+				}
+			}
+
+			return helloErr
+		}
+
+		return write(helloResponse)
+	}
+
+	if !protocol.SessionFrom(ctx).Negotiated() {
+		return write(d.appendErrorMsg(responseBuffer.buf[:0], protocol.ErrHandshakeRequired))
+	}
+
 	if query.CommandID() == compute.AuthCommandID {
 		authResponse, authErr := d.handleAuthQuery(session, query, responseBuffer.buf[:0])
 		if authErr != nil {
+			if len(authResponse) > 0 {
+				if writeErr := write(authResponse); writeErr != nil {
+					return writeErr
+				}
+			}
+
 			return authErr
 		}
 
@@ -166,7 +199,7 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 
 	if requiresAuthorization(query.CommandID()) {
 		if err := session.Authorize(commandRole(query)); err != nil {
-			return write(appendErrorMsg(responseBuffer.buf[:0], err))
+			return write(d.appendErrorMsg(responseBuffer.buf[:0], err))
 		}
 	}
 
@@ -178,8 +211,6 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		response = d.handleGetQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.DelCommandID:
 		response = d.handleDelQuery(ctx, query, responseBuffer.buf[:0])
-	case compute.MsgSizeCommandID:
-		response = d.handleMsgSizeQuery(responseBuffer.buf[:0])
 	case compute.MDelCommandID:
 		response = d.handleMDelQuery(ctx, query, responseBuffer.buf[:0])
 	case compute.WatchCommandID:
@@ -209,7 +240,7 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	default:
 		d.logger.Error().Msg("compute layer is incorrect")
 
-		response = appendErrorMsg(responseBuffer.buf[:0], errInternalConfiguration)
+		response = d.appendErrorMsg(responseBuffer.buf[:0], errInternalConfiguration)
 	}
 
 	return write(response)
@@ -217,7 +248,7 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 
 func (d *Database) handleFlushDBQuery(ctx context.Context, dst []byte) []byte {
 	if err := d.storageLayer.FlushDB(ctx); err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendValueMsg(dst, 1)
@@ -225,7 +256,7 @@ func (d *Database) handleFlushDBQuery(ctx context.Context, dst []byte) []byte {
 
 func (d *Database) handleTruncateQuery(ctx context.Context, dst []byte) []byte {
 	if err := d.storageLayer.Truncate(ctx); err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendValueMsg(dst, 1)
@@ -238,7 +269,7 @@ func (d *Database) handleScanQuery(ctx context.Context, query compute.Query, dst
 func (d *Database) handlePScanQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	prefix, err := makeStreamPrefix(query.Arg(0))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return d.handleScan(ctx, prefix, query.Arg(1), query.Arg(2), dst)
@@ -247,12 +278,12 @@ func (d *Database) handlePScanQuery(ctx context.Context, query compute.Query, ds
 func (d *Database) handleScan(ctx context.Context, prefix, cursor, countStr string, dst []byte) []byte {
 	count, err := makeScanCount(countStr)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	result, err := d.storageLayer.Scan(ctx, prefix, cursor, count)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendScanMsg(dst, result)
@@ -278,7 +309,7 @@ func (d *Database) handleQuotaQuery(ctx context.Context, query compute.Query, ds
 	case "INF":
 		return d.handleQuotaInfoQuery(ctx, query, dst)
 	default:
-		return appendErrorMsg(dst, compute.ErrInvalidArguments)
+		return d.appendErrorMsg(dst, compute.ErrInvalidArguments)
 	}
 }
 
@@ -290,18 +321,18 @@ func (d *Database) handleQuotaSetQuery(
 ) []byte {
 	name, err := makeQuotaName(query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 	limit, err := makeLimit(query.Arg(2))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	clients := uint32(0)
 	if policy == QuotaPolicyPerClient {
 		parsedClients, parseErr := makeTTL(query.Arg(3))
 		if parseErr != nil {
-			return appendErrorMsg(dst, parseErr)
+			return d.appendErrorMsg(dst, parseErr)
 		}
 		clients = parsedClients
 	}
@@ -313,7 +344,7 @@ func (d *Database) handleQuotaSetQuery(
 		Clients: clients,
 	})
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendBoolsMsg(dst, []bool{changed})
@@ -328,7 +359,7 @@ func (d *Database) handleQuotaAcquireQuery(
 ) []byte {
 	name, err := makeQuotaName(query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	limit := ValueType(0)
@@ -338,7 +369,7 @@ func (d *Database) handleQuotaAcquireQuery(
 	if clientOwned {
 		parsedLimit, parseErr := makeLimit(query.Arg(2))
 		if parseErr != nil {
-			return appendErrorMsg(dst, parseErr)
+			return d.appendErrorMsg(dst, parseErr)
 		}
 		limit = parsedLimit
 		amountArg = 3
@@ -355,20 +386,20 @@ func (d *Database) handleQuotaAcquireQuery(
 	if amountArg >= 0 {
 		parsedAmount, parseErr := makeLimit(query.Arg(amountArg))
 		if parseErr != nil {
-			return appendErrorMsg(dst, parseErr)
+			return d.appendErrorMsg(dst, parseErr)
 		}
 		amount = parsedAmount
 	}
 	clientID, err := makeQuotaClientID(query.Arg(clientIDArg))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	var ttl uint32
 	if query.ArgumentCount() == ttlArg+1 {
 		parsedTTL, parseErr := makeTTL(query.Arg(ttlArg))
 		if parseErr != nil {
-			return appendErrorMsg(dst, parseErr)
+			return d.appendErrorMsg(dst, parseErr)
 		}
 		ttl = parsedTTL
 	}
@@ -383,7 +414,7 @@ func (d *Database) handleQuotaAcquireQuery(
 		TTL:       ttl,
 	})
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendQuotaAcquireMsg(dst, result)
@@ -400,16 +431,16 @@ func quotaOwnership(clientOwned bool) QuotaOwnership {
 func (d *Database) handleQuotaReleaseQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	name, err := makeQuotaName(query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 	clientID, err := makeQuotaClientID(query.Arg(2))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	released, err := d.storageLayer.QuotaRelease(ctx, name, clientID)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return makeBoolMsg(released)
@@ -418,12 +449,12 @@ func (d *Database) handleQuotaReleaseQuery(ctx context.Context, query compute.Qu
 func (d *Database) handleQuotaDeleteQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	name, err := makeQuotaName(query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	deleted, err := d.storageLayer.QuotaDelete(ctx, name)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return makeBoolMsg(deleted)
@@ -432,12 +463,12 @@ func (d *Database) handleQuotaDeleteQuery(ctx context.Context, query compute.Que
 func (d *Database) handleQuotaInfoQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	name, err := makeQuotaName(query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	info, err := d.storageLayer.QuotaInfo(ctx, name)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendQuotaInfoMsg(dst, info)
@@ -446,12 +477,12 @@ func (d *Database) handleQuotaInfoQuery(ctx context.Context, query compute.Query
 func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Incr(ctx, key)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendValueMsg(dst, value)
@@ -460,12 +491,12 @@ func (d *Database) handleIncrQuery(ctx context.Context, query compute.Query, dst
 func (d *Database) handleGetQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Get(ctx, key)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendValueMsg(dst, value)
@@ -474,12 +505,12 @@ func (d *Database) handleGetQuery(ctx context.Context, query compute.Query, dst 
 func (d *Database) handleDelQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Del(ctx, key)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return makeBoolMsg(value)
@@ -489,30 +520,26 @@ func (d *Database) handleMDelQuery(ctx context.Context, query compute.Query, dst
 	arguments := query.Arguments()
 	keys, err := makeBatchKeys(arguments)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	values, err := d.storageLayer.MDel(ctx, keys)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendBoolsMsg(dst, values)
 }
 
-func (d *Database) handleMsgSizeQuery(dst []byte) []byte {
-	return appendValueMsg(dst, ValueType(d.maxMessageSize))
-}
-
 func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	key, err := makeBatchKey(query.Arg(0), query.Arg(1))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	value, err := d.storageLayer.Watch(ctx, key)
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendValueMsg(dst, value)
@@ -521,7 +548,7 @@ func (d *Database) handleWatchQuery(ctx context.Context, query compute.Query, ds
 func (d *Database) handlePStreamQuery(ctx context.Context, query compute.Query, write func([]byte) error) error {
 	prefix, err := makeStreamPrefix(query.Arg(0))
 	if err != nil {
-		return write(makeErrorMsg(err))
+		return write(d.makeErrorMsg(err))
 	}
 
 	return d.handleStreamQuery(ctx, prefix, write)
@@ -553,7 +580,7 @@ func (d *Database) handleStreamQuery(ctx context.Context, prefix string, write f
 func (d *Database) handleQPStreamQuery(ctx context.Context, query compute.Query, write func([]byte) error) error {
 	prefix, err := makeStreamPrefix(query.Arg(0))
 	if err != nil {
-		return write(makeErrorMsg(err))
+		return write(d.makeErrorMsg(err))
 	}
 
 	return d.handleQStreamQuery(ctx, prefix, write)
@@ -596,7 +623,7 @@ func makeStreamPrefix(prefix string) (string, error) {
 func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query, dst []byte) []byte {
 	algorithm := strings.ToUpper(query.Arg(0))
 	if algorithm != "FW" && algorithm != "SW" && algorithm != "TB" {
-		return appendErrorMsg(dst, errInvalidRLimitAlgo)
+		return d.appendErrorMsg(dst, errInvalidRLimitAlgo)
 	}
 
 	windowArgIndex := 3
@@ -605,12 +632,12 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query, d
 	}
 	key, err := makeBatchKey(query.Arg(1), query.Arg(windowArgIndex))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	limit, err := makeLimit(query.Arg(2))
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	var result RateLimitResult
@@ -622,13 +649,13 @@ func (d *Database) handleRLimitQuery(ctx context.Context, query compute.Query, d
 	case "TB":
 		refillAmount, parseErr := makeLimit(query.Arg(3))
 		if parseErr != nil {
-			return appendErrorMsg(dst, parseErr)
+			return d.appendErrorMsg(dst, parseErr)
 		}
 
 		result, err = d.storageLayer.RLimitTokenBucket(ctx, key, limit, refillAmount)
 	}
 	if err != nil {
-		return appendErrorMsg(dst, err)
+		return d.appendErrorMsg(dst, err)
 	}
 
 	return appendRateLimitMsg(dst, result)
@@ -748,8 +775,8 @@ func makeQuotaClientID(clientID string) (string, error) {
 	return makeStreamPrefix(clientID)
 }
 
-func makeErrorMsg(err error) []byte {
-	return appendErrorMsg(makeResponseBuffer(len("err|")+len(err.Error())), err)
+func (d *Database) makeErrorMsg(err error) []byte {
+	return d.appendErrorMsg(makeResponseBuffer(defaultResponseBufferCapacity), err)
 }
 
 func makeBoolMsg(v bool) []byte {
@@ -764,9 +791,22 @@ func makeResponseBuffer(capacity int) []byte {
 	return make([]byte, 0, capacity)
 }
 
-func appendErrorMsg(dst []byte, err error) []byte {
-	dst = append(dst, "err|"...)
-	dst = append(dst, err.Error()...)
+func (d *Database) appendErrorMsg(dst []byte, err error) []byte {
+	code, ok := protocol.CodeOf(err)
+	message := err.Error()
+	if !ok {
+		d.logger.Error().Err(err).Msg("error without protocol code")
+
+		code = protocol.CodeInternal
+		message = protocol.CodeInternal.String()
+	}
+
+	observability.IncProtocolError(uint16(code))
+
+	dst = append(dst, protocol.ErrorPrefix...)
+	dst = strconv.AppendUint(dst, uint64(code), 10)
+	dst = append(dst, '|')
+	dst = append(dst, message...)
 
 	return dst
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fq-db/fq/internal/inspect"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 const (
@@ -69,8 +70,10 @@ func executeStream(
 	out io.Writer,
 	start time.Time,
 ) error {
-	err := client.Stream(ctx, []byte(request), func(response []byte) error {
-		_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", parseResp(response), time.Since(start).String())
+	err := client.Stream(ctx, []byte(request), func(_ protocol.Kind, response []byte) error {
+		_, _ = fmt.Fprintf(
+			out, "%s\t\t\t\tElapsed: %s\n", aurora.Green("[fq]> "+string(response)), time.Since(start).String(),
+		)
 
 		return nil
 	})
@@ -83,6 +86,14 @@ func executeStream(
 
 		if errors.Is(err, context.DeadlineExceeded) {
 			_, _ = fmt.Fprintln(out, "Stream timeout")
+
+			return nil
+		}
+
+		var protoErr *protocol.Error
+		if errors.As(err, &protoErr) {
+			_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n",
+				renderProtocolError("[fq]> ", protoErr), time.Since(start).String())
 
 			return nil
 		}
@@ -109,10 +120,17 @@ func executePlain(
 			return nil
 		}
 
+		var protoErr *protocol.Error
+		if errors.As(err, &protoErr) {
+			_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", renderProtocolError("[fq]> ", protoErr), elapsed.String())
+
+			return nil
+		}
+
 		return fmt.Errorf("send query: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", parseResp(response), elapsed.String())
+	_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", aurora.Green("[fq]> "+string(response)), elapsed.String())
 
 	return nil
 }
@@ -128,7 +146,7 @@ func executeInspect(
 	body, err := fetchChunkedBody(ctx, client, request)
 	elapsed := time.Since(start)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", aurora.Red("[fq]> "+err.Error()), elapsed.String())
+		_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", renderError("[fq]> ", err), elapsed.String())
 
 		return nil
 	}
@@ -159,7 +177,7 @@ func executeHumanInspect(
 	body, err := fetchChunkedBody(ctx, client, wireQuery)
 	elapsed := time.Since(start)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "%s\nElapsed: %s\n", aurora.Red("error: "+err.Error()), elapsed.String())
+		_, _ = fmt.Fprintf(out, "%s\nElapsed: %s\n", renderError("error: ", err), elapsed.String())
 
 		return nil
 	}
@@ -181,27 +199,13 @@ func executeHumanInspect(
 
 func fetchChunkedBody(ctx context.Context, client *network.TCPClient, query string) ([]byte, error) {
 	var body bytes.Buffer
-	err := client.Stream(ctx, []byte(query), func(frame []byte) error {
-		idx := bytes.IndexByte(frame, '|')
-		if idx < 0 {
-			return fmt.Errorf("malformed response frame")
-		}
-
-		status := string(frame[:idx])
-		data := frame[idx+1:]
-
-		switch status {
-		case "nxt":
-			body.Write(data)
-			return nil
-		case "ok":
-			body.Write(data)
+	err := client.Stream(ctx, []byte(query), func(kind protocol.Kind, frame []byte) error {
+		body.Write(frame)
+		if kind == protocol.KindOK {
 			return io.EOF
-		case "err":
-			return fmt.Errorf("%s", data)
-		default:
-			return fmt.Errorf("unexpected frame status %q", status)
 		}
+
+		return nil
 	})
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
@@ -210,21 +214,15 @@ func fetchChunkedBody(ctx context.Context, client *network.TCPClient, query stri
 	return body.Bytes(), nil
 }
 
-func parseResp(response []byte) aurora.Value {
-	idx := bytes.IndexByte(response, '|')
-	if idx < 0 {
-		if len(response) == 0 {
-			return aurora.Red("[fq]> malformed empty response")
-		}
-
-		return aurora.Red("[fq]> malformed response: " + string(response))
+func renderError(prefix string, err error) aurora.Value {
+	var protoErr *protocol.Error
+	if errors.As(err, &protoErr) {
+		return renderProtocolError(prefix, protoErr)
 	}
 
-	status := string(response[:idx])
-	data := string(response[idx+1:])
-	if status == "ok" {
-		return aurora.Green("[fq]> " + data)
-	}
+	return aurora.Red(prefix + err.Error())
+}
 
-	return aurora.Red("[fq]> " + data)
+func renderProtocolError(prefix string, err *protocol.Error) aurora.Value {
+	return aurora.Red(fmt.Sprintf("%s[%d] %s", prefix, err.Code, err.Msg))
 }

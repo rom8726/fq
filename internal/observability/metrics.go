@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,6 +61,11 @@ var (
 		Name: "fq_auth_failures_total",
 		Help: "Total number of rejected authentication attempts.",
 	}, []string{"port"})
+
+	protocolErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "fq_protocol_errors_total",
+		Help: "Total number of error responses by protocol error code.",
+	}, []string{"code"})
 )
 
 func init() {
@@ -76,11 +82,16 @@ func init() {
 		replicationReplicaLastAckTimestamp,
 		replicationKnownReplicas,
 		authFailuresTotal,
+		protocolErrorsTotal,
 	)
 }
 
 func IncAuthFailures(port string) {
 	authFailuresTotal.WithLabelValues(port).Inc()
+}
+
+func IncProtocolError(code uint16) {
+	protocolErrorsTotal.WithLabelValues(strconv.FormatUint(uint64(code), 10)).Inc()
 }
 
 func IncTCPActiveConnections() {

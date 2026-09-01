@@ -11,12 +11,12 @@ import (
 	"github.com/fq-db/fq/internal/dbcli"
 )
 
-func TestConnectSendsAuth(t *testing.T) {
+func TestConnectSendsHelloWithToken(t *testing.T) {
 	received := make(chan string, 1)
 	address := startTestServer(t, func(_ context.Context, request []byte, write func([]byte) error) error {
 		received <- string(request)
 
-		return write([]byte("ok|1"))
+		return write([]byte("ok|1;8192;1;admin"))
 	})
 
 	client, err := dbcli.Connect(context.Background(), dbcli.ConnectOptions{
@@ -28,15 +28,15 @@ func TestConnectSendsAuth(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	require.Equal(t, "AUTH admin-token-value", <-received)
+	require.Equal(t, "HELLO 1 AUTH admin-token-value", <-received)
 }
 
-func TestConnectSkipsAuthWithoutToken(t *testing.T) {
-	calls := make(chan struct{}, 1)
-	address := startTestServer(t, func(_ context.Context, _ []byte, write func([]byte) error) error {
-		calls <- struct{}{}
+func TestConnectSendsHelloWithoutToken(t *testing.T) {
+	received := make(chan string, 1)
+	address := startTestServer(t, func(_ context.Context, request []byte, write func([]byte) error) error {
+		received <- string(request)
 
-		return write([]byte("ok|1"))
+		return write([]byte("ok|1;8192;0;rw"))
 	})
 
 	client, err := dbcli.Connect(context.Background(), dbcli.ConnectOptions{
@@ -45,18 +45,14 @@ func TestConnectSkipsAuthWithoutToken(t *testing.T) {
 		IdleTimeout:    time.Second,
 	})
 	require.NoError(t, err)
-	require.NoError(t, client.Close())
+	defer func() { _ = client.Close() }()
 
-	select {
-	case <-calls:
-		t.Fatal("no request should be sent without a token")
-	case <-time.After(50 * time.Millisecond):
-	}
+	require.Equal(t, "HELLO 1", <-received)
 }
 
 func TestConnectFailsOnRejectedAuth(t *testing.T) {
 	address := startTestServer(t, func(_ context.Context, _ []byte, write func([]byte) error) error {
-		return write([]byte("err|authentication failed"))
+		return write([]byte("err|3002|authentication failed"))
 	})
 
 	_, err := dbcli.Connect(context.Background(), dbcli.ConnectOptions{

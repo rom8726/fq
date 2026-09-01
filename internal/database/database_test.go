@@ -1,16 +1,20 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func TestResponseFormatting(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, "err|boom", string(makeErrorMsg(errors.New("boom"))))
+	db := newTestDatabase(t)
+	require.Equal(t, "err|9000|internal error", string(db.makeErrorMsg(errors.New("boom"))))
 	require.Equal(t, "ok|42", string(appendValueMsg(nil, 42)))
 	require.Equal(t, "ok|1", string(makeBoolMsg(true)))
 	require.Equal(t, "ok|0", string(makeBoolMsg(false)))
@@ -59,6 +63,28 @@ func TestResponseFormatting(t *testing.T) {
 		Current:    100,
 		ResetAfter: 5,
 	})))
+}
+
+func TestErrorResponseCarriesCode(t *testing.T) {
+	db := newTestDatabase(t)
+	ctx := context.Background()
+
+	require.Equal(t, "err|1001|invalid command", db.HandleQuery(ctx, "NOSUCHCOMMAND"))
+	require.Equal(t, "err|1002|invalid arguments", db.HandleQuery(ctx, "GET key"))
+
+	_, err := makeBatchKey("", "60")
+	code, ok := protocol.CodeOf(err)
+	require.True(t, ok)
+	require.Equal(t, protocol.CodeKeyEmpty, code)
+}
+
+func TestUnmappedErrorIsHiddenBehindInternalCode(t *testing.T) {
+	db := newTestDatabase(t)
+
+	response := string(db.makeErrorMsg(errors.New("secret path /var/lib/fq/wal/000123.log")))
+
+	require.Equal(t, "err|9000|internal error", response)
+	require.NotContains(t, response, "/var/lib/fq")
 }
 
 func BenchmarkResponseFormatting(b *testing.B) {

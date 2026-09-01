@@ -100,12 +100,12 @@ func TestUnauthenticatedCommandsAreRejected(t *testing.T) {
 	}
 }
 
-func TestMsgSizeNeedsNoAuthentication(t *testing.T) {
+func TestHelloNeedsNoAuthentication(t *testing.T) {
 	db := newTestDatabase(t)
 	ctx, _ := authContext(t)
 
-	require.Equal(t, "ok|4096", db.HandleQuery(ctx, "MSGSIZE"))
-	require.False(t, requiresAuthorization(compute.MsgSizeCommandID))
+	require.Equal(t, "ok|1;4096;1;none", db.HandleQuery(ctx, "HELLO 1"))
+	require.False(t, requiresAuthorization(compute.HelloCommandID))
 	require.False(t, requiresAuthorization(compute.AuthCommandID))
 	require.True(t, requiresAuthorization(compute.GetCommandID))
 }
@@ -150,8 +150,14 @@ func TestBadAuthIsReportedAndLimited(t *testing.T) {
 		require.Contains(t, db.HandleQuery(ctx, "AUTH wrong-token-value"), "authentication failed")
 	}
 
-	err := db.HandleQueryStream(ctx, "AUTH wrong-token-value", func([]byte) error { return nil })
+	var response []byte
+	err := db.HandleQueryStream(ctx, "AUTH wrong-token-value", func(msg []byte) error {
+		response = append(response[:0], msg...)
+
+		return nil
+	})
 	require.ErrorIs(t, err, security.ErrTooManyAuthFailures)
+	require.Equal(t, "err|3003|too many authentication failures", string(response))
 	require.Equal(t, security.MaxAuthFailures, session.Failures())
 }
 
@@ -167,6 +173,12 @@ func TestRedactQuery(t *testing.T) {
 	require.Equal(t, "AUTH [REDACTED]", redactQuery("AUTH"))
 	require.Equal(t, "GET key 60", redactQuery("GET key 60"))
 	require.Equal(t, "AUTHENTICATE x", redactQuery("AUTHENTICATE x"))
+	require.Equal(t, "HELLO 1", redactQuery("HELLO 1"))
+	require.Equal(t, "HELLO 1 AUTH [REDACTED]", redactQuery("HELLO 1 AUTH super-secret"))
+	require.Equal(t, "HELLO AUTH [REDACTED]", redactQuery("HELLO AUTH realtoken"))
+	require.Equal(t, "HELLO 1 [REDACTED]", redactQuery("HELLO 1 2 AUTH realtoken"))
+	require.NotContains(t, redactQuery("HELLO AUTH realtoken"), "realtoken")
+	require.NotContains(t, redactQuery("HELLO 1 2 AUTH realtoken"), "realtoken")
 }
 
 func TestCommandRoleMatrix(t *testing.T) {

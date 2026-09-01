@@ -16,7 +16,7 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 		return fmt.Errorf("encode request: %w", err)
 	}
 
-	responseData, err := s.client.Send(ctx, requestData)
+	responseData, err := s.client.SendRaw(ctx, requestData)
 	if err != nil {
 		// Check if it's a network error requiring reconnection
 		if s.isNetworkError(err) {
@@ -29,7 +29,7 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 				return fmt.Errorf("reconnection failed: %w", reconnectErr)
 			}
 			// Retry after reconnection
-			responseData, err = s.client.Send(ctx, requestData)
+			responseData, err = s.client.SendRaw(ctx, requestData)
 			if err != nil {
 				return fmt.Errorf("send request after reconnection: %w", err)
 			}
@@ -87,7 +87,7 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 		return nil
 	}
 
-	return fmt.Errorf("failed to apply replication data: master error")
+	return s.recordMasterError(response.ErrorCode, "dump")
 }
 
 func maxLSN(elems []database.DumpElem) uint64 {

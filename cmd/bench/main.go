@@ -610,16 +610,14 @@ func runWorker(ctx context.Context, cfg benchConfig, workerID int, results chan<
 		query := makeQuery(cfg, workerID, n, rng, zipf)
 		requestCtx, cancel := context.WithTimeout(ctx, cfg.requestTimeout)
 		start := time.Now()
-		response, err := client.Send(requestCtx, []byte(query))
+		_, err := client.Send(requestCtx, []byte(query))
 		latency := time.Since(start)
 		cancel()
 
-		badResp := err == nil && !bytes.HasPrefix(response, []byte("ok|"))
+		badResp := err != nil
 		errText := ""
 		if err != nil {
 			errText = err.Error()
-		} else if badResp {
-			errText = string(response)
 		}
 
 		sendResult(ctx, results, result{

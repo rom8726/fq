@@ -40,8 +40,11 @@ func (p *Parser) parseTokens(query string) ([]string, error) {
 		return nil, err
 	}
 
-	if ok && commandIDFromToken(command) == AuthCommandID {
-		return scanner.authTokens(command), nil
+	if ok {
+		switch commandIDFromToken(command) {
+		case AuthCommandID, HelloCommandID:
+			return scanner.authTokens(command), nil
+		}
 	}
 
 	return p.machine.parse(query)
@@ -109,7 +112,9 @@ func (s *tokenScanner) scanQuery(commandID CommandID) (Query, error) {
 	switch commandID {
 	case IncrCommandID, GetCommandID, DelCommandID, WatchCommandID:
 		return s.scanFixedQuery(commandID, 2)
-	case MsgSizeCommandID, StreamCommandID:
+	case HelloCommandID:
+		return s.scanHelloQuery()
+	case StreamCommandID:
 		return s.scanFixedQuery(commandID, 0)
 	case PStreamCommandID:
 		return s.scanFixedQuery(commandID, 1)
@@ -149,6 +154,33 @@ func (s *tokenScanner) scanAuthQuery() (Query, error) {
 	}
 
 	return NewQuery(AuthCommandID, []string{token}), nil
+}
+
+func (s *tokenScanner) scanHelloQuery() (Query, error) {
+	version, ok := s.nextOpaque()
+	if !ok {
+		return Query{}, ErrInvalidArguments
+	}
+
+	keyword, ok := s.nextOpaque()
+	if !ok {
+		return NewQueryFromSlots(HelloCommandID, 1, version, "", "", "", ""), nil
+	}
+
+	if !asciiEqualFold(keyword, AuthCommand) {
+		return Query{}, ErrInvalidArguments
+	}
+
+	token, ok := s.nextOpaque()
+	if !ok {
+		return Query{}, ErrInvalidArguments
+	}
+
+	if _, more := s.nextOpaque(); more {
+		return Query{}, ErrInvalidArguments
+	}
+
+	return NewQueryFromSlots(HelloCommandID, 3, version, keyword, token, "", ""), nil
 }
 
 func (s *tokenScanner) nextOpaque() (string, bool) {
@@ -325,8 +357,8 @@ func commandIDFromToken(token string) CommandID {
 		return GetCommandID
 	case asciiEqualFold(token, DelCommand):
 		return DelCommandID
-	case asciiEqualFold(token, MsgSizeCommand):
-		return MsgSizeCommandID
+	case asciiEqualFold(token, HelloCommand):
+		return HelloCommandID
 	case asciiEqualFold(token, MDelCommand):
 		return MDelCommandID
 	case asciiEqualFold(token, WatchCommand):
@@ -390,9 +422,17 @@ func asciiEqualFold(left, right string) bool {
 }
 
 func redactAuthTokens(tokens []string) []string {
-	if len(tokens) < 2 || !asciiEqualFold(tokens[0], AuthCommand) {
+	if len(tokens) < 2 {
 		return tokens
 	}
 
-	return tokens[:1]
+	if asciiEqualFold(tokens[0], AuthCommand) {
+		return tokens[:1]
+	}
+
+	if asciiEqualFold(tokens[0], HelloCommand) && len(tokens) > 3 {
+		return tokens[:3]
+	}
+
+	return tokens
 }

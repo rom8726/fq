@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -629,11 +628,7 @@ func finishScenario(
 }
 
 func parseOKUint(response string) (uint64, bool) {
-	if !strings.HasPrefix(response, "ok|") {
-		return 0, false
-	}
-
-	value, err := strconv.ParseUint(strings.TrimPrefix(response, "ok|"), 10, 64)
+	value, err := strconv.ParseUint(response, 10, 64)
 
 	return value, err == nil
 }

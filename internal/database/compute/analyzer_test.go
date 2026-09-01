@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func TestAnalyzeQuery(t *testing.T) {
@@ -40,8 +41,8 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"MDEL", "key1", "600", "key2"},
 			err:    compute.ErrInvalidArguments,
 		},
-		"invalid number arguments for message size query": {
-			tokens: []string{"MSGSIZE", "key"},
+		"invalid number arguments for hello query": {
+			tokens: []string{"HELLO"},
 			err:    compute.ErrInvalidArguments,
 		},
 		"invalid number arguments for rlimit query": {
@@ -68,9 +69,9 @@ func TestAnalyzeQuery(t *testing.T) {
 			tokens: []string{"MDEL", "key1", "60", "key2", "60"},
 			query:  compute.NewQuery(compute.MDelCommandID, []string{"key1", "60", "key2", "60"}),
 		},
-		"valid message size query": {
-			tokens: []string{"MSGSIZE"},
-			query:  compute.NewQuery(compute.MsgSizeCommandID, []string{}),
+		"valid hello query": {
+			tokens: []string{"HELLO", "1"},
+			query:  compute.NewQuery(compute.HelloCommandID, []string{"1"}),
 		},
 		"valid flushdb query": {
 			tokens: []string{"FLUSHDB"},
@@ -177,5 +178,22 @@ func TestAnalyzeQuery(t *testing.T) {
 			require.Equal(t, test.query, query)
 			require.Equal(t, test.err, err)
 		})
+	}
+}
+
+func TestComputeErrorsCarryCodes(t *testing.T) {
+	cases := []struct {
+		err  error
+		code protocol.Code
+	}{
+		{compute.ErrInvalidSymbol, protocol.CodeInvalidSymbol},
+		{compute.ErrInvalidCommand, protocol.CodeInvalidCommand},
+		{compute.ErrInvalidArguments, protocol.CodeInvalidArguments},
+	}
+
+	for _, tc := range cases {
+		code, ok := protocol.CodeOf(tc.err)
+		require.True(t, ok, tc.err.Error())
+		require.Equal(t, tc.code, code, tc.err.Error())
 	}
 }

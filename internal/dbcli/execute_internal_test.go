@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func TestTimeoutFor(t *testing.T) {
@@ -21,8 +23,16 @@ func TestTimeoutFor(t *testing.T) {
 	}
 }
 
-func TestParseRespMalformedEmptyResponse(t *testing.T) {
-	if got := fmt.Sprint(parseResp(nil)); !strings.Contains(got, "[fq]> malformed empty response") {
-		t.Fatalf("parseResp(nil) = %q", got)
+func TestRenderProtocolError(t *testing.T) {
+	err := protocol.NewError(protocol.CodeQuotaNotFound, "quota not found")
+	if got := fmt.Sprint(renderProtocolError("[fq]> ", err)); !strings.Contains(got, "[fq]> [4000] quota not found") {
+		t.Fatalf("renderProtocolError(err) = %q", got)
+	}
+}
+
+func TestRenderErrorIncludesProtocolCode(t *testing.T) {
+	err := protocol.NewError(protocol.CodePermissionDenied, "permission denied")
+	if got := fmt.Sprint(renderError("error: ", err)); !strings.Contains(got, "error: [3001] permission denied") {
+		t.Fatalf("renderError(err) = %q", got)
 	}
 }

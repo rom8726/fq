@@ -14,17 +14,18 @@ type Report struct {
 }
 
 type InstanceInfo struct {
-	Version     string  `json:"version"`
-	Commit      string  `json:"commit"`
-	BuildDate   string  `json:"build_date"`
-	GoVersion   string  `json:"go_version"`
-	Platform    string  `json:"platform"`
-	UptimeSec   float64 `json:"uptime_sec"`
-	PID         int     `json:"pid"`
-	Role        string  `json:"role"`
-	ReplicaID   *string `json:"replica_id"`
-	ListenAddr  string  `json:"listen_addr"`
-	Connections int     `json:"connections"`
+	Version         string  `json:"version"`
+	Commit          string  `json:"commit"`
+	BuildDate       string  `json:"build_date"`
+	GoVersion       string  `json:"go_version"`
+	Platform        string  `json:"platform"`
+	ProtocolVersion int     `json:"protocol_version"`
+	UptimeSec       float64 `json:"uptime_sec"`
+	PID             int     `json:"pid"`
+	Role            string  `json:"role"`
+	ReplicaID       *string `json:"replica_id"`
+	ListenAddr      string  `json:"listen_addr"`
+	Connections     int     `json:"connections"`
 }
 
 type PersistenceInfo struct {
@@ -77,17 +78,19 @@ type SlaveInfo struct {
 	LastSegmentName   string `json:"last_segment_name"`
 	LastAppliedLSN    uint64 `json:"last_applied_lsn"`
 	ConsecutiveErrors int    `json:"consecutive_errors"`
+	LastErrorCode     int    `json:"last_error_code"`
 	ReconnectTotal    uint64 `json:"reconnect_total"`
 	LastReconnectAt   *int64 `json:"last_reconnect_at"`
 	UpdatedAt         int64  `json:"updated_at"`
 }
 
 type ReplInfo struct {
-	Role          string        `json:"role"`
-	KnownReplicas int           `json:"known_replicas,omitempty"`
-	Replicas      []ReplicaInfo `json:"replicas,omitempty"`
-	Slave         *SlaveInfo    `json:"slave,omitempty"`
-	Truncated     bool          `json:"truncated,omitempty"`
+	Role            string        `json:"role"`
+	ProtocolVersion int           `json:"protocol_version"`
+	KnownReplicas   int           `json:"known_replicas,omitempty"`
+	Replicas        []ReplicaInfo `json:"replicas,omitempty"`
+	Slave           *SlaveInfo    `json:"slave,omitempty"`
+	Truncated       bool          `json:"truncated,omitempty"`
 }
 
 type PartitionStat struct {

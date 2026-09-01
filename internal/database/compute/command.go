@@ -7,7 +7,7 @@ const (
 	IncrCommandID
 	GetCommandID
 	DelCommandID
-	MsgSizeCommandID
+	HelloCommandID
 	MDelCommandID
 	WatchCommandID
 	StreamCommandID
@@ -36,7 +36,7 @@ var (
 	IncrCommand     = "INCR"
 	GetCommand      = "GET"
 	DelCommand      = "DEL"
-	MsgSizeCommand  = "MSGSIZE"
+	HelloCommand    = "HELLO"
 	MDelCommand     = "MDEL"
 	WatchCommand    = "WATCH"
 	StreamCommand   = "STREAM"
@@ -58,7 +58,7 @@ var commandNamesToID = map[string]CommandID{
 	IncrCommand:     IncrCommandID,
 	GetCommand:      GetCommandID,
 	DelCommand:      DelCommandID,
-	MsgSizeCommand:  MsgSizeCommandID,
+	HelloCommand:    HelloCommandID,
 	MDelCommand:     MDelCommandID,
 	WatchCommand:    WatchCommandID,
 	StreamCommand:   StreamCommandID,

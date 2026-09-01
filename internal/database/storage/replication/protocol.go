@@ -6,10 +6,14 @@ import (
 	"fmt"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/protocol"
 )
 
+const ProtocolVersion uint32 = 1
+
 type Request struct {
-	AuthToken string
+	AuthToken       string
+	ProtocolVersion uint32
 	DumpRequest
 	WALRequest
 }
@@ -21,6 +25,7 @@ type DumpRequest struct {
 
 type DumpResponse struct {
 	Succeed     bool
+	ErrorCode   protocol.Code
 	EndOfDump   bool
 	SegmentData []database.DumpElem
 }
@@ -34,6 +39,7 @@ type WALRequest struct {
 
 type WALResponse struct {
 	Succeed           bool
+	ErrorCode         protocol.Code
 	SegmentName       string
 	SegmentOffset     int64
 	NextSegmentOffset int64
@@ -42,7 +48,8 @@ type WALResponse struct {
 
 func NewDumpRequest(authToken, sessionUUID string, lastSegmentNumber uint64) Request {
 	return Request{
-		AuthToken: authToken,
+		AuthToken:       authToken,
+		ProtocolVersion: ProtocolVersion,
 		DumpRequest: DumpRequest{
 			SessionUUID:       sessionUUID,
 			LastSegmentNumber: lastSegmentNumber,
@@ -56,7 +63,8 @@ func NewWALRequest(
 	lastAppliedLSN uint64,
 ) Request {
 	return Request{
-		AuthToken: authToken,
+		AuthToken:       authToken,
+		ProtocolVersion: ProtocolVersion,
 		WALRequest: WALRequest{
 			ReplicaID:       replicaID,
 			LastSegmentName: lastSegmentName,

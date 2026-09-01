@@ -9,10 +9,9 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
-
-var errReplicationUnauthorized = errors.New("replication request is not authorized")
 
 const authFailurePort = "replication"
 
@@ -52,6 +51,29 @@ func NewMaster(
 		secret:       secret,
 		logger:       logger,
 	}, nil
+}
+
+func (m *Master) rejectRequest(request Request, code protocol.Code) []byte {
+	var response any
+	if request.SessionUUID != "" {
+		response = &DumpResponse{ErrorCode: code}
+	} else {
+		response = &WALResponse{ErrorCode: code}
+	}
+
+	var responseData []byte
+	var err error
+	switch typed := response.(type) {
+	case *DumpResponse:
+		responseData, err = Encode(typed)
+	case *WALResponse:
+		responseData, err = Encode(typed)
+	}
+	if err != nil {
+		m.logger.Error().Err(err).Uint16("error_code", uint16(code)).Msg("failed to encode rejection response")
+	}
+
+	return responseData
 }
 
 func (m *Master) authorize(token string) bool {
@@ -107,7 +129,16 @@ func (m *Master) Start(ctx context.Context) error {
 
 			m.logger.Warn().Msg("replication request rejected: invalid auth token")
 
-			return nil, errReplicationUnauthorized
+			return m.rejectRequest(request, protocol.CodeAuthenticationFailed), nil
+		}
+
+		if request.ProtocolVersion != ProtocolVersion {
+			m.logger.Warn().
+				Uint32("requested", request.ProtocolVersion).
+				Uint32("supported", ProtocolVersion).
+				Msg("replication request rejected: unsupported protocol version")
+
+			return m.rejectRequest(request, protocol.CodeUnsupportedVersion), nil
 		}
 
 		if request.SessionUUID != "" {

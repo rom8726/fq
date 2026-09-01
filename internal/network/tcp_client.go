@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"time"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 var ErrIdleTimeout = errors.New("idle timeout")
@@ -72,20 +75,71 @@ func dial(address string, tlsConfig *tls.Config) (net.Conn, error) {
 
 func (c *TCPClient) Send(ctx context.Context, request []byte) ([]byte, error) {
 	var result []byte
-	err := c.Stream(ctx, request, func(message []byte) error {
-		result = make([]byte, len(message))
-		copy(result, message)
+	err := c.Stream(ctx, request, func(kind protocol.Kind, body []byte) error {
+		if kind == protocol.KindNext {
+			return protocol.ErrUnexpectedContinuation
+		}
+
+		result = make([]byte, len(body))
+		copy(result, body)
 
 		return io.EOF
 	})
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 
 	return result, nil
 }
 
-func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]byte) error) error {
+func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func(protocol.Kind, []byte) error) error {
+	if err := c.sendFrame(ctx, request); err != nil {
+		return err
+	}
+
+	response := c.bufferPool.Get()
+	defer c.bufferPool.Put(response)
+
+	for {
+		message, err := c.readFrame(ctx, response)
+		if err != nil {
+			return err
+		}
+
+		kind, body, parseErr := protocol.ParseResponse(message)
+		if parseErr != nil {
+			return parseErr
+		}
+
+		result := make([]byte, len(body))
+		copy(result, body)
+
+		if err := handle(kind, result); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *TCPClient) SendRaw(ctx context.Context, request []byte) ([]byte, error) {
+	if err := c.sendFrame(ctx, request); err != nil {
+		return nil, err
+	}
+
+	response := c.bufferPool.Get()
+	defer c.bufferPool.Put(response)
+
+	message, err := c.readFrame(ctx, response)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]byte, len(message))
+	copy(result, message)
+
+	return result, nil
+}
+
+func (c *TCPClient) sendFrame(ctx context.Context, request []byte) error {
 	if len(request) > c.maxMessageSize {
 		return fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
 	}
@@ -98,26 +152,41 @@ func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func([]by
 		return c.normalizeTimeoutError(ctx, err)
 	}
 
-	response := c.bufferPool.Get()
-	defer c.bufferPool.Put(response)
+	return nil
+}
 
-	for {
-		if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
-			return c.normalizeTimeoutError(ctx, err)
-		}
-
-		message, err := c.frames.readInto(c.connection, c.maxMessageSize, response)
-		if err != nil {
-			return c.normalizeTimeoutError(ctx, err)
-		}
-
-		result := make([]byte, len(message))
-		copy(result, message)
-
-		if err := handle(result); err != nil {
-			return err
-		}
+func (c *TCPClient) readFrame(ctx context.Context, buffer []byte) ([]byte, error) {
+	if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
+		return nil, c.normalizeTimeoutError(ctx, err)
 	}
+
+	message, err := c.frames.readInto(c.connection, c.maxMessageSize, buffer)
+	if err != nil {
+		return nil, c.normalizeTimeoutError(ctx, err)
+	}
+
+	return message, nil
+}
+
+func (c *TCPClient) Hello(ctx context.Context, token string) (protocol.ServerInfo, error) {
+	request := "HELLO " + strconv.FormatUint(uint64(protocol.CurrentVersion), 10)
+	if token != "" {
+		request += " AUTH " + token
+	}
+
+	body, err := c.Send(ctx, []byte(request))
+	if err != nil {
+		return protocol.ServerInfo{}, err
+	}
+
+	info, err := protocol.ParseServerInfo(body)
+	if err != nil {
+		return protocol.ServerInfo{}, err
+	}
+
+	c.SetMaxMessageSizeUnsafe(info.MaxMessageSize)
+
+	return info, nil
 }
 
 func (c *TCPClient) Close() error {

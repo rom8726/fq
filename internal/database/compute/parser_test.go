@@ -230,6 +230,45 @@ func TestParserParseAndAnalyzeQuery(t *testing.T) {
 	}
 }
 
+func TestParseHelloWithoutToken(t *testing.T) {
+	logger := zerolog.Nop()
+	parser := compute.NewParser(&logger)
+
+	query, err := parser.ParseAndAnalyzeQuery(context.Background(), "HELLO 1")
+	require.NoError(t, err)
+	require.Equal(t, compute.HelloCommandID, query.CommandID())
+	require.Equal(t, []string{"1"}, query.Arguments())
+}
+
+func TestParseHelloWithOpaqueToken(t *testing.T) {
+	logger := zerolog.Nop()
+	parser := compute.NewParser(&logger)
+
+	query, err := parser.ParseAndAnalyzeQuery(context.Background(), "HELLO 1 AUTH c2VjcmV0+dG9rZW4=")
+	require.NoError(t, err)
+	require.Equal(t, compute.HelloCommandID, query.CommandID())
+	require.Equal(t, []string{"1", "AUTH", "c2VjcmV0+dG9rZW4="}, query.Arguments())
+}
+
+func TestParseHelloRejectsBadShape(t *testing.T) {
+	logger := zerolog.Nop()
+	parser := compute.NewParser(&logger)
+
+	for _, query := range []string{"HELLO", "HELLO 1 AUTH", "HELLO 1 WAT tok", "HELLO 1 AUTH tok extra"} {
+		_, err := parser.ParseAndAnalyzeQuery(context.Background(), query)
+		require.ErrorIs(t, err, compute.ErrInvalidArguments, query)
+	}
+}
+
+func TestParseTokensRedactsHelloToken(t *testing.T) {
+	logger := zerolog.Nop()
+	parser := compute.NewParser(&logger)
+
+	tokens, err := parser.ParseQuery(context.Background(), "HELLO 1 AUTH c2VjcmV0+dG9rZW4=")
+	require.NoError(t, err)
+	require.Equal(t, []string{"HELLO", "1", "AUTH", "c2VjcmV0+dG9rZW4="}, tokens)
+}
+
 func BenchmarkParserParseQuery(b *testing.B) {
 	logger := zerolog.Nop()
 	parser := compute.NewParser(&logger)

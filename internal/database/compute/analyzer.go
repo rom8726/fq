@@ -2,18 +2,19 @@ package compute
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/rs/zerolog"
+
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 const (
 	incrQueryArgumentsNumber     = 2
 	getQueryArgumentsNumber      = 2
 	delQueryArgumentsNumber      = 2
-	msgSizeQueryArgumentsNumber  = 0
+	helloQueryArgumentsNumber    = -6
 	mdelQueryArgumentsNumber     = -2
 	watchQueryArgumentsNumber    = 2
 	streamQueryArgumentsNumber   = 0
@@ -34,7 +35,7 @@ var queryArgumentsNumber = map[CommandID]int{
 	IncrCommandID:     incrQueryArgumentsNumber,
 	GetCommandID:      getQueryArgumentsNumber,
 	DelCommandID:      delQueryArgumentsNumber,
-	MsgSizeCommandID:  msgSizeQueryArgumentsNumber,
+	HelloCommandID:    helloQueryArgumentsNumber,
 	MDelCommandID:     mdelQueryArgumentsNumber,
 	WatchCommandID:    watchQueryArgumentsNumber,
 	StreamCommandID:   streamQueryArgumentsNumber,
@@ -52,9 +53,9 @@ var queryArgumentsNumber = map[CommandID]int{
 }
 
 var (
-	ErrInvalidSymbol    = errors.New("invalid symbol")
-	ErrInvalidCommand   = errors.New("invalid command")
-	ErrInvalidArguments = errors.New("invalid arguments")
+	ErrInvalidSymbol    = protocol.NewError(protocol.CodeInvalidSymbol, "invalid symbol")
+	ErrInvalidCommand   = protocol.NewError(protocol.CodeInvalidCommand, "invalid command")
+	ErrInvalidArguments = protocol.NewError(protocol.CodeInvalidArguments, "invalid arguments")
 )
 
 type Analyzer struct {
@@ -101,6 +102,10 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 		if len(query.Arguments()) > 1 {
 			return Query{}, ErrInvalidArguments
 		}
+	case argumentsNumber == -6:
+		if !validHelloArguments(query.Arguments()) {
+			return Query{}, ErrInvalidArguments
+		}
 	default:
 		return Query{}, fmt.Errorf("unknown arguments count setting: %d for command %d", argumentsNumber, commandID)
 	}
@@ -110,6 +115,17 @@ func (a *Analyzer) AnalyzeQuery(_ context.Context, tokens []string) (Query, erro
 	}
 
 	return query, nil
+}
+
+func validHelloArguments(arguments []string) bool {
+	switch len(arguments) {
+	case 1:
+		return true
+	case 3:
+		return strings.EqualFold(arguments[1], AuthCommand)
+	default:
+		return false
+	}
 }
 
 func validQuotaArguments(arguments []string) bool {

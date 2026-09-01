@@ -1,0 +1,38 @@
+name: Stress
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Run stress scenarios
+        run: |
+          set +e
+          status=0
+
+          make stress-crash-loop || status=$?
+          make stress-dump-recovery || status=$?
+          make stress-replication || status=$?
+
+          exit "$status"
+
+      - name: Upload stress reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-reports
+          path: benchmarks/results/stress-*.json
+          if-no-files-found: error

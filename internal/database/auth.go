@@ -32,7 +32,7 @@ var commandRoles = map[compute.CommandID]security.Role{
 
 func requiresAuthorization(commandID compute.CommandID) bool {
 	switch commandID {
-	case compute.AuthCommandID, compute.MsgSizeCommandID:
+	case compute.AuthCommandID, compute.HelloCommandID:
 		return false
 	default:
 		return true
@@ -64,7 +64,7 @@ func (d *Database) handleAuthQuery(
 ) ([]byte, error) {
 	arguments := query.Arguments()
 	if len(arguments) != 1 {
-		return appendErrorMsg(dst, errInvalidArgumentsCount), nil
+		return d.appendErrorMsg(dst, errInvalidArgumentsCount), nil
 	}
 
 	if err := session.Authenticate(arguments[0]); err != nil {
@@ -73,10 +73,10 @@ func (d *Database) handleAuthQuery(
 		d.logger.Warn().Int("failures", session.Failures()).Msg("client authentication failed")
 
 		if errors.Is(err, security.ErrTooManyAuthFailures) {
-			return nil, err
+			return d.appendErrorMsg(dst, err), err
 		}
 
-		return appendErrorMsg(dst, err), nil
+		return d.appendErrorMsg(dst, err), nil
 	}
 
 	d.logger.Info().Str("role", session.Role().String()).Msg("client authenticated")
@@ -85,19 +85,21 @@ func (d *Database) handleAuthQuery(
 }
 
 func redactQuery(query string) string {
-	trimmed := strings.TrimLeft(query, " \t\r\n")
-	if len(trimmed) < len(compute.AuthCommand) {
+	fields := strings.Fields(query)
+	if len(fields) == 0 {
 		return query
 	}
 
-	if !strings.EqualFold(trimmed[:len(compute.AuthCommand)], compute.AuthCommand) {
+	switch {
+	case strings.EqualFold(fields[0], compute.AuthCommand):
+		return compute.AuthCommand + " [REDACTED]"
+	case strings.EqualFold(fields[0], compute.HelloCommand) && len(fields) > 2:
+		if len(fields) == 4 && strings.EqualFold(fields[2], compute.AuthCommand) {
+			return strings.Join(fields[:3], " ") + " [REDACTED]"
+		}
+
+		return strings.Join(fields[:2], " ") + " [REDACTED]"
+	default:
 		return query
 	}
-
-	rest := trimmed[len(compute.AuthCommand):]
-	if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
-		return query
-	}
-
-	return compute.AuthCommand + " [REDACTED]"
 }

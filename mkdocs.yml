@@ -1,0 +1,49 @@
+site_name: fq
+site_description: A small specialized database for frequency capping, rate limiting, and quota counters.
+site_url: https://fq-db.github.io/fq/
+repo_url: https://github.com/fq-db/fq
+repo_name: fq-db/fq
+edit_uri: edit/main/docs/
+
+exclude_docs: |
+  superpowers/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Commands: commands.md
+  - Wire protocol: protocol.md
+  - Consistency model: consistency.md
+  - Configuration: config.md
+  - Operations: operations.md
+  - Persistence: persistence.md

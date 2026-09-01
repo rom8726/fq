@@ -18,11 +18,12 @@ import (
 	"github.com/fq-db/fq/internal/database"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
 
 type TCPClient interface {
-	Send(context.Context, []byte) ([]byte, error)
+	SendRaw(context.Context, []byte) ([]byte, error)
 	Close() error
 }
 
@@ -44,6 +45,7 @@ type SlaveStatus struct {
 	LastSegmentOffset int64
 	LastAppliedLSN    uint64
 	ConsecutiveErrors int
+	LastErrorCode     protocol.Code
 	ReconnectTotal    uint64
 	LastReconnectAt   time.Time
 	UpdatedAt         time.Time
@@ -84,6 +86,8 @@ type Slave struct {
 	reconnectTotal  atomic.Uint64
 	lastReconnectAt atomic.Pointer[time.Time]
 
+	lastErrorCode protocol.Code
+
 	status atomic.Pointer[SlaveStatus]
 
 	logger *zerolog.Logger
@@ -103,10 +107,22 @@ func (s *Slave) refreshStatus(connected bool) {
 		LastSegmentOffset: s.lastSegmentOffset,
 		LastAppliedLSN:    s.lastAppliedLSN,
 		ConsecutiveErrors: s.consecutiveErrors,
+		LastErrorCode:     s.lastErrorCode,
 		ReconnectTotal:    s.reconnectTotal.Load(),
 		LastReconnectAt:   lastReconnectAt,
 		UpdatedAt:         time.Now(),
 	})
+}
+
+func (s *Slave) recordMasterError(code protocol.Code, stage string) error {
+	s.lastErrorCode = code
+
+	s.logger.Error().
+		Uint16("error_code", uint16(code)).
+		Str("stage", stage).
+		Msg("master rejected replication request")
+
+	return fmt.Errorf("failed to apply replication data: master error code %d", code)
 }
 
 func (s *Slave) Status() SlaveStatus {
