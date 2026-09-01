@@ -164,6 +164,18 @@ func TestHelloParsesServerInfoAndAppliesMessageSize(t *testing.T) {
 	require.Equal(t, 65536, client.maxMessageSize)
 }
 
+func TestSendRawReturnsFrameBytesUnparsed(t *testing.T) {
+	rawResponse := []byte{0x7f, 0x03, 0x01, 0x02, 0xff, 0xfe, 0x00, 'd', 'a', 't', 'a'}
+
+	client := newTestClient(t, func(request []byte) []byte {
+		return rawResponse
+	})
+
+	response, err := client.SendRaw(context.Background(), []byte("wal request"))
+	require.NoError(t, err)
+	require.Equal(t, rawResponse, response)
+}
+
 func TestHelloSendsToken(t *testing.T) {
 	client := newTestClient(t, func(request []byte) []byte {
 		require.Equal(t, "HELLO 1 AUTH s3cret", string(request))

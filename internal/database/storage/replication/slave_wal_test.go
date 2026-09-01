@@ -296,7 +296,7 @@ func newRecordingWALClient(t *testing.T, response WALResponse) *recordingWALClie
 	}
 }
 
-func (c *recordingWALClient) Send(_ context.Context, data []byte) ([]byte, error) {
+func (c *recordingWALClient) SendRaw(_ context.Context, data []byte) ([]byte, error) {
 	var request Request
 	require.NoError(c.t, Decode(&request, data))
 	c.requests = append(c.requests, request.WALRequest)
@@ -313,7 +313,7 @@ type failingWALClient struct {
 	closed bool
 }
 
-func (c *failingWALClient) Send(context.Context, []byte) ([]byte, error) {
+func (c *failingWALClient) SendRaw(context.Context, []byte) ([]byte, error) {
 	return nil, c.err
 }
 

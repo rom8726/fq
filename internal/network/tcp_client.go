@@ -93,29 +93,17 @@ func (c *TCPClient) Send(ctx context.Context, request []byte) ([]byte, error) {
 }
 
 func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func(protocol.Kind, []byte) error) error {
-	if len(request) > c.maxMessageSize {
-		return fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
-	}
-
-	if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
-		return c.normalizeTimeoutError(ctx, err)
-	}
-
-	if err := c.frames.write(c.connection, request); err != nil {
-		return c.normalizeTimeoutError(ctx, err)
+	if err := c.sendFrame(ctx, request); err != nil {
+		return err
 	}
 
 	response := c.bufferPool.Get()
 	defer c.bufferPool.Put(response)
 
 	for {
-		if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
-			return c.normalizeTimeoutError(ctx, err)
-		}
-
-		message, err := c.frames.readInto(c.connection, c.maxMessageSize, response)
+		message, err := c.readFrame(ctx, response)
 		if err != nil {
-			return c.normalizeTimeoutError(ctx, err)
+			return err
 		}
 
 		kind, body, parseErr := protocol.ParseResponse(message)
@@ -130,6 +118,54 @@ func (c *TCPClient) Stream(ctx context.Context, request []byte, handle func(prot
 			return err
 		}
 	}
+}
+
+func (c *TCPClient) SendRaw(ctx context.Context, request []byte) ([]byte, error) {
+	if err := c.sendFrame(ctx, request); err != nil {
+		return nil, err
+	}
+
+	response := c.bufferPool.Get()
+	defer c.bufferPool.Put(response)
+
+	message, err := c.readFrame(ctx, response)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]byte, len(message))
+	copy(result, message)
+
+	return result, nil
+}
+
+func (c *TCPClient) sendFrame(ctx context.Context, request []byte) error {
+	if len(request) > c.maxMessageSize {
+		return fmt.Errorf("request exceeds max message size (%d)", c.maxMessageSize)
+	}
+
+	if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
+		return c.normalizeTimeoutError(ctx, err)
+	}
+
+	if err := c.frames.write(c.connection, request); err != nil {
+		return c.normalizeTimeoutError(ctx, err)
+	}
+
+	return nil
+}
+
+func (c *TCPClient) readFrame(ctx context.Context, buffer []byte) ([]byte, error) {
+	if err := c.connection.SetDeadline(c.deadline(ctx)); err != nil {
+		return nil, c.normalizeTimeoutError(ctx, err)
+	}
+
+	message, err := c.frames.readInto(c.connection, c.maxMessageSize, buffer)
+	if err != nil {
+		return nil, c.normalizeTimeoutError(ctx, err)
+	}
+
+	return message, nil
 }
 
 func (c *TCPClient) Hello(ctx context.Context, token string) (protocol.ServerInfo, error) {

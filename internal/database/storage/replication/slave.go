@@ -22,7 +22,7 @@ import (
 )
 
 type TCPClient interface {
-	Send(context.Context, []byte) ([]byte, error)
+	SendRaw(context.Context, []byte) ([]byte, error)
 	Close() error
 }
 

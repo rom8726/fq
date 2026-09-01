@@ -116,7 +116,7 @@ func newStaticDumpClient(t *testing.T, response DumpResponse) *staticDumpClient 
 	return &staticDumpClient{response: responseData}
 }
 
-func (c *staticDumpClient) Send(context.Context, []byte) ([]byte, error) {
+func (c *staticDumpClient) SendRaw(context.Context, []byte) ([]byte, error) {
 	return c.response, nil
 }
 
