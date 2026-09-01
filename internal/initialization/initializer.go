@@ -207,12 +207,6 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 
 	group, groupCtx := errgroup.WithContext(ctx)
 
-	group.Go(func() error {
-		strg.Start(groupCtx)
-
-		return nil
-	})
-
 	var lastTx database.Tx
 	if i.dumper != nil {
 		var err error
@@ -225,6 +219,12 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 	if err := strg.LoadWAL(ctx, lastTx); err != nil {
 		return err
 	}
+
+	group.Go(func() error {
+		strg.Start(groupCtx)
+
+		return nil
+	})
 
 	if i.master != nil {
 		group.Go(func() error {
