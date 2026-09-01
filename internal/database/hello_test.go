@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/protocol"
+	"github.com/fq-db/fq/internal/security"
 )
 
 func handshakeContext(t *testing.T) (context.Context, *protocol.Session) {
@@ -94,4 +95,24 @@ func TestFailedInlineAuthStillNegotiatesVersion(t *testing.T) {
 	require.True(t, session.Negotiated())
 	require.Equal(t, "err|3000|not authenticated", db.HandleQuery(ctx, "GET key 60"))
 	require.Equal(t, "ok|1", db.HandleQuery(ctx, "AUTH rw-token-value"))
+}
+
+func TestTooManyInlineAuthFailuresWritesProtocolError(t *testing.T) {
+	db := newTestDatabase(t)
+	ctx, session := authHandshakeContext(t)
+
+	for i := 1; i < security.MaxAuthFailures; i++ {
+		require.Contains(t, db.HandleQuery(ctx, "HELLO 1 AUTH wrong-token-value"), "authentication failed")
+	}
+
+	var response []byte
+	err := db.HandleQueryStream(ctx, "HELLO 1 AUTH wrong-token-value", func(msg []byte) error {
+		response = append(response[:0], msg...)
+
+		return nil
+	})
+
+	require.ErrorIs(t, err, security.ErrTooManyAuthFailures)
+	require.Equal(t, "err|3003|too many authentication failures", string(response))
+	require.True(t, session.Negotiated())
 }

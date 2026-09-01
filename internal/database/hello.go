@@ -28,7 +28,7 @@ func (d *Database) handleHelloQuery(ctx context.Context, query compute.Query, ds
 
 		authResponse, authErr := d.handleAuthQuery(session, authQuery, dst)
 		if authErr != nil {
-			return nil, authErr
+			return authResponse, authErr
 		}
 
 		if isErrorResponse(authResponse) {

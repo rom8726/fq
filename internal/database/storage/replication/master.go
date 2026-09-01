@@ -13,8 +13,6 @@ import (
 	"github.com/fq-db/fq/internal/security"
 )
 
-var errReplicationUnauthorized = errors.New("replication request is not authorized")
-
 const authFailurePort = "replication"
 
 type TCPServer interface {
@@ -55,12 +53,12 @@ func NewMaster(
 	}, nil
 }
 
-func (m *Master) rejectVersion(request Request) []byte {
+func (m *Master) rejectRequest(request Request, code protocol.Code) []byte {
 	var response any
 	if request.SessionUUID != "" {
-		response = &DumpResponse{ErrorCode: protocol.CodeUnsupportedVersion}
+		response = &DumpResponse{ErrorCode: code}
 	} else {
-		response = &WALResponse{ErrorCode: protocol.CodeUnsupportedVersion}
+		response = &WALResponse{ErrorCode: code}
 	}
 
 	var responseData []byte
@@ -72,7 +70,7 @@ func (m *Master) rejectVersion(request Request) []byte {
 		responseData, err = Encode(typed)
 	}
 	if err != nil {
-		m.logger.Error().Err(err).Msg("failed to encode version rejection response")
+		m.logger.Error().Err(err).Uint16("error_code", uint16(code)).Msg("failed to encode rejection response")
 	}
 
 	return responseData
@@ -131,7 +129,7 @@ func (m *Master) Start(ctx context.Context) error {
 
 			m.logger.Warn().Msg("replication request rejected: invalid auth token")
 
-			return nil, errReplicationUnauthorized
+			return m.rejectRequest(request, protocol.CodeAuthenticationFailed), nil
 		}
 
 		if request.ProtocolVersion != ProtocolVersion {
@@ -140,7 +138,7 @@ func (m *Master) Start(ctx context.Context) error {
 				Uint32("supported", ProtocolVersion).
 				Msg("replication request rejected: unsupported protocol version")
 
-			return m.rejectVersion(request), nil
+			return m.rejectRequest(request, protocol.CodeUnsupportedVersion), nil
 		}
 
 		if request.SessionUUID != "" {

@@ -73,7 +73,7 @@ func (d *Database) handleAuthQuery(
 		d.logger.Warn().Int("failures", session.Failures()).Msg("client authentication failed")
 
 		if errors.Is(err, security.ErrTooManyAuthFailures) {
-			return nil, err
+			return d.appendErrorMsg(dst, err), err
 		}
 
 		return d.appendErrorMsg(dst, err), nil

@@ -214,9 +214,11 @@ func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
 	require.NoError(t, err)
 
 	response, err := impostor.SendRaw(context.Background(), data)
-	if err == nil {
-		require.Empty(t, response)
-	}
+	require.NoError(t, err)
+	var walResponse replication.WALResponse
+	require.NoError(t, replication.Decode(&walResponse, response))
+	require.False(t, walResponse.Succeed)
+	require.Equal(t, protocol.CodeAuthenticationFailed, walResponse.ErrorCode)
 
 	legitimate, err := factory.Create()
 	require.NoError(t, err)
@@ -268,9 +270,11 @@ func TestReplicationPortRefusesDumpToImpostor(t *testing.T) {
 	require.NoError(t, err)
 
 	response, err := impostor.SendRaw(context.Background(), data)
-	if err == nil {
-		require.Empty(t, response)
-	}
+	require.NoError(t, err)
+	var dumpResponse replication.DumpResponse
+	require.NoError(t, replication.Decode(&dumpResponse, response))
+	require.False(t, dumpResponse.Succeed)
+	require.Equal(t, protocol.CodeAuthenticationFailed, dumpResponse.ErrorCode)
 }
 
 func TestReplicationPortOverMutualTLS(t *testing.T) {

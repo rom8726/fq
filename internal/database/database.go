@@ -163,6 +163,12 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	if query.CommandID() == compute.HelloCommandID {
 		helloResponse, helloErr := d.handleHelloQuery(ctx, query, responseBuffer.buf[:0])
 		if helloErr != nil {
+			if len(helloResponse) > 0 {
+				if writeErr := write(helloResponse); writeErr != nil {
+					return writeErr
+				}
+			}
+
 			return helloErr
 		}
 
@@ -176,6 +182,12 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 	if query.CommandID() == compute.AuthCommandID {
 		authResponse, authErr := d.handleAuthQuery(session, query, responseBuffer.buf[:0])
 		if authErr != nil {
+			if len(authResponse) > 0 {
+				if writeErr := write(authResponse); writeErr != nil {
+					return writeErr
+				}
+			}
+
 			return authErr
 		}
 

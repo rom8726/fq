@@ -150,8 +150,14 @@ func TestBadAuthIsReportedAndLimited(t *testing.T) {
 		require.Contains(t, db.HandleQuery(ctx, "AUTH wrong-token-value"), "authentication failed")
 	}
 
-	err := db.HandleQueryStream(ctx, "AUTH wrong-token-value", func([]byte) error { return nil })
+	var response []byte
+	err := db.HandleQueryStream(ctx, "AUTH wrong-token-value", func(msg []byte) error {
+		response = append(response[:0], msg...)
+
+		return nil
+	})
 	require.ErrorIs(t, err, security.ErrTooManyAuthFailures)
+	require.Equal(t, "err|3003|too many authentication failures", string(response))
 	require.Equal(t, security.MaxAuthFailures, session.Failures())
 }
 
