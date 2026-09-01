@@ -20,7 +20,9 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Run tests with coverage
-        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+        run: |
+          PACKAGES=$(go list ./... | grep -v '/cmd/')
+          go test -covermode=atomic -coverprofile=coverage.out -coverpkg="$(echo "$PACKAGES" | tr '\n' ',')" $PACKAGES
 
       - name: Upload coverage
         uses: coverallsapp/github-action@v2
