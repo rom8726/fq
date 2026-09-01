@@ -19,7 +19,7 @@ see [Persistence](persistence.md).
 ## Concurrency control
 
 The in-memory engine is partitioned: keys are hashed across
-`engine.partitions` independent hash tables (default 10; see
+`engine.partitions` independent hash tables (default 16; see
 [Configuration](config.md)), each guarded by its own lock. A command touching a single
 key/window pair is atomic with respect to other commands on the same key, because it
 holds that partition's lock for the duration of the operation. Commands touching

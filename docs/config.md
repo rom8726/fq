@@ -126,14 +126,12 @@ engine:
 |---|---|---|---|---|
 | `type` | `in_memory` | yes | — | The only supported value |
 | `clean_interval` | duration > 0 | yes | — | How often expired keys are swept |
-| `partitions` | int ≥ 0 | no | 10 | Independent in-memory hash-table shards; see [Consistency model](consistency.md#concurrency-control) |
+| `partitions` | int ≥ 0 | no | 16 | Independent in-memory hash-table shards; see [Consistency model](consistency.md#concurrency-control) |
 | `wal_apply_workers` | int ≥ 0 | no | 1 | Goroutines applying one WAL chunk on a replica |
 | `limit_event_queue_capacity` | int ≥ 0 | no | 16 | Per-subscriber queue size for `STREAM` events |
 | `key_index` | bool | no | `false` | Enables `SCAN`/`PSCAN`; adds write-path bookkeeping when on |
 
-`config.yml`'s shipped default (`partitions: 16`) differs from the code default (`10`,
-used only when the key is `0` or omitted) — both are valid; pick either depending on
-core count and lock contention.
+If `partitions` is omitted or set to `0`, fq uses the default value `16`.
 
 ## `replication`
 

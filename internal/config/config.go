@@ -28,7 +28,7 @@ const (
 	ReplicaTypeSlave  = "slave"
 
 	DefaultLimitEventQueueCapacity = 16
-	DefaultEnginePartitions        = 10
+	DefaultEnginePartitions        = 16
 	DefaultEngineWALApplyWorkers   = 1
 )
 

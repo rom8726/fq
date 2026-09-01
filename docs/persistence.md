@@ -102,12 +102,12 @@ used:
 
 ```yaml
 engine:
-  partitions: 10
+  partitions: 16
 ```
 
 Higher values reduce per-partition lock contention and make dump/clean snapshots
 smaller, at the cost of more partition objects. If omitted or set to `0`, fq uses
-`10`. See [Consistency model](consistency.md#concurrency-control) for what this buys
+`16`. See [Consistency model](consistency.md#concurrency-control) for what this buys
 you concurrency-wise.
 
 ## WAL Apply Workers
