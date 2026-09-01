@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
 
@@ -52,6 +53,29 @@ func NewMaster(
 		secret:       secret,
 		logger:       logger,
 	}, nil
+}
+
+func (m *Master) rejectVersion(request Request) []byte {
+	var response any
+	if request.SessionUUID != "" {
+		response = &DumpResponse{ErrorCode: protocol.CodeUnsupportedVersion}
+	} else {
+		response = &WALResponse{ErrorCode: protocol.CodeUnsupportedVersion}
+	}
+
+	var responseData []byte
+	var err error
+	switch typed := response.(type) {
+	case *DumpResponse:
+		responseData, err = Encode(typed)
+	case *WALResponse:
+		responseData, err = Encode(typed)
+	}
+	if err != nil {
+		m.logger.Error().Err(err).Msg("failed to encode version rejection response")
+	}
+
+	return responseData
 }
 
 func (m *Master) authorize(token string) bool {
@@ -108,6 +132,15 @@ func (m *Master) Start(ctx context.Context) error {
 			m.logger.Warn().Msg("replication request rejected: invalid auth token")
 
 			return nil, errReplicationUnauthorized
+		}
+
+		if request.ProtocolVersion != ProtocolVersion {
+			m.logger.Warn().
+				Uint32("requested", request.ProtocolVersion).
+				Uint32("supported", ProtocolVersion).
+				Msg("replication request rejected: unsupported protocol version")
+
+			return m.rejectVersion(request), nil
 		}
 
 		if request.SessionUUID != "" {

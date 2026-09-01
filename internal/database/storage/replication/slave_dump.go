@@ -87,7 +87,7 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 		return nil
 	}
 
-	return fmt.Errorf("failed to apply replication data: master error")
+	return s.recordMasterError(response.ErrorCode, "dump")
 }
 
 func maxLSN(elems []database.DumpElem) uint64 {

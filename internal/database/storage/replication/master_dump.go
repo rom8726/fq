@@ -1,6 +1,9 @@
 package replication
 
-import "github.com/fq-db/fq/internal/database"
+import (
+	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/protocol"
+)
 
 type DumpProvider interface {
 	GetNextData(sessionUUID string) ([]database.DumpElem, bool, error)
@@ -25,7 +28,7 @@ func (m *Master) synchronizeDump(request DumpRequest) DumpResponse {
 			Uint64("last_segment_number", request.LastSegmentNumber).
 			Msg("error getting next dump data")
 
-		return DumpResponse{Succeed: false}
+		return DumpResponse{Succeed: false, ErrorCode: protocol.CodeInternal}
 	}
 
 	// If no more data and no elements, it means dump is empty (first startup)

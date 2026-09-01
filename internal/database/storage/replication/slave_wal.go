@@ -79,7 +79,7 @@ func (s *Slave) synchronizeWAL(ctx context.Context) error {
 		return nil
 	}
 
-	return fmt.Errorf("failed to apply replication data: master error")
+	return s.recordMasterError(response.ErrorCode, "wal")
 }
 
 func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error {
