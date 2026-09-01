@@ -129,6 +129,9 @@ func (d *Database) HandleQuery(ctx context.Context, queryStr string) string {
 	return response
 }
 
+// HandleQueryStream ...
+//
+//nolint:gocyclo,gocritic // need refactoring
 func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write func([]byte) error) error {
 	if d.logger.GetLevel() == zerolog.DebugLevel {
 		d.logger.Debug().
