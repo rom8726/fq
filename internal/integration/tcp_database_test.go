@@ -27,6 +27,7 @@ import (
 	"github.com/fq-db/fq/internal/database/storage/replication"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
 
@@ -146,6 +147,22 @@ func TestTCPDatabaseAcceptsBoundaryInputs(t *testing.T) {
 	app.RequireQuery("GET max_window 4294967295", "ok|1")
 
 	app.RequireRateLimit("RLIMIT FW max_limit 2147483647 600", true, 1, 2147483646, 600)
+}
+
+func TestHandshakeRequiredOverTCP(t *testing.T) {
+	app := startTestDatabase(t, t.TempDir())
+	defer app.Close()
+
+	client := app.RawClient(t)
+	defer func() {
+		_ = client.Close()
+	}()
+
+	_, err := client.Send(context.Background(), []byte("GET key 60"))
+
+	var protoErr *protocol.Error
+	require.ErrorAs(t, err, &protoErr)
+	require.Equal(t, protocol.CodeHandshakeRequired, protoErr.Code)
 }
 
 func TestTCPDatabaseScanAndPScan(t *testing.T) {
@@ -378,7 +395,7 @@ func TestTCPDatabaseIncrHotKeyConcurrently(t *testing.T) {
 
 					return
 				}
-				if !strings.HasPrefix(string(response), "ok|") {
+				if _, err := strconv.Atoi(string(response)); err != nil {
 					errs <- fmt.Errorf("unexpected response: %s", response)
 
 					return
@@ -439,7 +456,7 @@ func TestTCPDatabaseRLimitDoesNotExceedLimitConcurrently(t *testing.T) {
 
 						return
 					}
-					result, err := parseRateLimitResponse(string(response))
+					result, err := parseRateLimitResponse("ok|" + string(response))
 					if err != nil {
 						errs <- err
 
@@ -600,8 +617,8 @@ func TestTCPDatabaseSlaveStreamsReplicatedQuotaEvents(t *testing.T) {
 	events := make(chan string, 4)
 	errs := make(chan error, 1)
 	go func() {
-		errs <- streamClient.Stream(context.Background(), []byte("QPSTREAM tenant_a-"), func(response []byte) error {
-			events <- string(response)
+		errs <- streamClient.Stream(context.Background(), []byte("QPSTREAM tenant_a-"), func(_ protocol.Kind, response []byte) error {
+			events <- "ok|" + string(response)
 
 			return nil
 		})
@@ -644,8 +661,8 @@ func TestTCPDatabaseSlaveStreamsReplicatedLimitEvents(t *testing.T) {
 	events := make(chan string, 4)
 	errs := make(chan error, 1)
 	go func() {
-		errs <- streamClient.Stream(context.Background(), []byte("PSTREAM tenant_a-"), func(response []byte) error {
-			events <- string(response)
+		errs <- streamClient.Stream(context.Background(), []byte("PSTREAM tenant_a-"), func(_ protocol.Kind, response []byte) error {
+			events <- "ok|" + string(response)
 
 			return nil
 		})
@@ -680,8 +697,8 @@ func TestTCPDatabasePStreamFiltersLimitEventsByPrefix(t *testing.T) {
 	events := make(chan string, 2)
 	errs := make(chan error, 1)
 	go func() {
-		errs <- streamClient.Stream(context.Background(), []byte("PSTREAM tenant_a-"), func(response []byte) error {
-			events <- string(response)
+		errs <- streamClient.Stream(context.Background(), []byte("PSTREAM tenant_a-"), func(_ protocol.Kind, response []byte) error {
+			events <- "ok|" + string(response)
 
 			return nil
 		})
@@ -711,8 +728,8 @@ func TestTCPDatabaseQPStreamFiltersQuotaEventsByPrefix(t *testing.T) {
 	events := make(chan string, 4)
 	errs := make(chan error, 1)
 	go func() {
-		errs <- streamClient.Stream(context.Background(), []byte("QPSTREAM tenant_a-"), func(response []byte) error {
-			events <- string(response)
+		errs <- streamClient.Stream(context.Background(), []byte("QPSTREAM tenant_a-"), func(_ protocol.Kind, response []byte) error {
+			events <- "ok|" + string(response)
 
 			return nil
 		})
@@ -1022,7 +1039,11 @@ func startTestDatabaseWithDumpAndKeyIndex(
 	comp := compute.NewCompute(compute.NewParser(&logger), compute.NewAnalyzer(&logger), &logger)
 	db := database.NewDatabase(comp, strg, &logger, 64<<10)
 	address := freeLocalAddress(t)
-	server, err := network.NewTCPServer(address, 128, 64<<10, time.Second, &logger)
+	server, err := network.NewTCPServer(address, 128, 64<<10, time.Second, &logger,
+		network.WithConnContext(func(ctx context.Context, _ net.Conn) context.Context {
+			return protocol.WithSession(ctx, protocol.NewSession())
+		}),
+	)
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
@@ -1149,7 +1170,11 @@ func startQueryServer(
 	comp := compute.NewCompute(compute.NewParser(logger), compute.NewAnalyzer(logger), logger)
 	db := database.NewDatabase(comp, strg, logger, 64<<10)
 	address := freeLocalAddress(t)
-	server, err := network.NewTCPServer(address, 128, 64<<10, time.Second, logger)
+	server, err := network.NewTCPServer(address, 128, 64<<10, time.Second, logger,
+		network.WithConnContext(func(ctx context.Context, _ net.Conn) context.Context {
+			return protocol.WithSession(ctx, protocol.NewSession())
+		}),
+	)
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
@@ -1227,9 +1252,14 @@ func (a *testDatabaseApp) Query(query string) string {
 	defer cancel()
 
 	response, err := a.client.Send(ctx, []byte(query))
-	require.NoError(a.t, err)
+	if err != nil {
+		var protoErr *protocol.Error
+		require.ErrorAs(a.t, err, &protoErr)
 
-	return string(response)
+		return fmt.Sprintf("err|%d|%s", protoErr.Code, protoErr.Msg)
+	}
+
+	return "ok|" + string(response)
 }
 
 func (a *testDatabaseApp) ScanAll(command, prefix string, count int) []string {
@@ -1263,20 +1293,25 @@ func (a *testDatabaseApp) ScanAll(command, prefix string, count int) []string {
 func (a *testDatabaseApp) RequireQueryPrefix(query, prefix string) string {
 	a.t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	response := a.Query(query)
+	require.True(a.t, strings.HasPrefix(response, prefix), response)
 
-	response, err := a.client.Send(ctx, []byte(query))
-	require.NoError(a.t, err)
-	require.True(a.t, strings.HasPrefix(string(response), prefix), string(response))
-
-	return string(response)
+	return response
 }
 
 func (a *testDatabaseApp) RequireOK(query string) string {
 	a.t.Helper()
 
 	return a.RequireQueryPrefix(query, "ok|")
+}
+
+func (a *testDatabaseApp) RawClient(t *testing.T) *network.TCPClient {
+	t.Helper()
+
+	client, err := network.NewTCPClient(a.address, 64<<10, time.Second)
+	require.NoError(t, err)
+
+	return client
 }
 
 func (a *testDatabaseApp) RequireRateLimit(
@@ -1294,11 +1329,7 @@ func (a *testDatabaseApp) RequireRateLimit(
 	response, err := a.client.Send(ctx, []byte(query))
 	require.NoError(a.t, err)
 
-	parts := strings.Split(string(response), "|")
-	require.Len(a.t, parts, 2)
-	require.Equal(a.t, "ok", parts[0])
-
-	fields := strings.Split(parts[1], ";")
+	fields := strings.Split(string(response), ";")
 	require.Len(a.t, fields, 4)
 	if allowed {
 		require.Equal(a.t, "1", fields[0])
@@ -1330,11 +1361,7 @@ func (a *testDatabaseApp) RequireQuotaAcquire(
 	response, err := a.client.Send(ctx, []byte(query))
 	require.NoError(a.t, err)
 
-	parts := strings.Split(string(response), "|")
-	require.Len(a.t, parts, 2)
-	require.Equal(a.t, "ok", parts[0])
-
-	fields := strings.Split(parts[1], ";")
+	fields := strings.Split(string(response), ";")
 	require.Len(a.t, fields, 5)
 	if acquired {
 		require.Equal(a.t, "1", fields[0])
@@ -1371,11 +1398,7 @@ func (a *testDatabaseApp) RequireQuotaInfo(
 	response, err := a.client.Send(ctx, []byte(query))
 	require.NoError(a.t, err)
 
-	parts := strings.Split(string(response), "|")
-	require.Len(a.t, parts, 2)
-	require.Equal(a.t, "ok", parts[0])
-
-	fields := strings.Split(parts[1], ";")
+	fields := strings.Split(string(response), ";")
 	require.Len(a.t, fields, 3+len(clients)*3)
 	require.Equal(a.t, strconv.FormatInt(int64(limit), 10), fields[0])
 	require.Equal(a.t, strconv.FormatInt(int64(used), 10), fields[1])
@@ -1782,7 +1805,13 @@ func sendQueryAsync(client *network.TCPClient, query string, timeout time.Durati
 		defer cancel()
 
 		response, err := client.Send(ctx, []byte(query))
-		result <- asyncQueryResult{response: string(response), err: err}
+		if err != nil {
+			result <- asyncQueryResult{err: err}
+
+			return
+		}
+
+		result <- asyncQueryResult{response: "ok|" + string(response)}
 	}()
 
 	return result
@@ -1863,6 +1892,9 @@ func connectEventuallyWithIdle(t *testing.T, address string, idleTimeout time.Du
 		return err == nil
 	}, time.Second, 10*time.Millisecond)
 
+	_, err := client.Hello(context.Background(), "")
+	require.NoError(t, err)
+
 	return client
 }
 
@@ -1877,6 +1909,10 @@ func tryQuery(address, query string) (string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+
+	if _, err := client.Hello(ctx, ""); err != nil {
+		return "", err
+	}
 
 	response, err := client.Send(ctx, []byte(query))
 	if err != nil {

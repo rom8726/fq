@@ -3,7 +3,7 @@ package integration
 import (
 	"context"
 	"net"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/dbcli"
 	"github.com/fq-db/fq/internal/network"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
 )
 
@@ -107,9 +108,11 @@ func TestClientPortRejectsUnauthenticatedDestructiveCommands(t *testing.T) {
 	client := connectWithToken(t, address, "")
 
 	for _, query := range []string{"FLUSHDB", "TRUNCATE", "GET key 60", "INCR key 60"} {
-		response, err := client.Send(context.Background(), []byte(query))
-		require.NoError(t, err, query)
-		require.Contains(t, string(response), "not authenticated", query)
+		_, err := client.Send(context.Background(), []byte(query))
+
+		var protoErr *protocol.Error
+		require.ErrorAs(t, err, &protoErr, query)
+		require.Equal(t, protocol.CodeNotAuthenticated, protoErr.Code, query)
 	}
 }
 
@@ -117,27 +120,29 @@ func TestClientPortEnforcesRoles(t *testing.T) {
 	address := startSecuredTestServer(t, securedRegistry(t))
 
 	readOnly := connectWithToken(t, address, "ro-token-value")
-	response, err := readOnly.Send(context.Background(), []byte("TRUNCATE"))
-	require.NoError(t, err)
-	require.Contains(t, string(response), "permission denied")
+	_, err := readOnly.Send(context.Background(), []byte("TRUNCATE"))
+	var protoErr *protocol.Error
+	require.ErrorAs(t, err, &protoErr)
+	require.Equal(t, protocol.CodePermissionDenied, protoErr.Code)
 
-	response, err = readOnly.Send(context.Background(), []byte("GET key 60"))
+	response, err := readOnly.Send(context.Background(), []byte("GET key 60"))
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(string(response), "ok|"), string(response))
+	_, err = strconv.Atoi(string(response))
+	require.NoError(t, err, string(response))
 
 	readWrite := connectWithToken(t, address, "rw-token-value")
 	response, err = readWrite.Send(context.Background(), []byte("INCR key 60"))
 	require.NoError(t, err)
-	require.Equal(t, "ok|1", string(response))
+	require.Equal(t, "1", string(response))
 
-	response, err = readWrite.Send(context.Background(), []byte("FLUSHDB"))
-	require.NoError(t, err)
-	require.Contains(t, string(response), "permission denied")
+	_, err = readWrite.Send(context.Background(), []byte("FLUSHDB"))
+	require.ErrorAs(t, err, &protoErr)
+	require.Equal(t, protocol.CodePermissionDenied, protoErr.Code)
 
 	admin := connectWithToken(t, address, "admin-token-value")
 	response, err = admin.Send(context.Background(), []byte("FLUSHDB"))
 	require.NoError(t, err)
-	require.Equal(t, "ok|1", string(response))
+	require.Equal(t, "1", string(response))
 }
 
 func TestClientPortSessionsAreIndependent(t *testing.T) {
@@ -146,12 +151,14 @@ func TestClientPortSessionsAreIndependent(t *testing.T) {
 	admin := connectWithToken(t, address, "admin-token-value")
 	response, err := admin.Send(context.Background(), []byte("TRUNCATE"))
 	require.NoError(t, err)
-	require.Equal(t, "ok|1", string(response))
+	require.Equal(t, "1", string(response))
 
 	anonymous := connectWithToken(t, address, "")
-	response, err = anonymous.Send(context.Background(), []byte("TRUNCATE"))
-	require.NoError(t, err)
-	require.Contains(t, string(response), "not authenticated")
+	_, err = anonymous.Send(context.Background(), []byte("TRUNCATE"))
+
+	var protoErr *protocol.Error
+	require.ErrorAs(t, err, &protoErr)
+	require.Equal(t, protocol.CodeNotAuthenticated, protoErr.Code)
 }
 
 func TestClientPortRejectsBadToken(t *testing.T) {
@@ -164,7 +171,9 @@ func TestClientPortRejectsBadToken(t *testing.T) {
 		Token:          "wrong-token-value",
 	})
 
-	require.ErrorIs(t, err, dbcli.ErrAuthenticationRejected)
+	var protoErr *protocol.Error
+	require.ErrorAs(t, err, &protoErr)
+	require.Equal(t, protocol.CodeAuthenticationFailed, protoErr.Code)
 }
 
 func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
@@ -204,7 +213,7 @@ func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
 	data, err := replication.Encode(&request)
 	require.NoError(t, err)
 
-	response, err := impostor.Send(context.Background(), data)
+	response, err := impostor.SendRaw(context.Background(), data)
 	if err == nil {
 		require.Empty(t, response)
 	}
@@ -217,7 +226,7 @@ func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
 	data, err = replication.Encode(&request)
 	require.NoError(t, err)
 
-	response, err = legitimate.Send(context.Background(), data)
+	response, err = legitimate.SendRaw(context.Background(), data)
 	require.NoError(t, err)
 	require.NotEmpty(t, response)
 }
@@ -258,7 +267,7 @@ func TestReplicationPortRefusesDumpToImpostor(t *testing.T) {
 	data, err := replication.Encode(&request)
 	require.NoError(t, err)
 
-	response, err := impostor.Send(context.Background(), data)
+	response, err := impostor.SendRaw(context.Background(), data)
 	if err == nil {
 		require.Empty(t, response)
 	}
@@ -315,7 +324,7 @@ func TestReplicationPortOverMutualTLS(t *testing.T) {
 	data, err := replication.Encode(&request)
 	require.NoError(t, err)
 
-	response, err := replica.Send(context.Background(), data)
+	response, err := replica.SendRaw(context.Background(), data)
 	require.NoError(t, err)
 	require.NotEmpty(t, response)
 
@@ -326,7 +335,7 @@ func TestReplicationPortOverMutualTLS(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = outsider.Close() }()
 
-	rejected, err := outsider.Send(context.Background(), data)
+	rejected, err := outsider.SendRaw(context.Background(), data)
 	if err == nil {
 		require.Empty(t, rejected)
 	}
