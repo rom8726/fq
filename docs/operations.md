@@ -294,6 +294,33 @@ Available metrics:
 For an ad hoc, non-Prometheus look at instance state, use `INSPECT` — see
 [Commands](commands.md#diagnostics).
 
+### Grafana dashboard
+
+A ready-made dashboard lives in `deploy/grafana/dashboards/fq-overview.json`. It has
+rows for overview stats, WAL, replication, errors and auth, and Go runtime, and is
+scoped by `job` and `instance` template variables, so a single dashboard covers a
+master and its replicas.
+
+To bring up Prometheus and Grafana around a server running on the host:
+
+```shell
+docker compose -f deploy/docker-compose.observability.yml up -d
+```
+
+Grafana is then on http://localhost:3000 with anonymous access, and the dashboard is
+provisioned into the `fq` folder. Prometheus scrapes `host.docker.internal:2112` and
+`host.docker.internal:2113` — the observability addresses from `config.yml` and
+`config-slave.yml`. Drop the replica target from `deploy/prometheus/prometheus.yml` if
+you only run a master.
+
+To use an existing Grafana instead, import the JSON through Dashboards → New → Import
+and pick your Prometheus datasource. The dashboard uses the fixed uid `fq-overview`,
+so re-importing updates it in place rather than creating a copy.
+
+Panels backed by labelled metrics — protocol errors, auth failures, per-replica applied
+LSN and ack staleness — stay empty until the first matching event occurs, because the
+label values only exist once fq has recorded one.
+
 For remote benchmark publication, point `cmd/results` at the database server's
 observability endpoint:
 

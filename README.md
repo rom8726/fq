@@ -270,6 +270,10 @@ observability:
 - `GET /v1/info` — read-only JSON with instance/build/runtime/storage metadata for
   benchmark reports
 
+A ready-made Grafana dashboard ships in `deploy/grafana/dashboards/fq-overview.json`;
+`docker compose -f deploy/docker-compose.observability.yml up -d` brings up Prometheus
+and Grafana already wired to it.
+
 Metric list, `INSPECT` usage, and pprof profiling: see
 **[Operations](https://fq-db.github.io/fq/operations/#monitoring)**.
 
