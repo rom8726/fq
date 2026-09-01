@@ -15,7 +15,6 @@ import (
 
 const (
 	defaultInputDir     = "benchmarks/results"
-	defaultOutputFile   = "benchmarks/results/report.md"
 	defaultClientCPU    = 8
 	highErrorRate       = 0.01
 	percentMultiplier   = 100
@@ -31,6 +30,14 @@ type config struct {
 	clientCPU     int
 	persistence   string
 	notes         string
+}
+
+type reportInput struct {
+	benchmarkDir string
+	runDir       string
+	metadata     *resultsMetadata
+	manifest     *resultsManifest
+	stress       []stressReport
 }
 
 type benchmarkReport struct {
@@ -83,6 +90,76 @@ type latencySummary struct {
 	MaxMicros  int64 `json:"max_micros"`
 }
 
+type resultsManifest struct {
+	Metadata resultsMetadata        `json:"metadata"`
+	Commands []resultsCommand       `json:"commands"`
+	Results  []resultsCommandResult `json:"results,omitempty"`
+}
+
+type resultsMetadata struct {
+	Mode           string            `json:"mode"`
+	GitCommit      string            `json:"git_commit,omitempty"`
+	GitDirty       bool              `json:"git_dirty"`
+	Hostname       string            `json:"hostname,omitempty"`
+	Machine        string            `json:"machine"`
+	GOOS           string            `json:"goos"`
+	GOARCH         string            `json:"goarch"`
+	GoVersion      string            `json:"go_version"`
+	NumCPU         int               `json:"num_cpu"`
+	Environment    map[string]string `json:"environment,omitempty"`
+	System         map[string]string `json:"system,omitempty"`
+	ConfigSHA256   map[string]string `json:"config_sha256,omitempty"`
+	GeneratedAt    time.Time         `json:"generated_at"`
+	RepositoryRoot string            `json:"repository_root"`
+}
+
+type resultsCommand struct {
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`
+	Command    []string `json:"command"`
+	OutputFile string   `json:"output_file,omitempty"`
+	Duration   string   `json:"duration,omitempty"`
+}
+
+type resultsCommandResult struct {
+	Name     string    `json:"name"`
+	ExitCode int       `json:"exit_code"`
+	Started  time.Time `json:"started"`
+	Finished time.Time `json:"finished"`
+	LogPath  string    `json:"log_path"`
+	Error    string    `json:"error,omitempty"`
+}
+
+type stressReport struct {
+	Scenario       string       `json:"scenario"`
+	Status         string       `json:"status"`
+	StartedAt      time.Time    `json:"started_at"`
+	FinishedAt     time.Time    `json:"finished_at"`
+	DurationMillis int64        `json:"duration_millis"`
+	Result         stressResult `json:"result"`
+	Failure        string       `json:"failure,omitempty"`
+	Environment    stressEnv    `json:"environment"`
+	source         string
+}
+
+type stressResult struct {
+	Scenario        string `json:"scenario"`
+	Address         string `json:"address"`
+	SlaveAddress    string `json:"slave_address"`
+	Operations      uint64 `json:"operations"`
+	Restarts        int    `json:"restarts"`
+	Dumps           int    `json:"dumps"`
+	TransientErrors uint64 `json:"transient_errors"`
+}
+
+type stressEnv struct {
+	ConfigPath string `json:"config_path"`
+	WALDir     string `json:"wal_dir"`
+	DumpDir    string `json:"dump_dir"`
+	ReportPath string `json:"report_path"`
+	Address    string `json:"address"`
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "report failed:", err)
@@ -92,16 +169,20 @@ func main() {
 
 func run(args []string) error {
 	cfg := parseFlags(args)
-	reports, err := loadReports(cfg.inputDir)
+	input, err := discoverInput(cfg.inputDir)
+	if err != nil {
+		return err
+	}
+	reports, err := loadReports(input.benchmarkDir)
 	if err != nil {
 		return err
 	}
 	if len(reports) == 0 {
-		return fmt.Errorf("no benchmark JSON reports found in %s", cfg.inputDir)
+		return fmt.Errorf("no benchmark JSON reports found in %s", input.benchmarkDir)
 	}
 
 	sortReports(reports)
-	report := renderMarkdown(cfg, reports)
+	report := renderMarkdown(cfg, input, reports)
 	if cfg.outputFile == "-" {
 		fmt.Print(report)
 
@@ -124,7 +205,9 @@ func parseFlags(args []string) config {
 	cfg := config{}
 	flags := flag.NewFlagSet("report", flag.ExitOnError)
 	flags.StringVar(&cfg.inputDir, "input", defaultInputDir, "directory with benchmark JSON reports")
-	flags.StringVar(&cfg.outputFile, "output", defaultOutputFile, "markdown report output path; use - for stdout")
+	flags.StringVar(&cfg.inputDir, "input_dir", defaultInputDir, "alias for -input")
+	flags.StringVar(&cfg.outputFile, "output", "", "markdown report output path; use - for stdout")
+	flags.StringVar(&cfg.outputFile, "output_file", "", "alias for -output")
 	flags.StringVar(&cfg.title, "title", "FQ Benchmark Report", "markdown report title")
 	flags.StringVar(&cfg.serverMachine, "server_machine", "remote Linux server", "database server label")
 	flags.StringVar(&cfg.clientMachine, "client_machine", "remote Linux benchmark client", "benchmark client label")
@@ -133,7 +216,45 @@ func parseFlags(args []string) config {
 	flags.StringVar(&cfg.notes, "notes", "", "extra markdown sentence added to the methodology section")
 	_ = flags.Parse(args)
 
+	if cfg.outputFile == "" {
+		cfg.outputFile = defaultOutputPath(time.Now())
+	}
+
 	return cfg
+}
+
+func defaultOutputPath(now time.Time) string {
+	return filepath.Join("benchmarks", "reports", "report_"+now.Format("2006_01_02")+".md")
+}
+
+func discoverInput(inputDir string) (reportInput, error) {
+	input := reportInput{benchmarkDir: inputDir}
+	benchmarkDir := filepath.Join(inputDir, "benchmarks")
+	if info, err := os.Stat(benchmarkDir); err == nil && info.IsDir() {
+		input.runDir = inputDir
+		input.benchmarkDir = benchmarkDir
+		metadata, err := loadOptionalJSON[resultsMetadata](filepath.Join(inputDir, "metadata.json"))
+		if err != nil {
+			return reportInput{}, err
+		}
+
+		input.metadata = metadata
+
+		manifest, err := loadOptionalJSON[resultsManifest](filepath.Join(inputDir, "manifest.json"))
+		if err != nil {
+			return reportInput{}, err
+		}
+
+		input.manifest = manifest
+
+		stressReports, err := loadStressReports(filepath.Join(inputDir, "stress"))
+		if err != nil {
+			return reportInput{}, err
+		}
+		input.stress = stressReports
+	}
+
+	return input, nil
 }
 
 func loadReports(inputDir string) ([]benchmarkReport, error) {
@@ -177,6 +298,63 @@ func loadReport(path string) (benchmarkReport, error) {
 	return report, nil
 }
 
+func loadStressReports(inputDir string) ([]stressReport, error) {
+	entries, err := os.ReadDir(inputDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("read stress directory: %w", err)
+	}
+
+	reports := make([]stressReport, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		path := filepath.Join(inputDir, entry.Name())
+		report, err := loadJSON[stressReport](path)
+		if err != nil {
+			return nil, err
+		}
+		report.source = path
+		reports = append(reports, report)
+	}
+	sort.Slice(reports, func(i, j int) bool {
+		return reports[i].source < reports[j].source
+	})
+
+	return reports, nil
+}
+
+func loadOptionalJSON[T any](path string) (*T, error) {
+	value, err := loadJSON[T](path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+
+		return nil, err
+	}
+
+	return &value, nil
+}
+
+func loadJSON[T any](path string) (T, error) {
+	var value T
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return value, fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return value, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	return value, nil
+}
+
 func sortReports(reports []benchmarkReport) {
 	sort.Slice(reports, func(i, j int) bool {
 		left := reports[i]
@@ -189,7 +367,7 @@ func sortReports(reports []benchmarkReport) {
 	})
 }
 
-func renderMarkdown(cfg config, reports []benchmarkReport) string {
+func renderMarkdown(cfg config, input reportInput, reports []benchmarkReport) string {
 	var b strings.Builder
 	now := time.Now().UTC().Format(time.RFC3339)
 	successful := filterReports(reports, func(report *benchmarkReport) bool {
@@ -225,12 +403,15 @@ func renderMarkdown(cfg config, reports []benchmarkReport) string {
 	}
 	fmt.Fprintln(&b)
 	renderObservations(&b, reports)
-	renderEnvironment(&b, cfg, reports)
-	renderMethodology(&b, cfg, reports)
+	renderRunMetadata(&b, input)
+	renderEnvironment(&b, cfg, input, reports)
+	renderMethodology(&b, cfg, input, reports)
+	renderManifest(&b, input)
 	renderHeadlineTable(&b, reports)
 	renderWorkloadTable(&b, reports)
 	renderLatencyTable(&b, reports)
 	renderComparisonTable(&b, reports)
+	renderStressTable(&b, input)
 	renderNotes(&b, reports)
 
 	return b.String()
@@ -300,8 +481,59 @@ func renderObservations(b *strings.Builder, reports []benchmarkReport) {
 	fmt.Fprintln(b)
 }
 
-func renderEnvironment(b *strings.Builder, cfg config, reports []benchmarkReport) {
+func renderRunMetadata(b *strings.Builder, input reportInput) {
+	if input.metadata == nil && input.manifest == nil && input.runDir == "" {
+		return
+	}
+
+	meta := input.metadata
+	if meta == nil && input.manifest != nil {
+		meta = &input.manifest.Metadata
+	}
+	if meta == nil {
+		return
+	}
+
+	fmt.Fprintln(b, "## Release Run Metadata")
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "| Field | Value |")
+	fmt.Fprintln(b, "| --- | --- |")
+	fmt.Fprintf(b, "| Run directory | `%s` |\n", slashPath(input.runDir))
+	fmt.Fprintf(b, "| Mode | `%s` |\n", meta.Mode)
+	fmt.Fprintf(b, "| Git commit | `%s` |\n", meta.GitCommit)
+	fmt.Fprintf(b, "| Git dirty | `%t` |\n", meta.GitDirty)
+	fmt.Fprintf(b, "| Machine | `%s` |\n", meta.Machine)
+	if !meta.GeneratedAt.IsZero() {
+		fmt.Fprintf(b, "| Generated at | `%s` |\n", meta.GeneratedAt.UTC().Format(time.RFC3339))
+	}
+	if meta.Hostname != "" {
+		fmt.Fprintf(b, "| Hostname | `%s` |\n", meta.Hostname)
+	}
+	if len(meta.ConfigSHA256) > 0 {
+		keys := sortedKeys(meta.ConfigSHA256)
+		for _, key := range keys {
+			fmt.Fprintf(b, "| Config SHA-256 `%s` | `%s` |\n", slashPath(key), meta.ConfigSHA256[key])
+		}
+	}
+	if len(meta.Environment) > 0 {
+		for _, key := range sortedKeys(meta.Environment) {
+			fmt.Fprintf(b, "| Env `%s` | `%s` |\n", key, escapeCell(meta.Environment[key]))
+		}
+	}
+	fmt.Fprintln(b)
+}
+
+func renderEnvironment(b *strings.Builder, cfg config, input reportInput, reports []benchmarkReport) {
 	first := reports[0]
+	if input.metadata != nil {
+		first.Metadata.GoVersion = input.metadata.GoVersion
+		first.Metadata.GOOS = input.metadata.GOOS
+		first.Metadata.GOARCH = input.metadata.GOARCH
+		first.Metadata.NumCPU = input.metadata.NumCPU
+		if cfg.serverMachine == "remote Linux server" && input.metadata.Machine != "" {
+			cfg.serverMachine = input.metadata.Machine
+		}
+	}
 	fmt.Fprintln(b, "## Environment")
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "| Component | Value |")
@@ -316,7 +548,7 @@ func renderEnvironment(b *strings.Builder, cfg config, reports []benchmarkReport
 	fmt.Fprintln(b)
 }
 
-func renderMethodology(b *strings.Builder, cfg config, reports []benchmarkReport) {
+func renderMethodology(b *strings.Builder, cfg config, input reportInput, reports []benchmarkReport) {
 	first := reports[0]
 	fmt.Fprintln(b, "## Methodology")
 	fmt.Fprintln(b)
@@ -342,6 +574,51 @@ func renderMethodology(b *strings.Builder, cfg config, reports []benchmarkReport
 		fmt.Fprintln(b, cfg.notes)
 		fmt.Fprintln(b)
 	}
+	if input.runDir != "" {
+		fmt.Fprintf(
+			b,
+			"This report was rendered from the reproducible results run directory `%s`; "+
+				"the run contains metadata, manifest, logs, benchmark JSON, stress JSON, and config/profile snapshots.\n\n",
+			slashPath(input.runDir),
+		)
+	}
+}
+
+func renderManifest(b *strings.Builder, input reportInput) {
+	if input.manifest == nil || len(input.manifest.Commands) == 0 {
+		return
+	}
+
+	fmt.Fprintln(b, "## Command Manifest")
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "| Name | Kind | Command | Output | Status |")
+	fmt.Fprintln(b, "| --- | --- | --- | --- | --- |")
+	results := make(map[string]resultsCommandResult, len(input.manifest.Results))
+	for _, result := range input.manifest.Results {
+		results[result.Name] = result
+	}
+	for _, command := range input.manifest.Commands {
+		status := "planned"
+		if result, ok := results[command.Name]; ok {
+			status = "ok"
+			if result.ExitCode != 0 {
+				status = "failed: exit code " + strconv.Itoa(result.ExitCode)
+			}
+			if result.Error != "" {
+				status = "failed: " + result.Error
+			}
+		}
+		fmt.Fprintf(
+			b,
+			"| `%s` | %s | `%s` | `%s` | %s |\n",
+			command.Name,
+			command.Kind,
+			escapeCell(strings.Join(command.Command, " ")),
+			slashPath(command.OutputFile),
+			escapeCell(status),
+		)
+	}
+	fmt.Fprintln(b)
 }
 
 func renderHeadlineTable(b *strings.Builder, reports []benchmarkReport) {
@@ -444,6 +721,40 @@ func renderComparisonTable(b *strings.Builder, reports []benchmarkReport) {
 			scenarioName(report),
 			formatFloat(report.Summary.ThroughputRPS),
 			formatRatio(ratio(report.Summary.ThroughputRPS, best.Summary.ThroughputRPS)),
+		)
+	}
+	fmt.Fprintln(b)
+}
+
+func renderStressTable(b *strings.Builder, input reportInput) {
+	if len(input.stress) == 0 {
+		return
+	}
+
+	fmt.Fprintln(b, "## Stress Results")
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "| Scenario | Status | Operations | Restarts | Dumps | Transient errors | Duration | Source |")
+	fmt.Fprintln(b, "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+	for _, report := range input.stress { //nolint:gocritic // ok for tool
+		duration := time.Duration(report.DurationMillis) * time.Millisecond
+		if report.DurationMillis == 0 && !report.StartedAt.IsZero() && !report.FinishedAt.IsZero() {
+			duration = report.FinishedAt.Sub(report.StartedAt)
+		}
+		status := report.Status
+		if report.Failure != "" {
+			status += ": " + report.Failure
+		}
+		fmt.Fprintf(
+			b,
+			"| `%s` | %s | %d | %d | %d | %d | %s | `%s` |\n",
+			report.Scenario,
+			escapeCell(status),
+			report.Result.Operations,
+			report.Result.Restarts,
+			report.Result.Dumps,
+			report.Result.TransientErrors,
+			duration.Round(time.Millisecond),
+			slashPath(report.source),
 		)
 	}
 	fmt.Fprintln(b)
@@ -556,6 +867,16 @@ func slashPath(path string) string {
 
 func escapeCell(value string) string {
 	return strings.ReplaceAll(value, "|", "\\|")
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	return keys
 }
 
 func hasTargetUnlimited(reports []benchmarkReport) bool {

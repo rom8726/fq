@@ -136,8 +136,19 @@ nightly and uploads their JSON reports as run artifacts.
 
 ## Reporting
 
-Public reports live in `benchmarks/reports`. A report should link or summarize the
-generated run directory and include:
+Public reports live in `benchmarks/reports`. Generate one from a completed results
+run with:
+
+```shell
+go run ./cmd/report -input benchmarks/results/runs/<timestamp>-<machine>-<commit>-release/
+```
+
+By default, `cmd/report` writes `benchmarks/reports/report_YYYY_MM_DD.md` using the
+current local date. It reads benchmark JSON reports from the run's `benchmarks/`
+directory and, when present, includes `metadata.json`, `manifest.json`, and stress JSON
+reports from `stress/`.
+
+A report should link or summarize the generated run directory and include:
 
 - fq git commit and dirty state;
 - machine label and hardware/runtime metadata;

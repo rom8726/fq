@@ -436,3 +436,11 @@ go run ./cmd/results -mode release -run -confirm_release_run
 Result runs are written to
 `benchmarks/results/runs/<timestamp>-<machine>-<commit>-<mode>/`. Benchmark commands
 expect a running fq server at `:1945` unless `-address` is overridden.
+
+Render a publishable Markdown report from a completed results run:
+
+```shell
+go run ./cmd/report -input benchmarks/results/runs/<timestamp>-<machine>-<commit>-release/
+```
+
+By default the report is written to `benchmarks/reports/report_YYYY_MM_DD.md`.

@@ -113,16 +113,145 @@ func TestRunWritesMarkdownReport(t *testing.T) {
 	require.NotContains(t, report, "10.0.0.1:1945")
 }
 
+func TestDefaultOutputPathUsesCurrentDate(t *testing.T) {
+	path := defaultOutputPath(time.Date(2026, 9, 1, 12, 30, 0, 0, time.UTC))
+
+	require.Equal(t, filepath.Join("benchmarks", "reports", "report_2026_09_01.md"), path)
+}
+
+func TestRunDirectoryReportIncludesPublishableArtifacts(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runDir := filepath.Join(dir, "runs", "20260901T120000Z-bench-host-abc123-release")
+	benchDir := filepath.Join(runDir, "benchmarks")
+	stressDir := filepath.Join(runDir, "stress")
+	require.NoError(t, os.MkdirAll(benchDir, 0o750))
+	require.NoError(t, os.MkdirAll(stressDir, 0o750))
+
+	started := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	writeFixture(t, benchDir, "release-hot-counter.json", benchmarkReport{
+		Metadata: reportMetadata{
+			StartedAt:       started,
+			FinishedAt:      started.Add(time.Minute),
+			GoVersion:       "go1.27.0",
+			GOOS:            "linux",
+			GOARCH:          "amd64",
+			NumCPU:          8,
+			ConfigHash:      "bench-hash",
+			Profile:         "./benchmarks/profiles/release-hot-counter.yml",
+			Connections:     100,
+			Warmup:          "5s",
+			Duration:        "1m0s",
+			RequestTimeout:  "5s",
+			IdleTimeout:     "1m0s",
+			MaxMessageSize:  4096,
+			QueryTemplate:   "INCR {key} {batch}",
+			KeyDistribution: "sequential",
+			KeyRange:        1,
+			BatchSize:       600,
+			Seed:            42,
+		},
+		Summary: reportSummary{
+			MeasuredDurationSeconds: 60,
+			Requests:                6_000_000,
+			ThroughputRPS:           100_000,
+			Latency: latencySummary{
+				P50Micros: 900,
+				P95Micros: 1900,
+				P99Micros: 2900,
+			},
+		},
+	})
+	writeJSONFixture(t, runDir, "metadata.json", resultsMetadata{
+		Mode:      "release",
+		GitCommit: "abcdef1234567890",
+		GitDirty:  false,
+		Hostname:  "bench-host",
+		Machine:   "dedicated-bench",
+		GOOS:      "linux",
+		GOARCH:    "amd64",
+		GoVersion: "go1.27.0",
+		NumCPU:    8,
+		ConfigSHA256: map[string]string{
+			"config.yml": "config-hash",
+		},
+		GeneratedAt: started,
+	})
+	writeJSONFixture(t, runDir, "manifest.json", resultsManifest{
+		Metadata: resultsMetadata{Mode: "release"},
+		Commands: []resultsCommand{
+			{
+				Name:       "bench-release-hot-counter",
+				Kind:       "benchmark",
+				Command:    []string{"go", "run", "./cmd/bench", "-profile", "benchmarks/profiles/release-hot-counter.yml"},
+				OutputFile: filepath.Join(runDir, "benchmarks", "release-hot-counter.json"),
+			},
+			{
+				Name:       "stress-crash-loop",
+				Kind:       "stress",
+				Command:    []string{"go", "run", "./cmd/stress", "-scenario", "crash-loop"},
+				OutputFile: filepath.Join(runDir, "stress", "crash-loop.json"),
+			},
+			{
+				Name:       "stress-dump-recovery",
+				Kind:       "stress",
+				Command:    []string{"go", "run", "./cmd/stress", "-scenario", "dump-recovery"},
+				OutputFile: filepath.Join(runDir, "stress", "dump-recovery.json"),
+			},
+		},
+		Results: []resultsCommandResult{
+			{Name: "bench-release-hot-counter", ExitCode: 0},
+			{Name: "stress-crash-loop", ExitCode: 0},
+			{Name: "stress-dump-recovery", ExitCode: 1},
+		},
+	})
+	writeJSONFixture(t, stressDir, "crash-loop.json", stressReport{
+		Scenario:       "crash-loop",
+		Status:         "passed",
+		DurationMillis: 30_000,
+		Result: stressResult{
+			Operations:      1234,
+			Restarts:        14,
+			TransientErrors: 2,
+		},
+	})
+
+	output := filepath.Join(dir, "published.md")
+	err := run([]string{"-input_dir", runDir, "-output_file", output})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(output)
+	require.NoError(t, err)
+	report := string(data)
+
+	require.Contains(t, report, "## Release Run Metadata")
+	require.Contains(t, report, "| Git commit | `abcdef1234567890` |")
+	require.Contains(t, report, "| Config SHA-256 `config.yml` | `config-hash` |")
+	require.Contains(t, report, "## Command Manifest")
+	require.Contains(t, report, "| `stress-crash-loop` | stress |")
+	require.Contains(t, report, "| `stress-dump-recovery` | stress |")
+	require.Contains(t, report, "failed: exit code 1")
+	require.Contains(t, report, "## Stress Results")
+	require.Contains(t, report, "| `crash-loop` | passed | 1234 | 14 | 0 | 2 | 30s |")
+}
+
 func writeFixture(t *testing.T, dir string, name string, report benchmarkReport) {
 	t.Helper()
 
-	data, err := jsonMarshalIndent(report)
+	writeJSONFixture(t, dir, name, report)
+}
+
+func writeJSONFixture(t *testing.T, dir string, name string, value interface{}) {
+	t.Helper()
+
+	data, err := jsonMarshalIndent(value)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o644))
 }
 
-func jsonMarshalIndent(report benchmarkReport) ([]byte, error) {
-	data, err := json.MarshalIndent(report, "", "  ")
+func jsonMarshalIndent(value interface{}) ([]byte, error) {
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
 	}
