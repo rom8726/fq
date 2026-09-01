@@ -20,10 +20,15 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Run tests with coverage
-        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+        run: |
+          PACKAGES=$(go list ./... | grep -v '/cmd/')
+          go test -covermode=atomic -coverprofile=coverage.out -coverpkg="$(echo "$PACKAGES" | tr '\n' ',')" $PACKAGES
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: coverallsapp/github-action@v2
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
         with:
-          files: coverage.out
-          fail_ci_if_error: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage.out
+          format: golang
