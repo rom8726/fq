@@ -30,6 +30,10 @@ func (v *Verifier) Query(ctx context.Context, query string) (string, error) {
 	}
 	defer func() { _ = client.Close() }()
 
+	if _, err := client.Hello(ctx, ""); err != nil {
+		return "", err
+	}
+
 	response, err := client.Send(ctx, []byte(query))
 	if err != nil {
 		return "", err
