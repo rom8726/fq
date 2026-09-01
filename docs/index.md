@@ -31,6 +31,7 @@ Source, releases, and the top-level project overview live at
 | Know what durability and isolation guarantees fq actually gives | [Consistency model](consistency.md) |
 | Look up a configuration key | [Configuration](config.md) |
 | Set up auth, TLS, replication, or monitoring in production | [Operations](operations.md) |
+| Run or publish reproducible benchmark results | [Benchmarking](benchmarking.md) |
 | Understand the on-disk format and recovery behavior | [Persistence](persistence.md) |
 
 ## Architecture at a glance

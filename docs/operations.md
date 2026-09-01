@@ -295,7 +295,8 @@ For an ad hoc, non-Prometheus look at instance state, use `INSPECT` — see
 
 ## Benchmarking
 
-Last benchmark reports: [benchmarks/reports](https://github.com/fq-db/fq/tree/main/benchmarks/reports)
+Last benchmark reports: [benchmarks/reports](https://github.com/fq-db/fq/tree/main/benchmarks/reports).
+For the reproducible release methodology, see [Benchmarking](benchmarking.md).
 
 Run a live latency/RPS benchmark against a running server:
 

@@ -46,4 +46,5 @@ nav:
   - Consistency model: consistency.md
   - Configuration: config.md
   - Operations: operations.md
+  - Benchmarking: benchmarking.md
   - Persistence: persistence.md
