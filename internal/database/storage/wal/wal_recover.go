@@ -39,10 +39,28 @@ func (w *WAL) TryRecoverWALSegments(ctx context.Context, dumpLastLSN uint64) (la
 	}
 
 	if logIdx < len(logs) {
-		w.stream <- Chunk{Logs: logs[logIdx:]}
+		applied := make(chan error, 1)
+		chunk := Chunk{Logs: logs[logIdx:], Applied: applied}
+		select {
+		case w.stream <- chunk:
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+		if err := waitForRecoveredChunk(ctx, applied); err != nil {
+			return 0, err
+		}
 
 		return logs[len(logs)-1].LSN, nil
 	}
 
 	return recoverAfterLSN, nil
+}
+
+func waitForRecoveredChunk(ctx context.Context, applied <-chan error) error {
+	select {
+	case err := <-applied:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

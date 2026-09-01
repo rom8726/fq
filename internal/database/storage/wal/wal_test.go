@@ -28,6 +28,57 @@ func TestWALFlushesPendingBatchOnShutdown(t *testing.T) {
 	require.Equal(t, []int{1}, writer.BatchSizes())
 }
 
+func TestTryRecoverWALSegmentsWaitsForEngineApply(t *testing.T) {
+	logger := zerolog.Nop()
+	stream := make(chan Chunk, 1)
+	store := NewWAL(
+		nil,
+		recoverReader{logs: []*LogData{{LSN: 7, CommandId: uint32(compute.IncrCommandID)}}},
+		stream,
+		time.Hour,
+		10,
+		10,
+		t.TempDir(),
+		&logger,
+	)
+
+	result := make(chan struct {
+		lsn uint64
+		err error
+	}, 1)
+	go func() {
+		lsn, err := store.TryRecoverWALSegments(context.Background(), 0)
+		result <- struct {
+			lsn uint64
+			err error
+		}{lsn: lsn, err: err}
+	}()
+
+	var chunk Chunk
+	select {
+	case chunk = <-stream:
+	case <-time.After(time.Second):
+		t.Fatal("recovered WAL chunk was not sent")
+	}
+	require.Len(t, chunk.Logs, 1)
+
+	select {
+	case recovered := <-result:
+		t.Fatalf("recovery returned before engine apply ack: %+v", recovered)
+	default:
+	}
+
+	chunk.Applied <- nil
+
+	select {
+	case recovered := <-result:
+		require.NoError(t, recovered.err)
+		require.Equal(t, uint64(7), recovered.lsn)
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not return after engine apply ack")
+	}
+}
+
 func TestWALAsyncFlushesPendingBatchOnShutdown(t *testing.T) {
 	writer := &recordingFSWriter{}
 	logger := zerolog.Nop()
@@ -499,6 +550,23 @@ func requireFutureReturned(t *testing.T, result <-chan tools.FutureError) tools.
 	}
 
 	return tools.FutureError{}
+}
+
+type recoverReader struct {
+	logs []*LogData
+	err  error
+}
+
+func (r recoverReader) ReadLogs(context.Context) ([]*LogData, error) {
+	return r.logs, r.err
+}
+
+func (r recoverReader) ReadLogsAfter(context.Context, uint64) ([]*LogData, error) {
+	return r.logs, r.err
+}
+
+func (r recoverReader) ReadSegment(context.Context, string) ([]*LogData, error) {
+	return nil, nil
 }
 
 func requireClosed(t *testing.T, ch <-chan struct{}) {
