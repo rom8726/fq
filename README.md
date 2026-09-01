@@ -111,7 +111,8 @@ make build
 
 ## Commands
 
-fq uses a small text protocol over framed TCP requests.
+fq uses a small text protocol over framed TCP requests. The normative description —
+grammar, handshake and the error code table — lives in [docs/protocol.md](docs/protocol.md).
 
 ### Rate Limiting
 
@@ -287,7 +288,7 @@ complete.
 
 Key scanning requires `engine.key_index: true`. The index is disabled by default
 to avoid extra write-path work for deployments that do not need scanning. When it
-is disabled, `SCAN` and `PSCAN` return `err|scan index is disabled`.
+is disabled, `SCAN` and `PSCAN` return `err|5000|scan index is disabled`.
 
 Scan responses use:
 
@@ -413,7 +414,7 @@ STREAM
 PSTREAM <prefix>
 QSTREAM
 QPSTREAM <prefix>
-MSGSIZE
+HELLO <version> [AUTH <token>]
 FLUSHDB
 TRUNCATE
 INSPECT [section]
@@ -439,7 +440,8 @@ AUTH <token>
 - `PSTREAM`: streams the same events, filtered to keys that start with `prefix`
 - `QSTREAM`: streams quota mutation events
 - `QPSTREAM`: streams the same quota events, filtered to quota names that start with `prefix`
-- `MSGSIZE`: returns the maximum configured request/response payload size
+- `HELLO`: negotiates the protocol version and reports the maximum payload size, whether
+  authentication is required, and the connection's role; see [docs/protocol.md](docs/protocol.md)
 - `FLUSHDB`: clears all in-memory database state and persists a WAL recovery barrier
 - `TRUNCATE`: clears all in-memory database state and deletes dump/WAL persistence files
 - `INSPECT`: returns a JSON diagnostic snapshot of instance state; see [Diagnostics](#diagnostics)
@@ -479,7 +481,7 @@ not authenticated
 7
 ```
 
-`AUTH` returns `ok|1` on success and `err|authentication failed` on a wrong token. Five
+`AUTH` returns `ok|1` on success and `err|3002|authentication failed` on a wrong token. Five
 failed attempts on one connection close it. The token is treated as an opaque literal, so
 base64 values containing `=` or `+` work as-is, and it is never written to the logs.
 
@@ -491,12 +493,14 @@ Roles are hierarchical — `admin` includes `rw`, and `rw` includes `ro`:
 | `rw` | everything in `ro`, plus `INCR`, `DEL`, `MDEL`, `RLIMIT`, and the remaining `QUOTA` subcommands |
 | `admin` | everything in `rw`, plus `FLUSHDB`, `TRUNCATE`, and `INSPECT` |
 
-A command the current role does not cover returns `err|permission denied`.
+A command the current role does not cover returns `err|3001|permission denied`.
 
-`AUTH` and `MSGSIZE` sit outside the role matrix and answer on an unauthenticated
-connection. `MSGSIZE` reports the maximum frame size, which a client needs to size its
-buffers before it can send anything else, so treating it as protocol negotiation rather
-than as data keeps clients able to connect first and authenticate second.
+`HELLO` and `AUTH` sit outside the role matrix and answer on an unauthenticated
+connection. `HELLO` must come first: it negotiates the protocol version and reports the
+maximum frame size, which a client needs to size its buffers before it can send anything
+else. Any other command before it, `AUTH` included, returns `err|1010|handshake required`.
+A token may be supplied inline as `HELLO 1 AUTH <token>`, which authenticates in the same
+round trip.
 
 Leaving `network.auth` out entirely disables authentication on the client port and logs a
 warning at startup. The port is then open to anyone who can reach it, `FLUSHDB` and
