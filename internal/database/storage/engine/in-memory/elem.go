@@ -29,7 +29,7 @@ func NewFqElem(batchSize uint32) *FqElem {
 	}
 }
 
-func (e *FqElem) Incr(txCtx database.TxContext) database.ValueType {
+func (e *FqElem) Incr(txCtx database.TxContext, beforeApply func() error) (database.ValueType, error) {
 	batchStartsAt := startOfBatch(txCtx.CurrTime, e.batchSize)
 
 	e.mu.Lock()
@@ -39,8 +39,13 @@ func (e *FqElem) Incr(txCtx database.TxContext) database.ValueType {
 	if e.lastTxAt < batchStartsAt {
 		value = 0
 	}
+	if beforeApply != nil {
+		if err := beforeApply(); err != nil {
+			return 0, fmt.Errorf("before apply increment: %w", err)
+		}
+	}
 
-	return e.applyIncrementLocked(txCtx, value)
+	return e.applyIncrementLocked(txCtx, value), nil
 }
 
 func (e *FqElem) RLimitFixedWindow(

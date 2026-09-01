@@ -30,6 +30,7 @@ func TestDumper_GetNextData(t *testing.T) {
 			BatchSizeStr: "60",
 			Key:          "key1",
 		},
+		nil,
 	)
 
 	d := New(engine, nil, "/tmp")

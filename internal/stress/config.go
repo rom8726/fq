@@ -171,6 +171,7 @@ func NewReplicationEnvironment(opts Options) (master, slave *Environment, err er
 	slave.ReplicaType = "slave"
 	slave.ReplicaID = "stress-replica-1"
 	slave.MasterAddress = replicationAddress
+	slave.ReplicationToken = master.ReplicationToken
 	if err := slave.WriteConfig(); err != nil {
 		return nil, nil, err
 	}
@@ -186,7 +187,8 @@ func (env *Environment) WriteConfig() error {
 		return fmt.Errorf("create dump dir: %w", err)
 	}
 
-	data := fmt.Sprintf(`network:
+	data := fmt.Sprintf(`
+network:
   address: %q
   max_connections: 128
   max_message_size: 64KB

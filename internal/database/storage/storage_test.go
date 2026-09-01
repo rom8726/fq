@@ -125,10 +125,17 @@ type txRecordingEngine struct {
 	lastTx database.Tx
 }
 
-func (e *txRecordingEngine) Incr(txCtx database.TxContext, _ database.BatchKey) database.ValueType {
+func (e *txRecordingEngine) Incr(
+	txCtx database.TxContext,
+	_ database.BatchKey,
+	beforeApply func() error,
+) (database.ValueType, error) {
 	e.lastTx = txCtx.Tx
+	if err := beforeApply(); err != nil {
+		return 0, err
+	}
 
-	return 1
+	return 1, nil
 }
 
 func (e *txRecordingEngine) RLimitFixedWindow(

@@ -264,8 +264,9 @@ func requireNoQuotaEvent(t *testing.T, events <-chan database.QuotaEvent) {
 }
 
 type recordingWAL struct {
-	mu    sync.Mutex
-	calls []string
+	mu         sync.Mutex
+	calls      []string
+	recoverLSN uint64
 }
 
 func (w *recordingWAL) record(name string) {
@@ -411,7 +412,20 @@ func (w *recordingWAL) Truncate(context.Context, database.TxContext) tools.Futur
 }
 
 func (w *recordingWAL) TryRecoverWALSegments(context.Context, uint64) (uint64, error) {
-	return 0, nil
+	return w.recoverLSN, nil
+}
+
+type recordingReplica struct {
+	master       bool
+	recoveredLSN uint64
+}
+
+func (r *recordingReplica) Start(context.Context) {}
+func (r *recordingReplica) IsMaster() bool        { return r.master }
+func (r *recordingReplica) Shutdown()             {}
+
+func (r *recordingReplica) SetRecoveredWALState(lastAppliedLSN uint64) {
+	r.recoveredLSN = lastAppliedLSN
 }
 
 type fakeDumper struct {
@@ -551,6 +565,38 @@ func TestStartWithWALCallsWALStart(t *testing.T) {
 
 	require.Contains(t, wal.calls, "Start")
 	require.Contains(t, wal.calls, "Shutdown")
+}
+
+func TestLoadWALReportsRecoveredLSNToSlaveReplica(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := inmemory.NewEngine(inmemory.HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+
+	wal := &recordingWAL{recoverLSN: 42}
+	replica := &recordingReplica{}
+	strg, err := NewStorage(
+		engine, wal, nil, replica, &logger, time.Hour, time.Hour, true, config.DefaultLimitEventQueueCapacity,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, strg.LoadWAL(context.Background(), database.NoTx))
+	require.Equal(t, uint64(42), replica.recoveredLSN)
+}
+
+func TestLoadWALDoesNotReportRecoveredLSNToMasterReplica(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := inmemory.NewEngine(inmemory.HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+
+	wal := &recordingWAL{recoverLSN: 42}
+	replica := &recordingReplica{master: true}
+	strg, err := NewStorage(
+		engine, wal, nil, replica, &logger, time.Hour, time.Hour, true, config.DefaultLimitEventQueueCapacity,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, strg.LoadWAL(context.Background(), database.NoTx))
+	require.Zero(t, replica.recoveredLSN)
 }
 
 func TestDumpLoopRunsDumperPeriodically(t *testing.T) {

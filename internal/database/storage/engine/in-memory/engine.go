@@ -29,7 +29,7 @@ var (
 )
 
 type hashTable interface {
-	Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType
+	Incr(txCtx database.TxContext, key database.BatchKey, beforeApply func() error) (database.ValueType, error)
 	RLimitFixedWindow(
 		txCtx database.TxContext,
 		key database.BatchKey,
@@ -210,15 +210,22 @@ func (e *Engine) SetLimitEventPublisher(publisher func(database.LimitEvent)) {
 	e.limitEventPublisher = publisher
 }
 
-func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
+func (e *Engine) Incr(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	beforeApply func() error,
+) (database.ValueType, error) {
 	if txCtx.FromWAL && isExpired(txCtx.CurrTime, database.TxTime(key.BatchSize)) {
 		// expired value
-		return 0 // return 0 for WAL worker
+		return 0, nil // return 0 for WAL worker
 	}
 
 	idx := e.partitionIdx(key.Key)
 	partition := e.partitions[idx]
-	value := partition.Incr(txCtx, key)
+	value, err := partition.Incr(txCtx, key, beforeApply)
+	if err != nil {
+		return 0, err
+	}
 
 	if e.logger.GetLevel() == zerolog.DebugLevel {
 		e.logger.Debug().
@@ -228,7 +235,7 @@ func (e *Engine) Incr(txCtx database.TxContext, key database.BatchKey) database.
 			Msg("success incr query")
 	}
 
-	return value
+	return value, nil
 }
 
 // RLimitFixedWindow ...
@@ -909,7 +916,14 @@ func (e *Engine) publishLimitFilled(key database.BatchKey, result database.RateL
 }
 
 func (e *Engine) applyIncrFromLog(log *wal.LogData) {
-	e.applySingleKeyLog(log, "INCR", e.Incr)
+	e.applySingleKeyLog(log, "INCR", func(txCtx database.TxContext, key database.BatchKey) database.ValueType {
+		value, err := e.Incr(txCtx, key, nil)
+		if err != nil {
+			e.logger.Error().Err(err).Uint64("lsn", log.LSN).Str("command", "INCR").Msg("failed to apply WAL log")
+		}
+
+		return value
+	})
 }
 
 func (e *Engine) applyDelFromLog(log *wal.LogData) {

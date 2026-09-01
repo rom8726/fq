@@ -15,7 +15,7 @@ import (
 )
 
 type Engine interface {
-	Incr(database.TxContext, database.BatchKey) database.ValueType
+	Incr(database.TxContext, database.BatchKey, func() error) (database.ValueType, error)
 	RLimitFixedWindow(
 		database.TxContext,
 		database.BatchKey,
@@ -119,6 +119,10 @@ type Replica interface {
 	Start(context.Context)
 	IsMaster() bool
 	Shutdown()
+}
+
+type walRecoveryObserver interface {
+	SetRecoveredWALState(lastAppliedLSN uint64)
 }
 
 type quotaEventPublisher interface {
@@ -232,6 +236,11 @@ func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
 	}
 
 	s.tx.Store(lastLSN)
+	if s.replica != nil && !s.replica.IsMaster() {
+		if observer, ok := s.replica.(walRecoveryObserver); ok {
+			observer.SetRecoveredWALState(lastLSN)
+		}
+	}
 
 	return nil
 }
@@ -290,11 +299,9 @@ func (s *Storage) Shutdown() {
 func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
 	txCtx := s.makeTxContext()
 
-	if err := s.writeIncrWAL(ctx, txCtx, key); err != nil {
-		return 0, err
-	}
-
-	return s.engine.Incr(txCtx, key), nil
+	return s.engine.Incr(txCtx, key, func() error {
+		return s.writeIncrWAL(ctx, txCtx, key)
+	})
 }
 
 func (s *Storage) RLimitFixedWindow(

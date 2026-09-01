@@ -67,11 +67,15 @@ func NewIndexedHashTable() *HashTable {
 	return table
 }
 
-func (s *HashTable) Incr(txCtx database.TxContext, key database.BatchKey) database.ValueType {
+func (s *HashTable) Incr(
+	txCtx database.TxContext,
+	key database.BatchKey,
+	beforeApply func() error,
+) (database.ValueType, error) {
 	htKey := hashTableKey{key: key.Key, batchSize: key.BatchSize}
 	v := s.getOrInitElem(htKey)
 
-	return v.Incr(txCtx)
+	return v.Incr(txCtx, beforeApply)
 }
 
 func (s *HashTable) RLimitFixedWindow(

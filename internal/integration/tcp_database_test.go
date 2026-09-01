@@ -410,7 +410,9 @@ func TestTCPDatabaseIncrHotKeyConcurrently(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	app.RequireQuery("GET hot 600", fmt.Sprintf("ok|%d", successful.Load()))
+	value, err := tryQuery(app.address, "GET hot 600")
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(int64(successful.Load()), 10), value)
 }
 
 func TestTCPDatabaseRLimitDoesNotExceedLimitConcurrently(t *testing.T) {

@@ -84,6 +84,9 @@ func TestNewReplicationEnvironmentWritesMasterAndSlaveConfigs(t *testing.T) {
 	if master.MasterAddress == "" || master.MasterAddress != slave.MasterAddress {
 		t.Fatalf("replication addresses = %q/%q", master.MasterAddress, slave.MasterAddress)
 	}
+	if master.ReplicationToken == "" || master.ReplicationToken != slave.ReplicationToken {
+		t.Fatalf("replication tokens = %q/%q, want shared non-empty token", master.ReplicationToken, slave.ReplicationToken)
+	}
 
 	masterConfig, err := os.ReadFile(master.ConfigPath)
 	if err != nil {

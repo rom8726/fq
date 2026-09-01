@@ -134,6 +134,13 @@ func (s *Slave) Status() SlaveStatus {
 	return *p
 }
 
+func (s *Slave) SetRecoveredWALState(lastAppliedLSN uint64) {
+	if lastAppliedLSN > s.lastAppliedLSN {
+		s.lastAppliedLSN = lastAppliedLSN
+		s.refreshStatus(true)
+	}
+}
+
 func NewSlave(
 	client TCPClient,
 	replicaID string,

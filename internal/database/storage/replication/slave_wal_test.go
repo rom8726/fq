@@ -214,6 +214,25 @@ func TestNewSlaveInitializesCursorOffsetFromLastLocalSegment(t *testing.T) {
 	require.Equal(t, int64(10), slave.lastSegmentOffset)
 }
 
+func TestSlaveSetRecoveredWALStateAdvancesLastAppliedLSN(t *testing.T) {
+	logger := zerolog.Nop()
+	slave := &Slave{
+		replicaID:      "replica-1",
+		masterAddress:  ":1946",
+		lastAppliedLSN: 7,
+		logger:         &logger,
+	}
+	slave.refreshStatus(true)
+
+	slave.SetRecoveredWALState(12)
+	require.Equal(t, uint64(12), slave.lastAppliedLSN)
+	require.Equal(t, uint64(12), slave.Status().LastAppliedLSN)
+
+	slave.SetRecoveredWALState(10)
+	require.Equal(t, uint64(12), slave.lastAppliedLSN)
+	require.Equal(t, uint64(12), slave.Status().LastAppliedLSN)
+}
+
 func TestSlaveDoesNotUpdateAckCursorIfSaveWALChunkFails(t *testing.T) {
 	logger := zerolog.Nop()
 	directory := t.TempDir()

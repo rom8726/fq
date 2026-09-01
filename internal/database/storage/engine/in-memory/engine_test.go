@@ -265,9 +265,9 @@ func TestEngineScanReturnsKeysInChunks(t *testing.T) {
 	require.NoError(t, err)
 
 	now := database.TxTime(time.Now().Unix())
-	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, database.BatchKey{Key: "alpha", BatchSize: 60, BatchSizeStr: "60"})
-	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, database.BatchKey{Key: "bravo", BatchSize: 60, BatchSizeStr: "60"})
-	engine.Incr(database.TxContext{Tx: 3, CurrTime: now}, database.BatchKey{Key: "charlie", BatchSize: 300, BatchSizeStr: "300"})
+	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, database.BatchKey{Key: "alpha", BatchSize: 60, BatchSizeStr: "60"}, nil)
+	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, database.BatchKey{Key: "bravo", BatchSize: 60, BatchSizeStr: "60"}, nil)
+	engine.Incr(database.TxContext{Tx: 3, CurrTime: now}, database.BatchKey{Key: "charlie", BatchSize: 300, BatchSizeStr: "300"}, nil)
 
 	first, err := engine.Scan("", "0", 2)
 	require.NoError(t, err)
@@ -291,9 +291,9 @@ func TestEnginePScanReturnsOnlyMatchingPrefix(t *testing.T) {
 	require.NoError(t, err)
 
 	now := database.TxTime(time.Now().Unix())
-	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, database.BatchKey{Key: "tenant-a", BatchSize: 60, BatchSizeStr: "60"})
-	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, database.BatchKey{Key: "tenant-b", BatchSize: 60, BatchSizeStr: "60"})
-	engine.Incr(database.TxContext{Tx: 3, CurrTime: now}, database.BatchKey{Key: "other", BatchSize: 60, BatchSizeStr: "60"})
+	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, database.BatchKey{Key: "tenant-a", BatchSize: 60, BatchSizeStr: "60"}, nil)
+	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, database.BatchKey{Key: "tenant-b", BatchSize: 60, BatchSizeStr: "60"}, nil)
+	engine.Incr(database.TxContext{Tx: 3, CurrTime: now}, database.BatchKey{Key: "other", BatchSize: 60, BatchSizeStr: "60"}, nil)
 
 	result, err := engine.Scan("tenant-", "0", 10)
 	require.NoError(t, err)
@@ -312,8 +312,8 @@ func TestEngineScanSkipsStaleIndexKeys(t *testing.T) {
 	now := database.TxTime(time.Now().Unix())
 	stale := database.BatchKey{Key: "stale", BatchSize: 60, BatchSizeStr: "60"}
 	live := database.BatchKey{Key: "tenant-live", BatchSize: 60, BatchSizeStr: "60"}
-	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, stale)
-	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, live)
+	engine.Incr(database.TxContext{Tx: 1, CurrTime: now}, stale, nil)
+	engine.Incr(database.TxContext{Tx: 2, CurrTime: now}, live, nil)
 
 	partition := engine.partitions[0].(*HashTable)
 	partition.mu.Lock()
