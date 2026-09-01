@@ -175,6 +175,7 @@ func renderSlaveInfo(tw *tabwriter.Writer, slave *inspect.SlaveInfo) {
 	_, _ = fmt.Fprintf(tw, "last segment\t%s\n", orDash(slave.LastSegmentName))
 	_, _ = fmt.Fprintf(tw, "last applied lsn\t%d\n", slave.LastAppliedLSN)
 	_, _ = fmt.Fprintf(tw, "consecutive errors\t%s\n", errorCountColored(slave.ConsecutiveErrors))
+	_, _ = fmt.Fprintf(tw, "last error code\t%d\n", slave.LastErrorCode)
 	_, _ = fmt.Fprintf(tw, "reconnects\t%d (last %s)\n", slave.ReconnectTotal, unixVal(slave.LastReconnectAt))
 }
 

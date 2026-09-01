@@ -9,6 +9,7 @@ import (
 	"github.com/fq-db/fq/internal/database/storage"
 	"github.com/fq-db/fq/internal/database/storage/replication"
 	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/version"
 )
 
@@ -39,17 +40,18 @@ func (i *Inspector) buildInstance(snap observability.Snapshot) *InstanceInfo {
 	}
 
 	return &InstanceInfo{
-		Version:     v.Version,
-		Commit:      v.Commit,
-		BuildDate:   v.Date,
-		GoVersion:   v.GoVersion,
-		Platform:    v.Platform,
-		UptimeSec:   time.Since(i.deps.StartedAt).Seconds(),
-		PID:         os.Getpid(),
-		Role:        role,
-		ReplicaID:   replicaID,
-		ListenAddr:  i.deps.Cfg.Network.Address,
-		Connections: int(snap.TCPActiveConnections),
+		Version:         v.Version,
+		Commit:          v.Commit,
+		BuildDate:       v.Date,
+		GoVersion:       v.GoVersion,
+		Platform:        v.Platform,
+		ProtocolVersion: int(protocol.CurrentVersion),
+		UptimeSec:       time.Since(i.deps.StartedAt).Seconds(),
+		PID:             os.Getpid(),
+		Role:            role,
+		ReplicaID:       replicaID,
+		ListenAddr:      i.deps.Cfg.Network.Address,
+		Connections:     int(snap.TCPActiveConnections),
 	}
 }
 
@@ -160,7 +162,7 @@ func (i *Inspector) buildDump() *DumpInfo {
 }
 
 func (i *Inspector) buildRepl(truncate bool) *ReplInfo {
-	info := &ReplInfo{Role: "none"}
+	info := &ReplInfo{Role: "none", ProtocolVersion: int(replication.ProtocolVersion)}
 
 	switch {
 	case i.deps.Master != nil:
@@ -247,6 +249,7 @@ func buildSlaveInfo(status replication.SlaveStatus) *SlaveInfo {
 		LastSegmentName:   status.LastSegmentName,
 		LastAppliedLSN:    status.LastAppliedLSN,
 		ConsecutiveErrors: status.ConsecutiveErrors,
+		LastErrorCode:     int(status.LastErrorCode),
 		ReconnectTotal:    status.ReconnectTotal,
 		LastReconnectAt:   lastReconnectAt,
 		UpdatedAt:         status.UpdatedAt.Unix(),
