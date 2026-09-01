@@ -446,7 +446,7 @@ func renderMarkdown(cfg config, input reportInput, reports []benchmarkReport) st
 	})
 
 	fmt.Fprintf(&b, "# %s\n\n", cfg.title)
-	fmt.Fprintf(&b, "_Generated at %s from `%s`._\n\n", now, slashPath(cfg.inputDir))
+	fmt.Fprintf(&b, "_Generated at %s from benchmark run artifacts._\n\n", now)
 	fmt.Fprintf(&b, "## Summary\n\n")
 	if len(successful) > 0 {
 		best := successful[0]
@@ -569,16 +569,11 @@ func renderRunMetadata(b *strings.Builder, input reportInput) {
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "| Field | Value |")
 	fmt.Fprintln(b, "| --- | --- |")
-	fmt.Fprintf(b, "| Run directory | `%s` |\n", slashPath(input.runDir))
 	fmt.Fprintf(b, "| Mode | `%s` |\n", meta.Mode)
 	fmt.Fprintf(b, "| Git commit | `%s` |\n", meta.GitCommit)
 	fmt.Fprintf(b, "| Git dirty | `%t` |\n", meta.GitDirty)
-	fmt.Fprintf(b, "| Machine | `%s` |\n", meta.Machine)
 	if !meta.GeneratedAt.IsZero() {
 		fmt.Fprintf(b, "| Generated at | `%s` |\n", meta.GeneratedAt.UTC().Format(time.RFC3339))
-	}
-	if meta.Hostname != "" {
-		fmt.Fprintf(b, "| Hostname | `%s` |\n", meta.Hostname)
 	}
 	if len(meta.ConfigSHA256) > 0 {
 		keys := sortedKeys(meta.ConfigSHA256)
@@ -615,27 +610,19 @@ func renderEnvironment(b *strings.Builder, cfg config, input reportInput, report
 	dbGoVersion := first.Metadata.GoVersion
 	dbPersistence := cfg.persistence
 	dbRole := ""
-	dbListen := ""
 	clientMachine := cfg.clientMachine
 	clientCPU := cfg.clientCPU
 	clientPlatform := first.Metadata.GOOS + "/" + first.Metadata.GOARCH
 	clientGoVersion := first.Metadata.GoVersion
 	if input.metadata != nil {
-		clientMachine = input.metadata.Machine
 		clientCPU = input.metadata.NumCPU
 		clientPlatform = input.metadata.GOOS + "/" + input.metadata.GOARCH
 		clientGoVersion = input.metadata.GoVersion
-		if dbMachine == "remote Linux server" && input.metadata.Machine != "" {
-			dbMachine = input.metadata.Machine
-		}
 	}
 	if input.serverInfo != nil {
 		if input.serverInfo.Instance != nil {
 			if input.serverInfo.Instance.Role != "" {
 				dbRole = input.serverInfo.Instance.Role
-			}
-			if input.serverInfo.Instance.ListenAddr != "" {
-				dbListen = input.serverInfo.Instance.ListenAddr
 			}
 			if input.serverInfo.Instance.Platform != "" {
 				dbPlatform = input.serverInfo.Instance.Platform
@@ -645,9 +632,6 @@ func renderEnvironment(b *strings.Builder, cfg config, input reportInput, report
 			}
 			if input.serverInfo.Instance.NumCPU > 0 {
 				dbCPU = input.serverInfo.Instance.NumCPU
-			}
-			if input.serverInfo.Instance.Hostname != "" {
-				dbMachine = input.serverInfo.Instance.Hostname
 			}
 		}
 		if input.serverInfo.Engine != nil && input.serverInfo.Engine.Partitions > 0 {
@@ -667,9 +651,6 @@ func renderEnvironment(b *strings.Builder, cfg config, input reportInput, report
 	fmt.Fprintf(b, "| Database server | %s |\n", escapeCell(dbMachine))
 	if dbRole != "" {
 		fmt.Fprintf(b, "| Database role | %s |\n", escapeCell(dbRole))
-	}
-	if dbListen != "" {
-		fmt.Fprintf(b, "| Database listen address | `%s` |\n", escapeCell(dbListen))
 	}
 	fmt.Fprintf(b, "| Database CPU | %d |\n", dbCPU)
 	if dbPartitions > 0 {
@@ -714,9 +695,8 @@ func renderMethodology(b *strings.Builder, cfg config, input reportInput, report
 	if input.runDir != "" {
 		fmt.Fprintf(
 			b,
-			"This report was rendered from the reproducible results run directory `%s`; "+
-				"the run contains metadata, manifest, logs, benchmark JSON, stress JSON, and config/profile snapshots.\n\n",
-			slashPath(input.runDir),
+			"This report was rendered from a reproducible results run directory containing metadata, "+
+				"manifest, logs, benchmark JSON, stress JSON, and config/profile snapshots.\n\n",
 		)
 	}
 }
@@ -750,8 +730,8 @@ func renderManifest(b *strings.Builder, input reportInput) {
 			"| `%s` | %s | `%s` | `%s` | %s |\n",
 			command.Name,
 			command.Kind,
-			escapeCell(strings.Join(command.Command, " ")),
-			slashPath(command.OutputFile),
+			escapeCell(publicCommand(command.Command)),
+			publicPath(command.OutputFile),
 			escapeCell(status),
 		)
 	}
@@ -801,7 +781,7 @@ func renderWorkloadTable(b *strings.Builder, reports []benchmarkReport) {
 		fmt.Fprintf(
 			b,
 			"| `%s` | `%s` | %d | %s | %s | %d | `%s` |\n",
-			slashPath(report.source),
+			publicPath(report.source),
 			report.Metadata.QueryTemplate,
 			report.Metadata.Connections,
 			formatTargetRPS(report.Metadata.TargetRPS),
@@ -891,7 +871,7 @@ func renderStressTable(b *strings.Builder, input reportInput) {
 			report.Result.Dumps,
 			report.Result.TransientErrors,
 			duration.Round(time.Millisecond),
-			slashPath(report.source),
+			publicPath(report.source),
 		)
 	}
 	fmt.Fprintln(b)
@@ -1005,6 +985,37 @@ func slashPath(path string) string {
 
 func escapeCell(value string) string {
 	return strings.ReplaceAll(value, "|", "\\|")
+}
+
+func publicPath(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	return filepath.Base(path)
+}
+
+func publicCommand(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+
+	out := append([]string(nil), args...)
+	for i := 0; i < len(out); i++ {
+		switch {
+		case out[i] == "-address" || out[i] == "-server_info_url":
+			if i+1 < len(out) {
+				out[i+1] = "<redacted>"
+				i++
+			}
+		case strings.HasPrefix(out[i], "-address="):
+			out[i] = "-address=<redacted>"
+		case strings.HasPrefix(out[i], "-server_info_url="):
+			out[i] = "-server_info_url=<redacted>"
+		}
+	}
+
+	return strings.Join(out, " ")
 }
 
 func sortedKeys(values map[string]string) []string {

@@ -27,10 +27,11 @@ run. Prefer a stable label passed with `-machine`:
 go run ./cmd/results -mode release -machine dedicated-m2-pro -run -confirm_release_run
 ```
 
-The generated metadata also records `hostname`, `goos`, `goarch`, `go_version`, and
-`num_cpu`. Keep the hardware stable between reports when comparing versions. If the
-machine changes, treat the new report as a new baseline rather than a direct
-regression/progression measurement.
+Raw run metadata may record private `hostname` values for local traceability, but
+published Markdown reports should use stable labels and must not expose private host
+names or IP addresses. Keep the hardware stable between reports when comparing
+versions. If the machine changes, treat the new report as a new baseline rather than a
+direct regression/progression measurement.
 
 Before a publishable run:
 
@@ -141,19 +142,24 @@ run with:
 
 ```shell
 go run ./cmd/results -mode release -server_info_url http://db-host:2112/v1/info -run -confirm_release_run
-go run ./cmd/report -input benchmarks/results/runs/<timestamp>-<machine>-<commit>-release/
+go run ./cmd/report \
+  -input benchmarks/results/runs/<timestamp>-<machine>-<commit>-release/ \
+  -server_machine dedicated-db-class \
+  -client_machine dedicated-bench-class
 ```
 
 By default, `cmd/report` writes `benchmarks/reports/report_YYYY_MM_DD.md` using the
 current local date. It reads benchmark JSON reports from the run's `benchmarks/`
 directory and, when present, includes `metadata.json`, `manifest.json`,
 `server-info.json`, and stress JSON reports from `stress/`. Use `server_info_url`
-when the benchmark client and database server run on different hosts.
+when the benchmark client and database server run on different hosts. Use explicit
+public labels for `-server_machine` and `-client_machine`.
 
 A report should link or summarize the generated run directory and include:
 
 - fq git commit and dirty state;
-- machine label and hardware/runtime metadata;
+- machine labels and hardware/runtime metadata, without private hostnames or IP
+  addresses;
 - server configuration summary;
 - list of profiles and stress scenarios;
 - throughput and latency percentiles from each benchmark JSON report;

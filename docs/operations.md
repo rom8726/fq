@@ -303,7 +303,8 @@ go run ./cmd/results -mode release -server_info_url http://db-host:2112/v1/info
 
 The response is saved as `server-info.json` in the results run directory, so
 `cmd/report` can show database-server metadata separately from benchmark-client
-metadata.
+metadata. The raw JSON is intended as a local reproducibility artifact; published
+Markdown reports should avoid private hostnames and IP addresses.
 
 ## Benchmarking
 

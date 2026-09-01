@@ -185,9 +185,13 @@ func TestRunDirectoryReportIncludesPublishableArtifacts(t *testing.T) {
 		},
 		Commands: []resultsCommand{
 			{
-				Name:       "bench-release-hot-counter",
-				Kind:       "benchmark",
-				Command:    []string{"go", "run", "./cmd/bench", "-profile", "benchmarks/profiles/release-hot-counter.yml"},
+				Name: "bench-release-hot-counter",
+				Kind: "benchmark",
+				Command: []string{
+					"go", "run", "./cmd/bench",
+					"-profile", "benchmarks/profiles/release-hot-counter.yml",
+					"-address", "10.0.0.2:1945",
+				},
 				OutputFile: filepath.Join(runDir, "benchmarks", "release-hot-counter.json"),
 			},
 			{
@@ -258,19 +262,24 @@ func TestRunDirectoryReportIncludesPublishableArtifacts(t *testing.T) {
 	require.Contains(t, report, "| Database version | `1.2.3` |")
 	require.Contains(t, report, "| Database commit | `dbcommit123` |")
 	require.Contains(t, report, "| Database replication role | `master` |")
-	require.Contains(t, report, "| Database server | db-host |")
+	require.Contains(t, report, "| Database server | remote Linux server |")
 	require.Contains(t, report, "| Database CPU | 32 |")
 	require.Contains(t, report, "| Database partitions | 16 |")
 	require.Contains(t, report, "| Database OS / Arch | linux/arm64 |")
-	require.Contains(t, report, "| Benchmark client | dedicated-bench |")
+	require.Contains(t, report, "| Benchmark client | remote Linux benchmark client |")
 	require.Contains(t, report, "| Benchmark client CPU | 8 |")
 	require.Contains(t, report, "| Persistence | wal_and_dump, sync_commit=on |")
 	require.Contains(t, report, "## Command Manifest")
+	require.Contains(t, report, "-address <redacted>")
 	require.Contains(t, report, "| `stress-crash-loop` | stress |")
 	require.Contains(t, report, "| `stress-dump-recovery` | stress |")
 	require.Contains(t, report, "failed: exit code 1")
 	require.Contains(t, report, "## Stress Results")
 	require.Contains(t, report, "| `crash-loop` | passed | 1234 | 14 | 0 | 2 | 30s |")
+	require.NotContains(t, report, "bench-host")
+	require.NotContains(t, report, "db-host")
+	require.NotContains(t, report, "10.0.0.2")
+	require.NotContains(t, report, runDir)
 }
 
 func writeFixture(t *testing.T, dir string, name string, report benchmarkReport) {
