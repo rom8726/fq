@@ -43,3 +43,6 @@ benchmarks/results/
 # IDEs
 .vscode
 .idea
+
+# mkdocs build output
+site/

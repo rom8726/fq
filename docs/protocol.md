@@ -1,7 +1,8 @@
 # fq wire protocol, version 1
 
 This document is the normative description of the protocol spoken on the fq client
-port. Where the README and this document disagree, this document wins.
+port. Where the README and this document disagree, this document wins. For usage
+examples and prose per command, see [Commands](commands.md).
 
 ## Version and compatibility
 
