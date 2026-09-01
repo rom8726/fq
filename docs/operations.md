@@ -78,9 +78,9 @@ replication:
 ```
 
 The master and its replicas share one secret. The replica sends it with every dump and
-WAL request; the master compares it in constant time and drops the connection on a
-mismatch, so a peer that cannot present the secret can neither register as a replica
-nor pull the dump.
+WAL request; the master compares it in constant time and rejects a mismatch with
+replication error code `3002`, so a peer that cannot present the secret can neither
+register as a replica nor pull the dump.
 
 ## TLS
 
@@ -237,9 +237,9 @@ replication:
 ```
 
 Both nodes must resolve `replication.auth` to the same secret; the master rejects any
-peer that does not present it, and replication will not start without a secret
-configured. For what "async" actually means for durability and read staleness — and
-why there is no promote-to-master — see
+peer that does not present it with replication error code `3002`, and replication will
+not start without a secret configured. For what "async" actually means for durability
+and read staleness — and why there is no promote-to-master — see
 [Consistency model](consistency.md#system-architecture).
 
 ## Monitoring

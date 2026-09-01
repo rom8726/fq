@@ -291,7 +291,7 @@ rejects. The master checks the shared secret first and the version second, so an
 unauthenticated peer learns nothing — not even which versions exist.
 
 `DumpResponse` and `WALResponse` carry `Succeed bool` and `ErrorCode`, drawn from the
-same code registry as the client protocol: `1011` when the master refuses the replica's
-protocol version, `9000` for an internal failure while producing data. A replica whose
-version is rejected keeps reconnecting with backoff, logs the code, and reports it as
-`repl.slave.last_error_code` in `INSPECT`.
+same code registry as the client protocol: `3002` when the shared secret is rejected,
+`1011` when the master refuses the replica's protocol version, and `9000` for an
+internal failure while producing data. A rejected replica keeps reconnecting with
+backoff, logs the code, and reports it as `repl.slave.last_error_code` in `INSPECT`.

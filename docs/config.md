@@ -168,7 +168,7 @@ auth:
 
 Exactly one of `token_env` or `token_file`. The master and every slave must resolve
 this to the **same secret**; the master compares it in constant time on every request
-and drops the connection on a mismatch.
+and rejects mismatches with replication error code `3002`.
 
 ## `tls` (network and replication)
 
