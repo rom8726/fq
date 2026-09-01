@@ -68,6 +68,7 @@ func serverCommand(ctx context.Context, env *Environment) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, env.FQBinary, env.ConfigPath)
 		cmd.Dir = env.RepositoryDir
 		cmd.Env = append(os.Environ(), env.ReplicationTokenEnv())
+		configureServerCommand(cmd)
 
 		return cmd
 	}
@@ -75,8 +76,16 @@ func serverCommand(ctx context.Context, env *Environment) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "go", "run", "./cmd/fq", env.ConfigPath)
 	cmd.Dir = env.RepositoryDir
 	cmd.Env = append(os.Environ(), env.ReplicationTokenEnv())
+	configureServerCommand(cmd)
 
 	return cmd
+}
+
+func configureServerCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return signalServerProcess(cmd, syscall.SIGKILL)
+	}
 }
 
 func (p *ServerProcess) WaitReady(ctx context.Context) error {
@@ -124,7 +133,7 @@ func (p *ServerProcess) Kill() error {
 		return nil
 	}
 
-	err := p.cmd.Process.Kill()
+	err := signalServerProcess(p.cmd, syscall.SIGKILL)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("kill fq server: %w", err)
 	}
@@ -144,7 +153,7 @@ func (p *ServerProcess) StopGracefully(ctx context.Context) error {
 		return nil
 	}
 
-	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := signalServerProcess(p.cmd, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("stop fq server: %w", err)
 	}
 
@@ -155,7 +164,7 @@ func (p *ServerProcess) StopGracefully(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		_ = p.cmd.Process.Kill()
+		_ = signalServerProcess(p.cmd, syscall.SIGKILL)
 		<-done
 
 		return ctx.Err()
@@ -183,4 +192,17 @@ func (p *ServerProcess) closeLogs() error {
 	}
 
 	return err
+}
+
+func signalServerProcess(cmd *exec.Cmd, signal syscall.Signal) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+
+	err := syscall.Kill(-cmd.Process.Pid, signal)
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+
+	return cmd.Process.Signal(signal)
 }
