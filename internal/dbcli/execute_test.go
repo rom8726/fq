@@ -142,6 +142,20 @@ func TestExecuteInspect(t *testing.T) {
 	require.Contains(t, out.String(), `"section": "wal"`)
 }
 
+func TestExecuteInspectPrintsErrorWithCode(t *testing.T) {
+	t.Parallel()
+
+	address := startTestServer(t, func(_ context.Context, _ []byte, write func([]byte) error) error {
+		return write([]byte("err|3001|permission denied"))
+	})
+	client := dialTestClient(t, address, time.Minute)
+
+	var out bytes.Buffer
+	logger := zerolog.Nop()
+	require.NoError(t, dbcli.Execute(context.Background(), &logger, client, "INSPECT", &out, time.Now()))
+	require.Contains(t, out.String(), "[fq]> [3001] permission denied")
+}
+
 func TestExecuteHumanInspect(t *testing.T) {
 	t.Parallel()
 
@@ -168,6 +182,20 @@ func TestExecuteHumanInspect(t *testing.T) {
 	require.Contains(t, out.String(), "1.0.0")
 }
 
+func TestExecuteHumanInspectPrintsErrorWithCode(t *testing.T) {
+	t.Parallel()
+
+	address := startTestServer(t, func(_ context.Context, _ []byte, write func([]byte) error) error {
+		return write([]byte("err|3001|permission denied"))
+	})
+	client := dialTestClient(t, address, time.Minute)
+
+	var out bytes.Buffer
+	logger := zerolog.Nop()
+	require.NoError(t, dbcli.Execute(context.Background(), &logger, client, "HINSPECT wal", &out, time.Now()))
+	require.Contains(t, out.String(), "error: [3001] permission denied")
+}
+
 func TestExecuteStreamIdleTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -188,6 +216,20 @@ func TestExecuteStreamIdleTimeout(t *testing.T) {
 	require.Contains(t, out.String(), "Streaming events")
 	require.Contains(t, out.String(), "first-frame")
 	require.Contains(t, out.String(), "Stream idle timeout")
+}
+
+func TestExecuteStreamPrintsErrorWithCode(t *testing.T) {
+	t.Parallel()
+
+	address := startTestServer(t, func(_ context.Context, _ []byte, write func([]byte) error) error {
+		return write([]byte("err|3001|permission denied"))
+	})
+	client := dialTestClient(t, address, time.Minute)
+
+	var out bytes.Buffer
+	logger := zerolog.Nop()
+	require.NoError(t, dbcli.Execute(context.Background(), &logger, client, "STREAM", &out, time.Now()))
+	require.Contains(t, out.String(), "[fq]> [3001] permission denied")
 }
 
 func TestExecuteWatchAdvisoryMessage(t *testing.T) {

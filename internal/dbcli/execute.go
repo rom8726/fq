@@ -90,6 +90,14 @@ func executeStream(
 			return nil
 		}
 
+		var protoErr *protocol.Error
+		if errors.As(err, &protoErr) {
+			_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n",
+				renderProtocolError("[fq]> ", protoErr), time.Since(start).String())
+
+			return nil
+		}
+
 		return fmt.Errorf("stream query: %w", err)
 	}
 
@@ -114,7 +122,7 @@ func executePlain(
 
 		var protoErr *protocol.Error
 		if errors.As(err, &protoErr) {
-			_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", renderProtocolError(protoErr), elapsed.String())
+			_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", renderProtocolError("[fq]> ", protoErr), elapsed.String())
 
 			return nil
 		}
@@ -138,7 +146,7 @@ func executeInspect(
 	body, err := fetchChunkedBody(ctx, client, request)
 	elapsed := time.Since(start)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", aurora.Red("[fq]> "+err.Error()), elapsed.String())
+		_, _ = fmt.Fprintf(out, "%s\t\t\t\tElapsed: %s\n", renderError("[fq]> ", err), elapsed.String())
 
 		return nil
 	}
@@ -169,7 +177,7 @@ func executeHumanInspect(
 	body, err := fetchChunkedBody(ctx, client, wireQuery)
 	elapsed := time.Since(start)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "%s\nElapsed: %s\n", aurora.Red("error: "+err.Error()), elapsed.String())
+		_, _ = fmt.Fprintf(out, "%s\nElapsed: %s\n", renderError("error: ", err), elapsed.String())
 
 		return nil
 	}
@@ -206,6 +214,15 @@ func fetchChunkedBody(ctx context.Context, client *network.TCPClient, query stri
 	return body.Bytes(), nil
 }
 
-func renderProtocolError(err *protocol.Error) aurora.Value {
-	return aurora.Red(fmt.Sprintf("[fq]> [%d] %s", err.Code, err.Msg))
+func renderError(prefix string, err error) aurora.Value {
+	var protoErr *protocol.Error
+	if errors.As(err, &protoErr) {
+		return renderProtocolError(prefix, protoErr)
+	}
+
+	return aurora.Red(prefix + err.Error())
+}
+
+func renderProtocolError(prefix string, err *protocol.Error) aurora.Value {
+	return aurora.Red(fmt.Sprintf("%s[%d] %s", prefix, err.Code, err.Msg))
 }
