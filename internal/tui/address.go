@@ -26,26 +26,26 @@ func dialAddress(address string) string {
 func dialWithRetry(
 	ctx context.Context,
 	options dbcli.ConnectOptions,
-	maxWait time.Duration,
 	retryInterval time.Duration,
+	notifyInterval time.Duration,
+	notify func(err error),
 ) (*network.TCPClient, error) {
-	deadline := time.Now().Add(maxWait)
-	var lastErr error
+	lastNotify := time.Now()
 
 	for {
 		client, err := dbcli.Connect(ctx, options)
 		if err == nil {
 			return client, nil
 		}
-		lastErr = err
 
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("connect to %s: %w", options.Address, lastErr)
+		if notify != nil && time.Since(lastNotify) >= notifyInterval {
+			notify(err)
+			lastNotify = time.Now()
 		}
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("connect to %s: %w", options.Address, ctx.Err())
 		case <-time.After(retryInterval):
 		}
 	}

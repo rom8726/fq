@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	connectMaxWait       = 5 * time.Second
-	connectRetryInterval = 100 * time.Millisecond
-	inputPrompt          = "[fq]> "
-	maxPaneLines         = 2000
+	connectRetryInterval  = 100 * time.Millisecond
+	connectNotifyInterval = 5 * time.Second
+	inputPrompt           = "[fq]> "
+	maxPaneLines          = 2000
 
 	boxHorizontal  = '─'
 	boxVertical    = '│'
@@ -152,8 +152,15 @@ func (a *App) connectAndServe(ctx context.Context, cancel context.CancelFunc, cf
 			Token:          cfg.Token,
 			TLS:            cfg.TLS,
 		},
-		connectMaxWait,
 		connectRetryInterval,
+		connectNotifyInterval,
+		func(err error) {
+			_, _ = fmt.Fprintf(
+				a.outputWriter(),
+				"still waiting to connect to %s (server may still be loading dump/WAL): %s\n",
+				cfg.Address, err,
+			)
+		},
 	)
 	if err != nil {
 		_, _ = fmt.Fprintf(a.outputWriter(), "failed to connect to %s: %s\n", cfg.Address, err)

@@ -53,15 +53,16 @@ func TestDialWithRetrySucceedsOnceServerIsUp(t *testing.T) {
 	client, err := dialWithRetry(
 		context.Background(),
 		dbcli.ConnectOptions{Address: address, MaxMessageSize: 4096, IdleTimeout: time.Minute},
-		2*time.Second,
 		20*time.Millisecond,
+		time.Second,
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, client)
 	_ = client.Close()
 }
 
-func TestDialWithRetryGivesUpAfterMaxWait(t *testing.T) {
+func TestDialWithRetryKeepsRetryingUntilContextCanceled(t *testing.T) {
 	t.Parallel()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -69,11 +70,41 @@ func TestDialWithRetryGivesUpAfterMaxWait(t *testing.T) {
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())
 
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
 	_, err = dialWithRetry(
-		context.Background(),
+		ctx,
 		dbcli.ConnectOptions{Address: address, MaxMessageSize: 4096, IdleTimeout: time.Minute},
-		100*time.Millisecond,
 		10*time.Millisecond,
+		time.Second,
+		nil,
 	)
 	require.Error(t, err)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond)
+}
+
+func TestDialWithRetryNotifiesPeriodically(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+
+	var notifications int
+	_, err = dialWithRetry(
+		ctx,
+		dbcli.ConnectOptions{Address: address, MaxMessageSize: 4096, IdleTimeout: time.Minute},
+		5*time.Millisecond,
+		30*time.Millisecond,
+		func(_ error) { notifications++ },
+	)
+	require.Error(t, err)
+	require.GreaterOrEqual(t, notifications, 2)
 }
