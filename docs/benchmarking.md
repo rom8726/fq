@@ -140,13 +140,15 @@ Public reports live in `benchmarks/reports`. Generate one from a completed resul
 run with:
 
 ```shell
+go run ./cmd/results -mode release -server_info_url http://db-host:2112/v1/info -run -confirm_release_run
 go run ./cmd/report -input benchmarks/results/runs/<timestamp>-<machine>-<commit>-release/
 ```
 
 By default, `cmd/report` writes `benchmarks/reports/report_YYYY_MM_DD.md` using the
 current local date. It reads benchmark JSON reports from the run's `benchmarks/`
-directory and, when present, includes `metadata.json`, `manifest.json`, and stress JSON
-reports from `stress/`.
+directory and, when present, includes `metadata.json`, `manifest.json`,
+`server-info.json`, and stress JSON reports from `stress/`. Use `server_info_url`
+when the benchmark client and database server run on different hosts.
 
 A report should link or summarize the generated run directory and include:
 

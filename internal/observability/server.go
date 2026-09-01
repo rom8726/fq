@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,7 +17,10 @@ type Server struct {
 	address      string
 	pprofEnabled bool
 	logger       *zerolog.Logger
+	infoProvider InfoProvider
 }
+
+type InfoProvider func(context.Context) ([]byte, error)
 
 func NewServer(address string, pprofEnabled bool, logger *zerolog.Logger) *Server {
 	return &Server{
@@ -26,6 +30,14 @@ func NewServer(address string, pprofEnabled bool, logger *zerolog.Logger) *Serve
 	}
 }
 
+func (s *Server) SetInfoProvider(provider InfoProvider) {
+	if s == nil {
+		return
+	}
+
+	s.infoProvider = provider
+}
+
 func (s *Server) Start(ctx context.Context) error {
 	if s == nil || s.address == "" {
 		return nil
@@ -33,6 +45,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
+	if s.infoProvider != nil {
+		mux.HandleFunc("/v1/info", s.handleInfo)
+	}
 	if s.pprofEnabled {
 		registerPprofHandlers(mux)
 	}
@@ -78,6 +93,40 @@ func (s *Server) Start(ctx context.Context) error {
 
 		return nil
 	}
+}
+
+func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+
+		return
+	}
+
+	data, err := s.infoProvider(r.Context())
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error().Err(err).Msg("build observability info")
+		}
+		http.Error(w, "failed to build info", http.StatusInternalServerError)
+
+		return
+	}
+	if !json.Valid(data) {
+		if s.logger != nil {
+			s.logger.Error().Msg("observability info provider returned invalid json")
+		}
+		http.Error(w, "invalid info", http.StatusInternalServerError)
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(append(data, '\n'))
 }
 
 func registerPprofHandlers(mux *http.ServeMux) {

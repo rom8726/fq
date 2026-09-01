@@ -19,6 +19,8 @@ type InstanceInfo struct {
 	BuildDate       string  `json:"build_date"`
 	GoVersion       string  `json:"go_version"`
 	Platform        string  `json:"platform"`
+	Hostname        string  `json:"hostname,omitempty"`
+	NumCPU          int     `json:"num_cpu"`
 	ProtocolVersion int     `json:"protocol_version"`
 	UptimeSec       float64 `json:"uptime_sec"`
 	PID             int     `json:"pid"`

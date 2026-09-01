@@ -191,7 +191,7 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 	}()
 
 	db := database.NewDatabase(computeLayer, strg, i.logger, i.maxMessageSize)
-	db.SetInspector(inspect.New(inspect.Deps{
+	inspector := inspect.New(inspect.Deps{
 		Cfg:       i.cfg,
 		Storage:   strg,
 		WAL:       i.wal,
@@ -199,7 +199,11 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 		Master:    i.master,
 		Slave:     i.slave,
 		StartedAt: i.startedAt,
-	}))
+	})
+	db.SetInspector(inspector)
+	i.observability.SetInfoProvider(func(ctx context.Context) ([]byte, error) {
+		return inspector.Report(ctx, "all")
+	})
 
 	group, groupCtx := errgroup.WithContext(ctx)
 

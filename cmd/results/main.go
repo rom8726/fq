@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +30,7 @@ type config struct {
 	outputRoot        string
 	machine           string
 	address           string
+	serverInfoURL     string
 	run               bool
 	includeBenchmarks bool
 	includeStress     bool
@@ -60,13 +64,14 @@ type metadata struct {
 }
 
 type artifacts struct {
-	RunDir       string `json:"run_dir"`
-	BenchDir     string `json:"bench_dir"`
-	StressDir    string `json:"stress_dir"`
-	SnapshotDir  string `json:"snapshot_dir"`
-	MetadataPath string `json:"metadata_path"`
-	ManifestPath string `json:"manifest_path"`
-	SummaryPath  string `json:"summary_path"`
+	RunDir         string `json:"run_dir"`
+	BenchDir       string `json:"bench_dir"`
+	StressDir      string `json:"stress_dir"`
+	SnapshotDir    string `json:"snapshot_dir"`
+	MetadataPath   string `json:"metadata_path"`
+	ManifestPath   string `json:"manifest_path"`
+	SummaryPath    string `json:"summary_path"`
+	ServerInfoPath string `json:"server_info_path,omitempty"`
 }
 
 type runCommand struct {
@@ -125,6 +130,11 @@ func run(ctx context.Context, args []string) error {
 	if err := writeJSON(paths.MetadataPath, meta); err != nil {
 		return err
 	}
+	if cfg.serverInfoURL != "" {
+		if err := fetchServerInfo(ctx, cfg.serverInfoURL, paths.ServerInfoPath); err != nil {
+			return err
+		}
+	}
 	if err := copySnapshots(paths.SnapshotDir); err != nil {
 		return err
 	}
@@ -143,11 +153,15 @@ func run(ctx context.Context, args []string) error {
 
 	fmt.Printf("results run directory: %s\n", paths.RunDir)
 	fmt.Printf("manifest: %s\n", paths.ManifestPath)
+	if cfg.serverInfoURL != "" {
+		fmt.Printf("server info: %s\n", paths.ServerInfoPath)
+	}
 	fmt.Printf("summary: %s\n", paths.SummaryPath)
 
 	return nil
 }
 
+//nolint:lll // ok
 func parseFlags(args []string) config {
 	cfg := config{}
 	flags := flag.NewFlagSet("results", flag.ExitOnError)
@@ -155,6 +169,7 @@ func parseFlags(args []string) config {
 	flags.StringVar(&cfg.outputRoot, "output_root", "benchmarks/results/runs", "directory for timestamped result runs")
 	flags.StringVar(&cfg.machine, "machine", "", "machine label; empty uses hostname")
 	flags.StringVar(&cfg.address, "address", ":1945", "fq server address for benchmark commands")
+	flags.StringVar(&cfg.serverInfoURL, "server_info_url", "", "fq observability info URL, for example http://db-host:2112/v1/info")
 	flags.BoolVar(&cfg.run, "run", false, "execute planned commands; false only writes metadata and manifest")
 	flags.BoolVar(&cfg.includeBenchmarks, "benchmarks", true, "include benchmark commands in the plan")
 	flags.BoolVar(&cfg.includeStress, "stress", true, "include stress commands in the plan")
@@ -203,13 +218,14 @@ func createArtifacts(outputRoot string, meta metadata) (artifacts, error) {
 	)
 	runDir := filepath.Join(outputRoot, runID)
 	paths := artifacts{
-		RunDir:       runDir,
-		BenchDir:     filepath.Join(runDir, "benchmarks"),
-		StressDir:    filepath.Join(runDir, "stress"),
-		SnapshotDir:  filepath.Join(runDir, "snapshots"),
-		MetadataPath: filepath.Join(runDir, "metadata.json"),
-		ManifestPath: filepath.Join(runDir, "manifest.json"),
-		SummaryPath:  filepath.Join(runDir, "summary.md"),
+		RunDir:         runDir,
+		BenchDir:       filepath.Join(runDir, "benchmarks"),
+		StressDir:      filepath.Join(runDir, "stress"),
+		SnapshotDir:    filepath.Join(runDir, "snapshots"),
+		MetadataPath:   filepath.Join(runDir, "metadata.json"),
+		ManifestPath:   filepath.Join(runDir, "manifest.json"),
+		SummaryPath:    filepath.Join(runDir, "summary.md"),
+		ServerInfoPath: filepath.Join(runDir, "server-info.json"),
 	}
 
 	for _, dir := range []string{paths.BenchDir, paths.StressDir, paths.SnapshotDir} {
@@ -376,6 +392,9 @@ func formatSummary(manifest runManifest) string {
 		manifest.Metadata.NumCPU,
 	)
 	fmt.Fprintf(&b, "- run_dir: `%s`\n\n", manifest.Artifacts.RunDir)
+	if manifest.Artifacts.ServerInfoPath != "" {
+		fmt.Fprintf(&b, "- server_info: `%s`\n\n", manifest.Artifacts.ServerInfoPath)
+	}
 
 	b.WriteString("## Commands\n\n")
 	for _, command := range manifest.Commands {
@@ -445,6 +464,50 @@ func copySnapshots(snapshotDir string) error {
 		if err := os.WriteFile(dest, data, 0o644); err != nil {
 			return fmt.Errorf("write snapshot %s: %w", dest, err)
 		}
+	}
+
+	return nil
+}
+
+func fetchServerInfo(ctx context.Context, url, outputPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return fmt.Errorf("create server info request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch server info: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fetch server info: unexpected status %s", resp.Status)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read server info: %w", err)
+	}
+
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, data); err != nil {
+		return fmt.Errorf("parse server info json: %w", err)
+	}
+
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, compact.Bytes(), "", "  "); err != nil {
+		return fmt.Errorf("format server info json: %w", err)
+	}
+	pretty.WriteByte('\n')
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
+		return fmt.Errorf("create server info dir: %w", err)
+	}
+	if err := os.WriteFile(outputPath, pretty.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("write server info: %w", err)
 	}
 
 	return nil

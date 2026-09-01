@@ -267,6 +267,8 @@ observability:
 - `GET /healthz` — liveness check
 - `GET /metrics` — Prometheus metrics (connections, WAL flush latency, replication
   lag, auth failures, protocol error codes, and more)
+- `GET /v1/info` — read-only JSON with instance/build/runtime/storage metadata for
+  benchmark reports
 
 Metric list, `INSPECT` usage, and pprof profiling: see
 **[Operations](https://fq-db.github.io/fq/operations/#monitoring)**.

@@ -37,6 +37,7 @@ type reportInput struct {
 	runDir       string
 	metadata     *resultsMetadata
 	manifest     *resultsManifest
+	serverInfo   *serverInfoReport
 	stress       []stressReport
 }
 
@@ -91,9 +92,14 @@ type latencySummary struct {
 }
 
 type resultsManifest struct {
-	Metadata resultsMetadata        `json:"metadata"`
-	Commands []resultsCommand       `json:"commands"`
-	Results  []resultsCommandResult `json:"results,omitempty"`
+	Metadata  resultsMetadata        `json:"metadata"`
+	Artifacts resultsArtifacts       `json:"artifacts"`
+	Commands  []resultsCommand       `json:"commands"`
+	Results   []resultsCommandResult `json:"results,omitempty"`
+}
+
+type resultsArtifacts struct {
+	ServerInfoPath string `json:"server_info_path,omitempty"`
 }
 
 type resultsMetadata struct {
@@ -158,6 +164,46 @@ type stressEnv struct {
 	DumpDir    string `json:"dump_dir"`
 	ReportPath string `json:"report_path"`
 	Address    string `json:"address"`
+}
+
+type serverInfoReport struct {
+	Instance    *serverInstanceInfo    `json:"instance,omitempty"`
+	Persistence *serverPersistenceInfo `json:"persistence,omitempty"`
+	WAL         *serverWALInfo         `json:"wal,omitempty"`
+	Repl        *serverReplInfo        `json:"repl,omitempty"`
+	Engine      *serverEngineInfo      `json:"engine,omitempty"`
+}
+
+type serverInstanceInfo struct {
+	Version    string `json:"version"`
+	Commit     string `json:"commit"`
+	BuildDate  string `json:"build_date"`
+	GoVersion  string `json:"go_version"`
+	Platform   string `json:"platform"`
+	Hostname   string `json:"hostname"`
+	NumCPU     int    `json:"num_cpu"`
+	Role       string `json:"role"`
+	ListenAddr string `json:"listen_addr"`
+}
+
+type serverPersistenceInfo struct {
+	Mode       string  `json:"mode"`
+	SyncCommit *string `json:"sync_commit"`
+}
+
+type serverWALInfo struct {
+	Enabled       bool    `json:"enabled"`
+	DataDirectory *string `json:"data_directory"`
+}
+
+type serverReplInfo struct {
+	Role            string `json:"role"`
+	ProtocolVersion int    `json:"protocol_version"`
+}
+
+type serverEngineInfo struct {
+	Partitions      int  `json:"partitions"`
+	KeyIndexEnabled bool `json:"key_index_enabled"`
 }
 
 func main() {
@@ -247,6 +293,12 @@ func discoverInput(inputDir string) (reportInput, error) {
 
 		input.manifest = manifest
 
+		serverInfo, err := loadServerInfo(inputDir, input.manifest)
+		if err != nil {
+			return reportInput{}, err
+		}
+		input.serverInfo = serverInfo
+
 		stressReports, err := loadStressReports(filepath.Join(inputDir, "stress"))
 		if err != nil {
 			return reportInput{}, err
@@ -327,6 +379,25 @@ func loadStressReports(inputDir string) ([]stressReport, error) {
 	})
 
 	return reports, nil
+}
+
+func loadServerInfo(runDir string, manifest *resultsManifest) (*serverInfoReport, error) {
+	paths := []string{filepath.Join(runDir, "server-info.json")}
+	if manifest != nil && manifest.Artifacts.ServerInfoPath != "" {
+		paths = append([]string{manifest.Artifacts.ServerInfoPath}, paths...)
+	}
+
+	for _, path := range paths {
+		info, err := loadOptionalJSON[serverInfoReport](path)
+		if err != nil {
+			return nil, err
+		}
+		if info != nil {
+			return info, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func loadOptionalJSON[T any](path string) (*T, error) {
@@ -520,31 +591,97 @@ func renderRunMetadata(b *strings.Builder, input reportInput) {
 			fmt.Fprintf(b, "| Env `%s` | `%s` |\n", key, escapeCell(meta.Environment[key]))
 		}
 	}
+	if input.serverInfo != nil && input.serverInfo.Instance != nil {
+		info := input.serverInfo.Instance
+		fmt.Fprintf(b, "| Database version | `%s` |\n", info.Version)
+		fmt.Fprintf(b, "| Database commit | `%s` |\n", info.Commit)
+		if info.BuildDate != "" {
+			fmt.Fprintf(b, "| Database build date | `%s` |\n", info.BuildDate)
+		}
+	}
+	if input.serverInfo != nil && input.serverInfo.Repl != nil {
+		fmt.Fprintf(b, "| Database replication role | `%s` |\n", input.serverInfo.Repl.Role)
+		fmt.Fprintf(b, "| Replication protocol version | `%d` |\n", input.serverInfo.Repl.ProtocolVersion)
+	}
 	fmt.Fprintln(b)
 }
 
 func renderEnvironment(b *strings.Builder, cfg config, input reportInput, reports []benchmarkReport) {
 	first := reports[0]
+	dbMachine := cfg.serverMachine
+	dbCPU := first.Metadata.NumCPU
+	dbPartitions := 0
+	dbPlatform := first.Metadata.GOOS + "/" + first.Metadata.GOARCH
+	dbGoVersion := first.Metadata.GoVersion
+	dbPersistence := cfg.persistence
+	dbRole := ""
+	dbListen := ""
+	clientMachine := cfg.clientMachine
+	clientCPU := cfg.clientCPU
+	clientPlatform := first.Metadata.GOOS + "/" + first.Metadata.GOARCH
+	clientGoVersion := first.Metadata.GoVersion
 	if input.metadata != nil {
-		first.Metadata.GoVersion = input.metadata.GoVersion
-		first.Metadata.GOOS = input.metadata.GOOS
-		first.Metadata.GOARCH = input.metadata.GOARCH
-		first.Metadata.NumCPU = input.metadata.NumCPU
-		if cfg.serverMachine == "remote Linux server" && input.metadata.Machine != "" {
-			cfg.serverMachine = input.metadata.Machine
+		clientMachine = input.metadata.Machine
+		clientCPU = input.metadata.NumCPU
+		clientPlatform = input.metadata.GOOS + "/" + input.metadata.GOARCH
+		clientGoVersion = input.metadata.GoVersion
+		if dbMachine == "remote Linux server" && input.metadata.Machine != "" {
+			dbMachine = input.metadata.Machine
+		}
+	}
+	if input.serverInfo != nil {
+		if input.serverInfo.Instance != nil {
+			if input.serverInfo.Instance.Role != "" {
+				dbRole = input.serverInfo.Instance.Role
+			}
+			if input.serverInfo.Instance.ListenAddr != "" {
+				dbListen = input.serverInfo.Instance.ListenAddr
+			}
+			if input.serverInfo.Instance.Platform != "" {
+				dbPlatform = input.serverInfo.Instance.Platform
+			}
+			if input.serverInfo.Instance.GoVersion != "" {
+				dbGoVersion = input.serverInfo.Instance.GoVersion
+			}
+			if input.serverInfo.Instance.NumCPU > 0 {
+				dbCPU = input.serverInfo.Instance.NumCPU
+			}
+			if input.serverInfo.Instance.Hostname != "" {
+				dbMachine = input.serverInfo.Instance.Hostname
+			}
+		}
+		if input.serverInfo.Engine != nil && input.serverInfo.Engine.Partitions > 0 {
+			dbPartitions = input.serverInfo.Engine.Partitions
+		}
+		if input.serverInfo.Persistence != nil && input.serverInfo.Persistence.Mode != "" {
+			dbPersistence = input.serverInfo.Persistence.Mode
+			if input.serverInfo.Persistence.SyncCommit != nil {
+				dbPersistence += ", sync_commit=" + *input.serverInfo.Persistence.SyncCommit
+			}
 		}
 	}
 	fmt.Fprintln(b, "## Environment")
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "| Component | Value |")
 	fmt.Fprintln(b, "| --- | --- |")
-	fmt.Fprintf(b, "| Database server | %s |\n", escapeCell(cfg.serverMachine))
-	fmt.Fprintf(b, "| Database CPU | %d |\n", first.Metadata.NumCPU)
-	fmt.Fprintf(b, "| Benchmark client | %s |\n", escapeCell(cfg.clientMachine))
-	fmt.Fprintf(b, "| Benchmark client CPU | %d |\n", cfg.clientCPU)
-	fmt.Fprintf(b, "| OS / Arch | %s/%s |\n", first.Metadata.GOOS, first.Metadata.GOARCH)
-	fmt.Fprintf(b, "| Go version | %s |\n", first.Metadata.GoVersion)
-	fmt.Fprintf(b, "| Persistence | %s |\n", escapeCell(cfg.persistence))
+	fmt.Fprintf(b, "| Database server | %s |\n", escapeCell(dbMachine))
+	if dbRole != "" {
+		fmt.Fprintf(b, "| Database role | %s |\n", escapeCell(dbRole))
+	}
+	if dbListen != "" {
+		fmt.Fprintf(b, "| Database listen address | `%s` |\n", escapeCell(dbListen))
+	}
+	fmt.Fprintf(b, "| Database CPU | %d |\n", dbCPU)
+	if dbPartitions > 0 {
+		fmt.Fprintf(b, "| Database partitions | %d |\n", dbPartitions)
+	}
+	fmt.Fprintf(b, "| Database OS / Arch | %s |\n", escapeCell(dbPlatform))
+	fmt.Fprintf(b, "| Database Go version | %s |\n", escapeCell(dbGoVersion))
+	fmt.Fprintf(b, "| Benchmark client | %s |\n", escapeCell(clientMachine))
+	fmt.Fprintf(b, "| Benchmark client CPU | %d |\n", clientCPU)
+	fmt.Fprintf(b, "| Benchmark client OS / Arch | %s |\n", escapeCell(clientPlatform))
+	fmt.Fprintf(b, "| Benchmark client Go version | %s |\n", escapeCell(clientGoVersion))
+	fmt.Fprintf(b, "| Persistence | %s |\n", escapeCell(dbPersistence))
 	fmt.Fprintln(b)
 }
 
@@ -760,10 +897,11 @@ func renderStressTable(b *strings.Builder, input reportInput) {
 	fmt.Fprintln(b)
 }
 
+//nolint:lll // ok
 func renderNotes(b *strings.Builder, reports []benchmarkReport) {
 	fmt.Fprintln(b, "## Interpretation Notes")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "- `metadata.num_cpu` is treated as the database server CPU count for this report.")
+	fmt.Fprintln(b, "- `server-info.json` is preferred for database-server metadata; benchmark metadata is used as a fallback.")
 	fmt.Fprintln(
 		b,
 		"- `last_error` is intentionally omitted from the tables because graceful benchmark shutdown "+

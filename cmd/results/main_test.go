@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,10 +84,46 @@ func TestCreateArtifactsUsesStableRunID(t *testing.T) {
 	if !strings.Contains(paths.RunDir, "20260827T123000Z-test-machine-1234567890ab-smoke") {
 		t.Fatalf("run dir = %q", paths.RunDir)
 	}
-	for _, path := range []string{paths.BenchDir, paths.StressDir, paths.SnapshotDir} {
+	for _, path := range []string{paths.BenchDir, paths.StressDir, paths.SnapshotDir, paths.ServerInfoPath} {
 		if path == "" {
 			t.Fatalf("empty artifact path: %+v", paths)
 		}
+	}
+}
+
+func TestFetchServerInfoWritesPrettyJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/info" {
+			t.Fatalf("path = %q, want /v1/info", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"instance":{"role":"master","go_version":"go1.27.0"}}`))
+	}))
+	defer server.Close()
+
+	output := filepath.Join(t.TempDir(), "server-info.json")
+	if err := fetchServerInfo(context.Background(), server.URL+"/v1/info", output); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); !strings.Contains(got, "\n  \"instance\": {") {
+		t.Fatalf("server info was not formatted: %q", got)
+	}
+}
+
+func TestFetchServerInfoRejectsInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`not-json`))
+	}))
+	defer server.Close()
+
+	err := fetchServerInfo(context.Background(), server.URL, filepath.Join(t.TempDir(), "server-info.json"))
+	if err == nil {
+		t.Fatal("expected invalid JSON error")
 	}
 }
 

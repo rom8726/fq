@@ -3,6 +3,7 @@ package inspect
 import (
 	"errors"
 	"os"
+	"runtime"
 	"sort"
 	"time"
 
@@ -27,6 +28,7 @@ func (i *Inspector) snapshot() observability.Snapshot {
 
 func (i *Inspector) buildInstance(snap observability.Snapshot) *InstanceInfo {
 	v := version.Get()
+	hostname, _ := os.Hostname()
 
 	role := "standalone"
 	var replicaID *string
@@ -45,6 +47,8 @@ func (i *Inspector) buildInstance(snap observability.Snapshot) *InstanceInfo {
 		BuildDate:       v.Date,
 		GoVersion:       v.GoVersion,
 		Platform:        v.Platform,
+		Hostname:        hostname,
+		NumCPU:          runtime.NumCPU(),
 		ProtocolVersion: int(protocol.CurrentVersion),
 		UptimeSec:       time.Since(i.deps.StartedAt).Seconds(),
 		PID:             os.Getpid(),

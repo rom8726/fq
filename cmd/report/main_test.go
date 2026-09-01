@@ -180,6 +180,9 @@ func TestRunDirectoryReportIncludesPublishableArtifacts(t *testing.T) {
 	})
 	writeJSONFixture(t, runDir, "manifest.json", resultsManifest{
 		Metadata: resultsMetadata{Mode: "release"},
+		Artifacts: resultsArtifacts{
+			ServerInfoPath: filepath.Join(runDir, "server-info.json"),
+		},
 		Commands: []resultsCommand{
 			{
 				Name:       "bench-release-hot-counter",
@@ -206,6 +209,30 @@ func TestRunDirectoryReportIncludesPublishableArtifacts(t *testing.T) {
 			{Name: "stress-dump-recovery", ExitCode: 1},
 		},
 	})
+	syncCommit := "on"
+	writeJSONFixture(t, runDir, "server-info.json", serverInfoReport{
+		Instance: &serverInstanceInfo{
+			Version:    "1.2.3",
+			Commit:     "dbcommit123",
+			Hostname:   "db-host",
+			NumCPU:     32,
+			GoVersion:  "go1.27.1",
+			Platform:   "linux/arm64",
+			Role:       "master",
+			ListenAddr: "10.0.0.2:1945",
+		},
+		Persistence: &serverPersistenceInfo{
+			Mode:       "wal_and_dump",
+			SyncCommit: &syncCommit,
+		},
+		Engine: &serverEngineInfo{
+			Partitions: 16,
+		},
+		Repl: &serverReplInfo{
+			Role:            "master",
+			ProtocolVersion: 1,
+		},
+	})
 	writeJSONFixture(t, stressDir, "crash-loop.json", stressReport{
 		Scenario:       "crash-loop",
 		Status:         "passed",
@@ -228,6 +255,16 @@ func TestRunDirectoryReportIncludesPublishableArtifacts(t *testing.T) {
 	require.Contains(t, report, "## Release Run Metadata")
 	require.Contains(t, report, "| Git commit | `abcdef1234567890` |")
 	require.Contains(t, report, "| Config SHA-256 `config.yml` | `config-hash` |")
+	require.Contains(t, report, "| Database version | `1.2.3` |")
+	require.Contains(t, report, "| Database commit | `dbcommit123` |")
+	require.Contains(t, report, "| Database replication role | `master` |")
+	require.Contains(t, report, "| Database server | db-host |")
+	require.Contains(t, report, "| Database CPU | 32 |")
+	require.Contains(t, report, "| Database partitions | 16 |")
+	require.Contains(t, report, "| Database OS / Arch | linux/arm64 |")
+	require.Contains(t, report, "| Benchmark client | dedicated-bench |")
+	require.Contains(t, report, "| Benchmark client CPU | 8 |")
+	require.Contains(t, report, "| Persistence | wal_and_dump, sync_commit=on |")
 	require.Contains(t, report, "## Command Manifest")
 	require.Contains(t, report, "| `stress-crash-loop` | stress |")
 	require.Contains(t, report, "| `stress-dump-recovery` | stress |")

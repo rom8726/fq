@@ -213,7 +213,7 @@ observability:
 
 | Key | Type | Required | Notes |
 |---|---|---|---|
-| `address` | `host:port` | no | Omit to disable the health/metrics HTTP server entirely |
+| `address` | `host:port` | no | Omit to disable the health/metrics/info HTTP server entirely |
 | `pprof` | bool | no | Exposes `/debug/pprof/*` when true — see [Operations](operations.md) |
 
 ## `logging`

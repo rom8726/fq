@@ -256,6 +256,7 @@ Endpoints:
 
 - `GET /healthz` — liveness check
 - `GET /metrics` — Prometheus metrics
+- `GET /v1/info` — read-only JSON with instance/build/runtime/storage metadata
 
 CPU/heap profiling can be enabled explicitly:
 
@@ -292,6 +293,17 @@ Available metrics:
 
 For an ad hoc, non-Prometheus look at instance state, use `INSPECT` — see
 [Commands](commands.md#diagnostics).
+
+For remote benchmark publication, point `cmd/results` at the database server's
+observability endpoint:
+
+```shell
+go run ./cmd/results -mode release -server_info_url http://db-host:2112/v1/info
+```
+
+The response is saved as `server-info.json` in the results run directory, so
+`cmd/report` can show database-server metadata separately from benchmark-client
+metadata.
 
 ## Benchmarking
 
