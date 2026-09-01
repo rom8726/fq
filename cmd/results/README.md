@@ -21,9 +21,11 @@ metadata, config/profile snapshots, a command manifest, command logs, JSON bench
 reports, JSON stress reports, and a Markdown summary.
 When `-server_info_url` is set, the command also stores the database server's
 `/v1/info` response as `server-info.json` for publication reports.
-Benchmark commands use the `address` from each profile by default; pass
-`-address host:port` to `cmd/results` only when you want to override all profiles for
-one run.
+Benchmark commands use the `address` from each profile by default. When benchmark
+profiles are enabled and `-address` is not passed, every planned profile must define
+`address`; otherwise `cmd/results` stops before the run instead of silently falling
+back to `:1945`. Pass `-address host:port` to `cmd/results` only when you want to
+override all profiles for one run.
 Benchmark authentication is passed to `cmd/bench` through its private `FQ_TOKEN`
 environment. Use one of `-token`, `-token_env`, or `-token_file`; the token value is
 not written to the command manifest.

@@ -102,6 +102,26 @@ func TestParseFlagsTracksExplicitAddress(t *testing.T) {
 	}
 }
 
+func TestValidateBenchmarkProfileAddressesRejectsMissingAddressWithoutOverride(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-address.yml")
+	if err := os.WriteFile(missing, []byte("connections: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := validateProfileListAddresses(config{includeBenchmarks: true}, []string{missing})
+	if err == nil {
+		t.Fatal("expected missing address error")
+	}
+	if !strings.Contains(err.Error(), "missing address") {
+		t.Fatalf("error = %v", err)
+	}
+
+	err = validateProfileListAddresses(config{includeBenchmarks: true, addressOverride: true}, []string{missing})
+	if err != nil {
+		t.Fatalf("override should skip profile address validation: %v", err)
+	}
+}
+
 func TestBuildCommandsPassesBenchAuthThroughPrivateEnv(t *testing.T) {
 	commands := buildCommands(config{
 		mode:              modeSmoke,

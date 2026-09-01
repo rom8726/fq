@@ -160,11 +160,13 @@ directory and, when present, includes `metadata.json`, `manifest.json`,
 when the benchmark client and database server run on different hosts. Use explicit
 public labels for `-server_machine` and `-client_machine`.
 
-Benchmark profiles own their target `address` by default. Use `cmd/results -address
-host:port` only to override all profiles for one run. For authenticated servers,
-`cmd/results` passes one of `-token`, `-token_env`, or `-token_file` to benchmark
-commands through a private `FQ_TOKEN` environment variable, so the secret is not
-written to the command manifest.
+Benchmark profiles own their target `address` by default. If `cmd/results -address`
+is not passed, every planned profile must define `address`; otherwise the run stops
+before executing benchmarks instead of silently falling back to `:1945`. Use
+`cmd/results -address host:port` only to override all profiles for one run. For
+authenticated servers, `cmd/results` passes one of `-token`, `-token_env`, or
+`-token_file` to benchmark commands through a private `FQ_TOKEN` environment
+variable, so the secret is not written to the command manifest.
 
 A report should link or summarize the generated run directory and include:
 

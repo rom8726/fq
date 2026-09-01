@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -117,6 +119,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cfg.mode == modeRelease && cfg.run && !cfg.confirmReleaseRun {
 		return errors.New("release run is heavy; pass -confirm_release_run to execute it")
+	}
+	if err := validateBenchmarkProfileAddresses(cfg); err != nil {
+		return err
 	}
 
 	repoRoot, err := os.Getwd()
@@ -357,6 +362,52 @@ func benchmarkProfiles(mode string) []string {
 		"benchmarks/profiles/release-sw-zipfian.yml",
 		"benchmarks/profiles/release-tb.yml",
 	}
+}
+
+func validateBenchmarkProfileAddresses(cfg config) error {
+	return validateProfileListAddresses(cfg, benchmarkProfiles(cfg.mode))
+}
+
+func validateProfileListAddresses(cfg config, profiles []string) error {
+	if !cfg.includeBenchmarks || cfg.addressOverride {
+		return nil
+	}
+
+	var missing []string
+	for _, profile := range profiles {
+		hasAddress, err := profileHasAddress(profile)
+		if err != nil {
+			return err
+		}
+		if !hasAddress {
+			missing = append(missing, profile)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"benchmark profiles missing address: %s; set address in each profile or pass -address to override all profiles",
+			strings.Join(missing, ", "),
+		)
+	}
+
+	return nil
+}
+
+func profileHasAddress(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read benchmark profile %q: %w", path, err)
+	}
+
+	var raw struct {
+		Address *string `yaml:"address"`
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&raw); err != nil {
+		return false, fmt.Errorf("parse benchmark profile %q: %w", path, err)
+	}
+
+	return raw.Address != nil && strings.TrimSpace(*raw.Address) != "", nil
 }
 
 func stressCommands(mode, stressDir string) []runCommand {
