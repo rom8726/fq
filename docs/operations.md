@@ -306,6 +306,17 @@ The response is saved as `server-info.json` in the results run directory, so
 metadata. The raw JSON is intended as a local reproducibility artifact; published
 Markdown reports should avoid private hostnames and IP addresses.
 
+For authenticated or TLS-enabled benchmark targets, pass the same client options to
+`cmd/results`; it forwards them to `cmd/bench`:
+
+```shell
+go run ./cmd/results -mode release \
+  -address fq.internal:1945 \
+  -token_env FQ_RW_TOKEN \
+  -tls_ca ./certs/ca.crt \
+  -tls_server_name fq.internal
+```
+
 ## Benchmarking
 
 Last benchmark reports: [benchmarks/reports](https://github.com/fq-db/fq/tree/main/benchmarks/reports).

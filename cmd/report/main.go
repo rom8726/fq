@@ -1001,21 +1001,37 @@ func publicCommand(args []string) string {
 	}
 
 	out := append([]string(nil), args...)
+	redactedValueFlags := map[string]struct{}{
+		"-address":         {},
+		"-server_info_url": {},
+		"-token":           {},
+		"-tls_ca":          {},
+		"-tls_cert":        {},
+		"-tls_key":         {},
+		"-tls_server_name": {},
+	}
 	for i := 0; i < len(out); i++ {
 		switch {
-		case out[i] == "-address" || out[i] == "-server_info_url":
+		case hasFlag(redactedValueFlags, out[i]):
 			if i+1 < len(out) {
 				out[i+1] = "<redacted>"
 				i++
 			}
-		case strings.HasPrefix(out[i], "-address="):
-			out[i] = "-address=<redacted>"
-		case strings.HasPrefix(out[i], "-server_info_url="):
-			out[i] = "-server_info_url=<redacted>"
+		case strings.Contains(out[i], "="):
+			name, _, ok := strings.Cut(out[i], "=")
+			if ok && hasFlag(redactedValueFlags, name) {
+				out[i] = name + "=<redacted>"
+			}
 		}
 	}
 
 	return strings.Join(out, " ")
+}
+
+func hasFlag(flags map[string]struct{}, name string) bool {
+	_, ok := flags[name]
+
+	return ok
 }
 
 func sortedKeys(values map[string]string) []string {

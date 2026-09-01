@@ -22,7 +22,7 @@ func TestBuildCommandsSmokeUsesShortOverrides(t *testing.T) {
 		address:           ":1945",
 		includeBenchmarks: true,
 		includeStress:     true,
-	}, paths)
+	}, paths, "")
 
 	if len(commands) != 4 {
 		t.Fatalf("commands = %d, want 4", len(commands))
@@ -55,7 +55,7 @@ func TestBuildCommandsReleaseIncludesAllProfiles(t *testing.T) {
 	}, artifacts{
 		BenchDir:  filepath.Join("runs", "release", "benchmarks"),
 		StressDir: filepath.Join("runs", "release", "stress"),
-	})
+	}, "")
 
 	if len(commands) != 9 {
 		t.Fatalf("commands = %d, want 9", len(commands))
@@ -65,6 +65,84 @@ func TestBuildCommandsReleaseIncludesAllProfiles(t *testing.T) {
 	}
 	if commands[len(commands)-1].Name != "stress-replication-stress" {
 		t.Fatalf("last command = %q", commands[len(commands)-1].Name)
+	}
+}
+
+func TestBuildCommandsPassesBenchAuthThroughPrivateEnv(t *testing.T) {
+	commands := buildCommands(config{
+		mode:              modeSmoke,
+		address:           ":1945",
+		includeBenchmarks: true,
+		includeStress:     false,
+	}, artifacts{BenchDir: "benchmarks"}, "secret-token-value")
+
+	if len(commands) != 1 {
+		t.Fatalf("commands = %d, want 1", len(commands))
+	}
+	command := commands[0]
+	if strings.Contains(strings.Join(command.Command, " "), "secret-token-value") {
+		t.Fatalf("command leaked token: %+v", command.Command)
+	}
+	if got := command.privateEnv["FQ_TOKEN"]; got != "secret-token-value" {
+		t.Fatalf("private env token = %q", got)
+	}
+	if len(command.Env) != 1 || command.Env[0] != "FQ_TOKEN" {
+		t.Fatalf("public env keys = %+v", command.Env)
+	}
+}
+
+func TestBuildCommandsPassesBenchTLSFlags(t *testing.T) {
+	commands := buildCommands(config{
+		mode:              modeSmoke,
+		address:           ":1945",
+		includeBenchmarks: true,
+		includeStress:     false,
+		tlsCA:             "ca.crt",
+		tlsCert:           "client.crt",
+		tlsKey:            "client.key",
+		tlsServerName:     "fq.internal",
+		tlsSkipVerify:     true,
+	}, artifacts{BenchDir: "benchmarks"}, "")
+
+	joined := strings.Join(commands[0].Command, " ")
+	for _, want := range []string{
+		"-tls_ca ca.crt",
+		"-tls_cert client.crt",
+		"-tls_key client.key",
+		"-tls_server_name fq.internal",
+		"-tls_skip_verify",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("bench command %q does not contain %q", joined, want)
+		}
+	}
+}
+
+func TestResolveBenchTokenSources(t *testing.T) {
+	t.Setenv("FQ_RESULTS_TOKEN", " env-token \n")
+	fromEnv, err := resolveBenchToken(config{tokenEnv: "FQ_RESULTS_TOKEN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromEnv != "env-token" {
+		t.Fatalf("env token = %q", fromEnv)
+	}
+
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(" file-token \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fromFile, err := resolveBenchToken(config{tokenFile: tokenFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromFile != "file-token" {
+		t.Fatalf("file token = %q", fromFile)
+	}
+
+	_, err = resolveBenchToken(config{token: "one", tokenEnv: "FQ_RESULTS_TOKEN"})
+	if err == nil {
+		t.Fatal("expected multiple token sources error")
 	}
 }
 

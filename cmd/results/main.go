@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,6 +32,14 @@ type config struct {
 	machine           string
 	address           string
 	serverInfoURL     string
+	token             string
+	tokenEnv          string
+	tokenFile         string
+	tlsCA             string
+	tlsCert           string
+	tlsKey            string
+	tlsServerName     string
+	tlsSkipVerify     bool
 	run               bool
 	includeBenchmarks bool
 	includeStress     bool
@@ -78,8 +87,10 @@ type runCommand struct {
 	Name       string   `json:"name"`
 	Kind       string   `json:"kind"`
 	Command    []string `json:"command"`
+	Env        []string `json:"env,omitempty"`
 	OutputFile string   `json:"output_file,omitempty"`
 	Duration   string   `json:"duration,omitempty"`
+	privateEnv map[string]string
 }
 
 type runResult struct {
@@ -117,10 +128,14 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	benchToken, err := resolveBenchToken(cfg)
+	if err != nil {
+		return err
+	}
 	manifest := runManifest{
 		Metadata:  meta,
 		Artifacts: paths,
-		Commands:  buildCommands(cfg, paths),
+		Commands:  buildCommands(cfg, paths, benchToken),
 		CreatedAt: time.Now(),
 	}
 	if !cfg.run {
@@ -170,6 +185,14 @@ func parseFlags(args []string) config {
 	flags.StringVar(&cfg.machine, "machine", "", "machine label; empty uses hostname")
 	flags.StringVar(&cfg.address, "address", ":1945", "fq server address for benchmark commands")
 	flags.StringVar(&cfg.serverInfoURL, "server_info_url", "", "fq observability info URL, for example http://db-host:2112/v1/info")
+	flags.StringVar(&cfg.token, "token", "", "fq authentication token for benchmark commands; stored only in child FQ_TOKEN env")
+	flags.StringVar(&cfg.tokenEnv, "token_env", "", "environment variable containing the fq authentication token")
+	flags.StringVar(&cfg.tokenFile, "token_file", "", "file containing the fq authentication token")
+	flags.StringVar(&cfg.tlsCA, "tls_ca", "", "CA certificate file passed to benchmark commands")
+	flags.StringVar(&cfg.tlsCert, "tls_cert", "", "client certificate file passed to benchmark commands")
+	flags.StringVar(&cfg.tlsKey, "tls_key", "", "client key file passed to benchmark commands")
+	flags.StringVar(&cfg.tlsServerName, "tls_server_name", "", "expected TLS server name passed to benchmark commands")
+	flags.BoolVar(&cfg.tlsSkipVerify, "tls_skip_verify", false, "skip server certificate verification in benchmark commands")
 	flags.BoolVar(&cfg.run, "run", false, "execute planned commands; false only writes metadata and manifest")
 	flags.BoolVar(&cfg.includeBenchmarks, "benchmarks", true, "include benchmark commands in the plan")
 	flags.BoolVar(&cfg.includeStress, "stress", true, "include stress commands in the plan")
@@ -237,7 +260,7 @@ func createArtifacts(outputRoot string, meta metadata) (artifacts, error) {
 	return paths, nil
 }
 
-func buildCommands(cfg config, paths artifacts) []runCommand {
+func buildCommands(cfg config, paths artifacts, benchToken string) []runCommand {
 	var commands []runCommand
 	if cfg.includeBenchmarks {
 		for _, profile := range benchmarkProfiles(cfg.mode) {
@@ -249,15 +272,21 @@ func buildCommands(cfg config, paths artifacts) []runCommand {
 				"-address", cfg.address,
 				"-output_file", outputFile,
 			}
+			args = append(args, benchTLSArgs(cfg)...)
 			if cfg.mode == modeSmoke {
 				args = append(args, "-warmup", "1s", "-duration", "3s", "-connections", "8", "-key_range", "1000")
 			}
-			commands = append(commands, runCommand{
+			command := runCommand{
 				Name:       "bench-" + name,
 				Kind:       "benchmark",
 				Command:    args,
 				OutputFile: outputFile,
-			})
+			}
+			if benchToken != "" {
+				command.Env = []string{"FQ_TOKEN"}
+				command.privateEnv = map[string]string{"FQ_TOKEN": benchToken}
+			}
+			commands = append(commands, command)
 		}
 	}
 
@@ -266,6 +295,27 @@ func buildCommands(cfg config, paths artifacts) []runCommand {
 	}
 
 	return commands
+}
+
+func benchTLSArgs(cfg config) []string {
+	var args []string
+	if cfg.tlsCA != "" {
+		args = append(args, "-tls_ca", cfg.tlsCA)
+	}
+	if cfg.tlsCert != "" {
+		args = append(args, "-tls_cert", cfg.tlsCert)
+	}
+	if cfg.tlsKey != "" {
+		args = append(args, "-tls_key", cfg.tlsKey)
+	}
+	if cfg.tlsServerName != "" {
+		args = append(args, "-tls_server_name", cfg.tlsServerName)
+	}
+	if cfg.tlsSkipVerify {
+		args = append(args, "-tls_skip_verify")
+	}
+
+	return args
 }
 
 func benchmarkProfiles(mode string) []string {
@@ -329,6 +379,34 @@ func stressCommands(mode, stressDir string) []runCommand {
 	return commands
 }
 
+func resolveBenchToken(cfg config) (string, error) {
+	sources := 0
+	for _, value := range []string{cfg.token, cfg.tokenEnv, cfg.tokenFile} {
+		if value != "" {
+			sources++
+		}
+	}
+	if sources > 1 {
+		return "", errors.New("only one of -token, -token_env, or -token_file can be set")
+	}
+
+	switch {
+	case cfg.token != "":
+		return cfg.token, nil
+	case cfg.tokenEnv != "":
+		return strings.TrimSpace(os.Getenv(cfg.tokenEnv)), nil
+	case cfg.tokenFile != "":
+		data, err := os.ReadFile(cfg.tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("read token file: %w", err)
+		}
+
+		return strings.TrimSpace(string(data)), nil
+	default:
+		return "", nil
+	}
+}
+
 func executeCommands(ctx context.Context, commands []runCommand, runDir string) ([]runResult, error) {
 	results := make([]runResult, 0, len(commands))
 	var runErr error
@@ -338,7 +416,7 @@ func executeCommands(ctx context.Context, commands []runCommand, runDir string) 
 			Started: time.Now(),
 			LogPath: filepath.Join(runDir, command.Name+".log"),
 		}
-		err := executeCommand(ctx, command.Command, result.LogPath)
+		err := executeCommand(ctx, command, result.LogPath)
 		result.Finished = time.Now()
 		if err != nil {
 			result.Error = err.Error()
@@ -356,18 +434,40 @@ func executeCommands(ctx context.Context, commands []runCommand, runDir string) 
 	return results, runErr
 }
 
-func executeCommand(ctx context.Context, args []string, logPath string) error {
+func executeCommand(ctx context.Context, command runCommand, logPath string) error {
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("open command log: %w", err)
 	}
 	defer func() { _ = logFile.Close() }()
 
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // planned local release commands.
+	cmd := exec.CommandContext( //nolint:gosec // planned local release commands.
+		ctx,
+		command.Command[0],
+		command.Command[1:]...,
+	)
+	if len(command.privateEnv) > 0 {
+		cmd.Env = append(os.Environ(), privateEnv(command.privateEnv)...)
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
 	return cmd.Run()
+}
+
+func privateEnv(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, key+"="+values[key])
+	}
+
+	return env
 }
 
 func writeManifestAndSummary(manifest runManifest) error {

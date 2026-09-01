@@ -141,7 +141,12 @@ Public reports live in `benchmarks/reports`. Generate one from a completed resul
 run with:
 
 ```shell
-go run ./cmd/results -mode release -server_info_url http://db-host:2112/v1/info -run -confirm_release_run
+go run ./cmd/results -mode release \
+  -server_info_url http://db-host:2112/v1/info \
+  -token_env FQ_RW_TOKEN \
+  -tls_ca ./certs/ca.crt \
+  -tls_server_name fq.internal \
+  -run -confirm_release_run
 go run ./cmd/report \
   -input benchmarks/results/runs/<timestamp>-<machine>-<commit>-release/ \
   -server_machine dedicated-db-class \
@@ -153,7 +158,10 @@ current local date. It reads benchmark JSON reports from the run's `benchmarks/`
 directory and, when present, includes `metadata.json`, `manifest.json`,
 `server-info.json`, and stress JSON reports from `stress/`. Use `server_info_url`
 when the benchmark client and database server run on different hosts. Use explicit
-public labels for `-server_machine` and `-client_machine`.
+public labels for `-server_machine` and `-client_machine`. For authenticated servers,
+`cmd/results` passes one of `-token`, `-token_env`, or `-token_file` to benchmark
+commands through a private `FQ_TOKEN` environment variable, so the secret is not
+written to the command manifest.
 
 A report should link or summarize the generated run directory and include:
 
