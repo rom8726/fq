@@ -1,5 +1,13 @@
 # fq
 
+[![CI](https://github.com/fq-db/fq/actions/workflows/makefile.yml/badge.svg?branch=main)](https://github.com/fq-db/fq/actions/workflows/makefile.yml)
+[![Coverage](https://codecov.io/gh/fq-db/fq/branch/main/graph/badge.svg)](https://codecov.io/gh/fq-db/fq)
+[![Docs](https://github.com/fq-db/fq/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/fq-db/fq/actions/workflows/docs.yml)
+[![Stress](https://github.com/fq-db/fq/actions/workflows/stress.yml/badge.svg?branch=main)](https://github.com/fq-db/fq/actions/workflows/stress.yml)
+[![Release](https://img.shields.io/github/v/release/fq-db/fq?sort=semver)](https://github.com/fq-db/fq/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/fq-db/fq.svg)](https://pkg.go.dev/github.com/fq-db/fq)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **fq** - a small specialized database for frequency capping, rate limiting, and quota counters.
 
 fq is built for a narrow set of high-throughput backend workloads where the main operation is to check or update counters inside time windows. It is not a general-purpose database and does not try to replace Redis, PostgreSQL, or other broad storage systems.
