@@ -174,3 +174,30 @@ func TestMagicValuesExceedMaxFrameSize(t *testing.T) {
 		require.Greater(t, binary.BigEndian.Uint32(magic[:]), uint32(maxFrameSize), magic.String())
 	}
 }
+
+func TestPutFrameHeaderMatchesFrameHeader(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte("dump batch payload")
+
+	buffer := make([]byte, FrameHeaderSize+len(payload))
+	copy(buffer[FrameHeaderSize:], payload)
+	PutFrameHeader(buffer, buffer[FrameHeaderSize:])
+
+	require.Equal(t, AppendFrame(nil, payload), buffer)
+}
+
+func TestPutFrameHeaderProducesReadableFrame(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte("another payload")
+
+	buffer := make([]byte, FrameHeaderSize+len(payload))
+	copy(buffer[FrameHeaderSize:], payload)
+	PutFrameHeader(buffer, buffer[FrameHeaderSize:])
+
+	got, rest, err := NextFrame(buffer, 1024)
+	require.NoError(t, err)
+	require.Equal(t, payload, got)
+	require.Empty(t, rest)
+}

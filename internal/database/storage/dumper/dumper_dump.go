@@ -172,16 +172,25 @@ func (d *Dumper) walCleanupLSN(dumpLSN uint64) uint64 {
 
 func (d *Dumper) writeBatch(f *os.File, elems []database.DumpElem) error {
 	var buffer bytes.Buffer
+
+	var header [format.FrameHeaderSize]byte
+	buffer.Write(header[:])
+
 	encoder := gob.NewEncoder(&buffer)
 	if err := encoder.Encode(elems); err != nil {
 		return fmt.Errorf("encode dump elements: %w", err)
 	}
 
-	if err := format.CheckPayloadSize(buffer.Bytes(), dumpMaxFrameSize); err != nil {
+	frame := buffer.Bytes()
+	payload := frame[format.FrameHeaderSize:]
+
+	if err := format.CheckPayloadSize(payload, dumpMaxFrameSize); err != nil {
 		return fmt.Errorf("dump batch: %w", err)
 	}
 
-	if _, err := f.Write(format.AppendFrame(nil, buffer.Bytes())); err != nil {
+	format.PutFrameHeader(frame, payload)
+
+	if _, err := f.Write(frame); err != nil {
 		return fmt.Errorf("write dump elements: %w", err)
 	}
 

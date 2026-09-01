@@ -76,10 +76,14 @@ func ParseHeader(data []byte, magic Magic, version uint16) ([]byte, error) {
 
 func FrameHeader(payload []byte) []byte {
 	head := make([]byte, FrameHeaderSize)
-	binary.BigEndian.PutUint32(head[:lengthSize], uint32(len(payload)))
-	binary.BigEndian.PutUint32(head[lengthSize:], checksum(head[:lengthSize], payload))
+	PutFrameHeader(head, payload)
 
 	return head
+}
+
+func PutFrameHeader(dst, payload []byte) {
+	binary.BigEndian.PutUint32(dst[:lengthSize], uint32(len(payload)))
+	binary.BigEndian.PutUint32(dst[lengthSize:FrameHeaderSize], checksum(dst[:lengthSize], payload))
 }
 
 func CheckPayloadSize(payload []byte, maxFrame int) error {
