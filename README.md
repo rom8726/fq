@@ -1,7 +1,7 @@
 # fq
 
 [![CI](https://github.com/fq-db/fq/actions/workflows/makefile.yml/badge.svg?branch=main)](https://github.com/fq-db/fq/actions/workflows/makefile.yml)
-[![Coverage](https://codecov.io/gh/fq-db/fq/branch/main/graph/badge.svg)](https://codecov.io/gh/fq-db/fq)
+[![Coverage Status](https://coveralls.io/repos/github/fq-db/fq/badge.svg?branch=main)](https://coveralls.io/github/fq-db/fq?branch=main)
 [![Docs](https://github.com/fq-db/fq/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/fq-db/fq/actions/workflows/docs.yml)
 [![Stress](https://github.com/fq-db/fq/actions/workflows/stress.yml/badge.svg?branch=main)](https://github.com/fq-db/fq/actions/workflows/stress.yml)
 [![Release](https://img.shields.io/github/v/release/fq-db/fq?sort=semver)](https://github.com/fq-db/fq/releases)
