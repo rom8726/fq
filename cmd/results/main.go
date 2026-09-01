@@ -31,6 +31,7 @@ type config struct {
 	outputRoot        string
 	machine           string
 	address           string
+	addressOverride   bool
 	serverInfoURL     string
 	token             string
 	tokenEnv          string
@@ -209,8 +210,20 @@ func parseFlags(args []string) config {
 	flags.BoolVar(&cfg.includeStress, "stress", true, "include stress commands in the plan")
 	flags.BoolVar(&cfg.confirmReleaseRun, "confirm_release_run", false, "allow executing release mode")
 	_ = flags.Parse(args)
+	cfg.addressOverride = flagWasSet(flags, "address")
 
 	return cfg
+}
+
+func flagWasSet(flags *flag.FlagSet, name string) bool {
+	seen := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			seen = true
+		}
+	})
+
+	return seen
 }
 
 func collectMetadata(repoRoot string, cfg config) metadata {
@@ -280,8 +293,10 @@ func buildCommands(cfg config, paths artifacts, benchToken string) []runCommand 
 			args := []string{
 				"go", "run", "./cmd/bench",
 				"-profile", profile,
-				"-address", cfg.address,
 				"-output_file", outputFile,
+			}
+			if cfg.addressOverride {
+				args = append(args, "-address", cfg.address)
 			}
 			args = append(args, benchTLSArgs(cfg)...)
 			if cfg.mode == modeSmoke {

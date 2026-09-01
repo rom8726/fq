@@ -158,7 +158,10 @@ current local date. It reads benchmark JSON reports from the run's `benchmarks/`
 directory and, when present, includes `metadata.json`, `manifest.json`,
 `server-info.json`, and stress JSON reports from `stress/`. Use `server_info_url`
 when the benchmark client and database server run on different hosts. Use explicit
-public labels for `-server_machine` and `-client_machine`. For authenticated servers,
+public labels for `-server_machine` and `-client_machine`.
+
+Benchmark profiles own their target `address` by default. Use `cmd/results -address
+host:port` only to override all profiles for one run. For authenticated servers,
 `cmd/results` passes one of `-token`, `-token_env`, or `-token_file` to benchmark
 commands through a private `FQ_TOKEN` environment variable, so the secret is not
 written to the command manifest.

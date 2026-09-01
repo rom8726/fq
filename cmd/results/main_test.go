@@ -34,6 +34,9 @@ func TestBuildCommandsSmokeUsesShortOverrides(t *testing.T) {
 		t.Fatalf("unexpected bench command: %+v", bench)
 	}
 	joined := strings.Join(bench.Command, " ")
+	if strings.Contains(joined, "-address") {
+		t.Fatalf("bench command should let the profile address win when -address is not explicit: %q", joined)
+	}
 	for _, want := range []string{"-warmup 1s", "-duration 3s", "-connections 8", "-key_range 1000"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("bench command %q does not contain %q", joined, want)
@@ -44,6 +47,21 @@ func TestBuildCommandsSmokeUsesShortOverrides(t *testing.T) {
 		if command.Kind != "stress" || command.Duration != "3s" {
 			t.Fatalf("unexpected stress command: %+v", command)
 		}
+	}
+}
+
+func TestBuildCommandsCanOverrideProfileAddress(t *testing.T) {
+	commands := buildCommands(config{
+		mode:              modeSmoke,
+		address:           "db.example:1945",
+		addressOverride:   true,
+		includeBenchmarks: true,
+		includeStress:     false,
+	}, artifacts{BenchDir: "benchmarks"}, "")
+
+	joined := strings.Join(commands[0].Command, " ")
+	if !strings.Contains(joined, "-address db.example:1945") {
+		t.Fatalf("bench command %q does not contain explicit address override", joined)
 	}
 }
 
@@ -66,6 +84,21 @@ func TestBuildCommandsReleaseIncludesAllProfiles(t *testing.T) {
 	}
 	if commands[len(commands)-1].Name != "stress-replication-stress" {
 		t.Fatalf("last command = %q", commands[len(commands)-1].Name)
+	}
+}
+
+func TestParseFlagsTracksExplicitAddress(t *testing.T) {
+	defaulted := parseFlags([]string{"-mode", modeRelease})
+	if defaulted.addressOverride {
+		t.Fatal("default address should not override benchmark profiles")
+	}
+
+	explicit := parseFlags([]string{"-mode", modeRelease, "-address", "db.example:1945"})
+	if !explicit.addressOverride {
+		t.Fatal("explicit address should override benchmark profiles")
+	}
+	if explicit.address != "db.example:1945" {
+		t.Fatalf("address = %q", explicit.address)
 	}
 }
 
