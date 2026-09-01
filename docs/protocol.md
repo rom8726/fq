@@ -136,7 +136,7 @@ same category. Codes are never reused for a different meaning.
 
 ### 1xxx — protocol and request parsing
 
-| Код | Сообщение | Когда возникает |
+| Code | Message | When |
 |---|---|---|
 | 1000 | invalid symbol | The request contains a byte the tokenizer does not accept |
 | 1001 | invalid command | The first token is not a known command |
@@ -149,7 +149,7 @@ same category. Codes are never reused for a different meaning.
 
 ### 2xxx — argument validation
 
-| Код | Сообщение | Когда возникает |
+| Code | Message | When |
 |---|---|---|
 | 2000 | key cannot be empty | The key argument is an empty string |
 | 2001 | key length exceeds maximum | The key is longer than 1024 bytes |
@@ -163,7 +163,7 @@ same category. Codes are never reused for a different meaning.
 
 ### 3xxx — authentication and authorization
 
-| Код | Сообщение | Когда возникает |
+| Code | Message | When |
 |---|---|---|
 | 3000 | not authenticated | The server requires authentication and this connection has none |
 | 3001 | permission denied | The connection's role does not cover this command |
@@ -172,7 +172,7 @@ same category. Codes are never reused for a different meaning.
 
 ### 4xxx — quotas
 
-| Код | Сообщение | Когда возникает |
+| Code | Message | When |
 |---|---|---|
 | 4000 | quota not found | No quota exists under that name |
 | 4001 | quota limit mismatch | The declared limit differs from the stored one |
@@ -184,7 +184,7 @@ same category. Codes are never reused for a different meaning.
 
 ### 5xxx — instance state
 
-| Код | Сообщение | Когда возникает |
+| Code | Message | When |
 |---|---|---|
 | 5000 | scan index is disabled | `SCAN`/`PSCAN` needs the key index, which is off |
 | 5001 | inspect is not available | The instance has no inspector configured |
@@ -193,7 +193,7 @@ same category. Codes are never reused for a different meaning.
 
 ### 9xxx — internal
 
-| Код | Сообщение | Когда возникает |
+| Code | Message | When |
 |---|---|---|
 | 9000 | internal error | Fallback for any error without a code; the real text goes to the log only |
 | 9001 | internal configuration error | The command layer and the handler disagree about a command |

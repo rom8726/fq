@@ -152,7 +152,7 @@ replication:
 |---|---|---|---|
 | `replica_type` | `master` \| `slave` \| omitted | no | Omit to run standalone with no replication port |
 | `replica_id` | string | required when `slave` | Identifies this replica in master-side tracking and metrics |
-| `master_address` | `host:port` | yes when set | Replication listen address (master) or dial address (slave) |
+| `master_address` | `host:port` | no, defaults to `:1946` | Replication listen address (master) or dial address (slave) |
 | `sync_interval` | duration ≥ 0 | no | How often a slave polls the master for new WAL data |
 | `auth` | [`ReplicationAuthConfig`](#replicationauth) | required when `replica_type` is set | No unauthenticated mode — the server refuses to start without it |
 | `tls` | [`TLSConfig`](#tls-network-and-replication) | no | Interpreted per `replica_type`, see below |
