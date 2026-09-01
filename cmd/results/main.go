@@ -140,22 +140,33 @@ func run(ctx context.Context, args []string) error {
 	}
 	if !cfg.run {
 		manifest.Notes = append(manifest.Notes, "dry run: commands were planned but not executed")
+	} else if cfg.confirmReleaseRun {
+		printReleaseStart(os.Stdout, paths, manifest.Commands)
+	}
+	var progress io.Writer
+	if cfg.run && cfg.confirmReleaseRun {
+		progress = os.Stdout
 	}
 
+	printStep(progress, "writing metadata")
 	if err := writeJSON(paths.MetadataPath, meta); err != nil {
 		return err
 	}
 	if cfg.serverInfoURL != "" {
+		printStep(progress, "fetching database server info")
 		if err := fetchServerInfo(ctx, cfg.serverInfoURL, paths.ServerInfoPath); err != nil {
 			return err
 		}
 	}
+	printStep(progress, "copying config/profile snapshots")
 	if err := copySnapshots(paths.SnapshotDir); err != nil {
 		return err
 	}
 	if cfg.run {
-		results, err := executeCommands(ctx, manifest.Commands, paths.RunDir)
+		printStep(progress, "executing planned commands")
+		results, err := executeCommands(ctx, manifest.Commands, paths.RunDir, progress)
 		manifest.Results = results
+		printStep(progress, "writing manifest and summary")
 		if writeErr := writeManifestAndSummary(manifest); writeErr != nil {
 			return writeErr
 		}
@@ -407,7 +418,33 @@ func resolveBenchToken(cfg config) (string, error) {
 	}
 }
 
-func executeCommands(ctx context.Context, commands []runCommand, runDir string) ([]runResult, error) {
+func printReleaseStart(w io.Writer, paths artifacts, commands []runCommand) {
+	if w == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "release run confirmed\n")
+	_, _ = fmt.Fprintf(w, "results run directory: %s\n", paths.RunDir)
+	_, _ = fmt.Fprintf(w, "commands planned: %d\n", len(commands))
+	for idx, command := range commands {
+		_, _ = fmt.Fprintf(w, "  %d/%d %s [%s]\n", idx+1, len(commands), command.Name, command.Kind)
+	}
+}
+
+func printStep(w io.Writer, message string) {
+	if w == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "%s...\n", message)
+}
+
+func executeCommands(
+	ctx context.Context,
+	commands []runCommand,
+	runDir string,
+	progress io.Writer,
+) ([]runResult, error) {
 	results := make([]runResult, 0, len(commands))
 	var runErr error
 	for _, command := range commands {
@@ -416,6 +453,7 @@ func executeCommands(ctx context.Context, commands []runCommand, runDir string) 
 			Started: time.Now(),
 			LogPath: filepath.Join(runDir, command.Name+".log"),
 		}
+		printCommandStart(progress, len(results)+1, len(commands), command, result.LogPath)
 		err := executeCommand(ctx, command, result.LogPath)
 		result.Finished = time.Now()
 		if err != nil {
@@ -428,10 +466,34 @@ func executeCommands(ctx context.Context, commands []runCommand, runDir string) 
 			}
 			runErr = errors.Join(runErr, fmt.Errorf("%s: %w", command.Name, err))
 		}
+		printCommandFinish(progress, result, command)
 		results = append(results, result)
 	}
 
 	return results, runErr
+}
+
+func printCommandStart(w io.Writer, index, total int, command runCommand, logPath string) {
+	if w == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "starting %d/%d %s [%s], log: %s\n", index, total, command.Name, command.Kind, logPath)
+}
+
+func printCommandFinish(w io.Writer, result runResult, command runCommand) {
+	if w == nil {
+		return
+	}
+
+	elapsed := result.Finished.Sub(result.Started).Round(time.Millisecond)
+	if result.Error != "" {
+		_, _ = fmt.Fprintf(w, "failed %s after %s: %s\n", command.Name, elapsed, result.Error)
+
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "finished %s in %s\n", command.Name, elapsed)
 }
 
 func executeCommand(ctx context.Context, command runCommand, logPath string) error {

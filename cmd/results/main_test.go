@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -165,6 +166,43 @@ func TestCreateArtifactsUsesStableRunID(t *testing.T) {
 	for _, path := range []string{paths.BenchDir, paths.StressDir, paths.SnapshotDir, paths.ServerInfoPath} {
 		if path == "" {
 			t.Fatalf("empty artifact path: %+v", paths)
+		}
+	}
+}
+
+func TestReleaseProgressOutput(t *testing.T) {
+	var out bytes.Buffer
+	commands := []runCommand{
+		{Name: "bench-smoke", Kind: "benchmark"},
+		{Name: "stress-crash-loop", Kind: "stress"},
+	}
+
+	printReleaseStart(&out, artifacts{RunDir: "runs/release"}, commands)
+	printCommandStart(&out, 1, 2, commands[0], "bench-smoke.log")
+	printCommandFinish(&out, runResult{
+		Name:     "bench-smoke",
+		Started:  time.Unix(0, 0),
+		Finished: time.Unix(0, int64(1500*time.Millisecond)),
+	}, commands[0])
+	printCommandFinish(&out, runResult{
+		Name:     "stress-crash-loop",
+		Started:  time.Unix(0, 0),
+		Finished: time.Unix(2, 0),
+		Error:    "exit status 1",
+	}, commands[1])
+
+	text := out.String()
+	for _, want := range []string{
+		"release run confirmed",
+		"results run directory: runs/release",
+		"commands planned: 2",
+		"1/2 bench-smoke [benchmark]",
+		"starting 1/2 bench-smoke [benchmark], log: bench-smoke.log",
+		"finished bench-smoke in 1.5s",
+		"failed stress-crash-loop after 2s: exit status 1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("progress output %q does not contain %q", text, want)
 		}
 	}
 }
