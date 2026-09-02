@@ -195,6 +195,47 @@ These values are committed to the repository and are therefore public. They exis
 the local dev loop runs without setup; generate real secrets for anything reachable by
 others.
 
+## Kubernetes with Helm
+
+fq ships a Helm chart in `charts/fq` for Kubernetes deployments:
+
+```shell
+helm install fq ./charts/fq
+```
+
+The default install creates one fq pod, a ClusterIP Service, a generated `config.yml`,
+and an `8Gi` PVC mounted at `/var/lib/fq/data` for WAL and dump files. It exposes
+the client protocol on port `1945` and observability on port `2112`.
+
+Client authentication is disabled by default so the chart can be installed in a
+trusted development namespace without first creating secrets. For production, enable
+auth and provide either inline Helm values or an existing Kubernetes Secret. By
+default, the chart mounts tokens as Secret files and renders `token_file` entries in
+the generated fq config:
+
+```shell
+helm upgrade --install fq ./charts/fq \
+  --set config.network.auth.enabled=true \
+  --set auth.secrets.adminToken="$FQ_ADMIN_TOKEN" \
+  --set auth.secrets.rwToken="$FQ_RW_TOKEN" \
+  --set auth.secrets.roToken="$FQ_RO_TOKEN"
+```
+
+Existing Secrets must use the default key names expected by the chart:
+`FQ_ADMIN_TOKEN`, `FQ_RW_TOKEN`, `FQ_RO_TOKEN`, and, for replication,
+`FQ_REPLICATION_TOKEN`. They are mounted under `/var/run/secrets/fq`. Set
+`auth.tokenSource=env` if you prefer environment variables and `token_env` config
+entries instead.
+
+Replication is configured by installing separate releases for master and slave and
+setting `config.replication.*`; the master and slave must share the same
+`FQ_REPLICATION_TOKEN`. If the Prometheus Operator CRDs are installed, set
+`serviceMonitor.enabled=true` to create a ServiceMonitor for `/metrics`.
+
+See the chart README in
+[`charts/fq`](https://github.com/fq-db/fq/tree/main/charts/fq) for the full values
+reference.
+
 ## Replication
 
 Start a slave replica:

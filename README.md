@@ -78,7 +78,7 @@ docker run --rm \
   -p 2112:2112 \
   -e FQ_ADMIN_TOKEN -e FQ_RW_TOKEN -e FQ_RO_TOKEN -e FQ_REPLICATION_TOKEN \
   -v "$PWD/config.yml:/etc/fq/config.yml:ro" \
-  -v "$PWD/fq_data:/var/lib/fq/fq_data" \
+  -v "$PWD/fq_data:/var/lib/fq/data" \
   ghcr.io/fq-db/fq:latest
 ```
 
@@ -108,6 +108,21 @@ Install and start fq:
 sudo apt install ./fq_<version>_linux_<arch>.deb
 sudo systemctl start fq
 ```
+
+### Helm
+
+A Helm chart for Kubernetes lives in `charts/fq`:
+
+```shell
+helm install fq ./charts/fq
+```
+
+The default chart install creates a single fq pod with a PVC for WAL/dump data,
+client port `1945`, and observability port `2112`. Client authentication is disabled
+by default for easy trusted-namespace testing; enable it and provide a Secret before
+exposing fq outside a private cluster network. See
+[`charts/fq/README.md`](charts/fq/README.md) for production values, replication, and
+ServiceMonitor options.
 
 ### From Source
 

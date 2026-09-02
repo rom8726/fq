@@ -19,7 +19,7 @@ wal:
   flushing_batch_timeout: 10ms
   queue_capacity: 16384
   max_segment_size: 64MB
-  data_directory: /var/lib/fq/wal/
+  data_directory: /var/lib/fq/data/wal/
 engine:
   type: in_memory
   partitions: 16
@@ -29,7 +29,7 @@ engine:
   limit_event_queue_capacity: 16
 dump:
   interval: 1m
-  directory: /var/lib/fq/
+  directory: /var/lib/fq/data
 replication:
   replica_type: master
   master_address: ":1946"

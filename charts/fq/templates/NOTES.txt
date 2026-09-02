@@ -1,0 +1,20 @@
+fq has been installed.
+
+Client service:
+  {{ include "fq.fullname" . }}:{{ .Values.service.ports.client }}
+
+{{- if .Values.config.observability.enabled }}
+Observability endpoints:
+  http://{{ include "fq.fullname" . }}:{{ .Values.service.ports.observability }}/healthz
+  http://{{ include "fq.fullname" . }}:{{ .Values.service.ports.observability }}/metrics
+  http://{{ include "fq.fullname" . }}:{{ .Values.service.ports.observability }}/v1/info
+{{- end }}
+
+Port-forward the client and observability ports:
+  kubectl port-forward svc/{{ include "fq.fullname" . }} {{ .Values.service.ports.client }}:{{ .Values.service.ports.client }}{{- if .Values.config.observability.enabled }} {{ .Values.service.ports.observability }}:{{ .Values.service.ports.observability }}{{- end }}
+
+{{- if not .Values.config.network.auth.enabled }}
+Client authentication is disabled by default. Enable config.network.auth.enabled and
+provide auth.secrets.* or auth.existingSecret before exposing fq beyond a trusted
+development namespace.
+{{- end }}

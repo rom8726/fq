@@ -1,0 +1,81 @@
+{{- $tokenSource := include "fq.authTokenSource" . -}}
+{{- $secretMountPath := trimSuffix "/" .Values.auth.mountPath -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fq.fullname" . }}-config
+  labels:
+    {{- include "fq.labels" . | nindent 4 }}
+data:
+  config.yml: |
+    network:
+      address: {{ .Values.config.network.address | quote }}
+      max_connections: {{ .Values.config.network.maxConnections }}
+      max_message_size: {{ .Values.config.network.maxMessageSize | quote }}
+      idle_timeout: {{ .Values.config.network.idleTimeout }}
+      {{- if .Values.config.network.auth.enabled }}
+      auth:
+        tokens:
+          {{- if eq $tokenSource "file" }}
+          - { role: admin, token_file: {{ printf "%s/%s" $secretMountPath .Values.auth.secretKeys.adminToken | quote }} }
+          - { role: rw, token_file: {{ printf "%s/%s" $secretMountPath .Values.auth.secretKeys.rwToken | quote }} }
+          - { role: ro, token_file: {{ printf "%s/%s" $secretMountPath .Values.auth.secretKeys.roToken | quote }} }
+          {{- else }}
+          - { role: admin, token_env: FQ_ADMIN_TOKEN }
+          - { role: rw, token_env: FQ_RW_TOKEN }
+          - { role: ro, token_env: FQ_RO_TOKEN }
+          {{- end }}
+      {{- end }}
+      {{- with .Values.config.network.tls }}
+      tls:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    persistence:
+      mode: {{ .Values.config.persistence.mode | quote }}
+    {{- if .Values.config.observability.enabled }}
+    observability:
+      address: {{ .Values.config.observability.address | quote }}
+      pprof: {{ .Values.config.observability.pprof }}
+    {{- end }}
+    {{- if eq .Values.config.persistence.mode "wal_and_dump" }}
+    wal:
+      sync_commit: {{ .Values.config.wal.syncCommit | quote }}
+      flushing_batch_length: {{ .Values.config.wal.flushingBatchLength }}
+      flushing_batch_timeout: {{ .Values.config.wal.flushingBatchTimeout }}
+      queue_capacity: {{ .Values.config.wal.queueCapacity }}
+      max_segment_size: {{ .Values.config.wal.maxSegmentSize | quote }}
+      data_directory: {{ .Values.config.wal.dataDirectory }}
+    {{- end }}
+    engine:
+      type: {{ .Values.config.engine.type | quote }}
+      partitions: {{ .Values.config.engine.partitions }}
+      wal_apply_workers: {{ .Values.config.engine.walApplyWorkers }}
+      key_index: {{ .Values.config.engine.keyIndex }}
+      clean_interval: {{ .Values.config.engine.cleanInterval }}
+      limit_event_queue_capacity: {{ .Values.config.engine.limitEventQueueCapacity }}
+    {{- if or (eq .Values.config.persistence.mode "wal_and_dump") (eq .Values.config.persistence.mode "dump_only") }}
+    dump:
+      interval: {{ .Values.config.dump.interval }}
+      directory: {{ .Values.config.dump.directory }}
+    {{- end }}
+    {{- if .Values.config.replication.enabled }}
+    replication:
+      replica_type: {{ .Values.config.replication.replicaType | quote }}
+      {{- if eq .Values.config.replication.replicaType "slave" }}
+      replica_id: {{ required "config.replication.replicaId is required when config.replication.replicaType=slave" .Values.config.replication.replicaId | quote }}
+      {{- end }}
+      master_address: {{ .Values.config.replication.masterAddress | quote }}
+      sync_interval: {{ .Values.config.replication.syncInterval }}
+      auth:
+        {{- if eq $tokenSource "file" }}
+        token_file: {{ printf "%s/%s" $secretMountPath .Values.auth.secretKeys.replicationToken | quote }}
+        {{- else }}
+        token_env: FQ_REPLICATION_TOKEN
+        {{- end }}
+      {{- with .Values.config.replication.tls }}
+      tls:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    logging:
+      level: {{ .Values.config.logging.level | quote }}

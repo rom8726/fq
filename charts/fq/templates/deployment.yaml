@@ -1,0 +1,157 @@
+{{- $tokenSource := include "fq.authTokenSource" . -}}
+{{- $needsAuthSecret := or .Values.config.network.auth.enabled .Values.config.replication.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fq.fullname" . }}
+  labels:
+    {{- include "fq.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fq.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/auth: {{ toJson .Values.auth | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "fq.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "fq.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: fq
+          image: {{ include "fq.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -c
+            - /etc/fq/config.yml
+          ports:
+            - name: client
+              containerPort: {{ .Values.service.ports.client }}
+              protocol: TCP
+            {{- if and .Values.config.replication.enabled (eq .Values.config.replication.replicaType "master") }}
+            - name: replication
+              containerPort: {{ .Values.service.ports.replication }}
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.config.observability.enabled }}
+            - name: observability
+              containerPort: {{ .Values.service.ports.observability }}
+              protocol: TCP
+            {{- end }}
+          {{- if or (and (eq $tokenSource "env") $needsAuthSecret) .Values.extraEnv }}
+          env:
+            {{- if and (eq $tokenSource "env") .Values.config.network.auth.enabled }}
+            - name: FQ_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fq.authSecretName" . }}
+                  key: {{ .Values.auth.secretKeys.adminToken | quote }}
+            - name: FQ_RW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fq.authSecretName" . }}
+                  key: {{ .Values.auth.secretKeys.rwToken | quote }}
+            - name: FQ_RO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fq.authSecretName" . }}
+                  key: {{ .Values.auth.secretKeys.roToken | quote }}
+            {{- end }}
+            {{- if and (eq $tokenSource "env") .Values.config.replication.enabled }}
+            - name: FQ_REPLICATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fq.authSecretName" . }}
+                  key: {{ .Values.auth.secretKeys.replicationToken | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- if .Values.probes.enabled }}
+          livenessProbe:
+            {{- if .Values.config.observability.enabled }}
+            httpGet:
+              path: /healthz
+              port: observability
+            {{- else }}
+            tcpSocket:
+              port: client
+            {{- end }}
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- if .Values.config.observability.enabled }}
+            httpGet:
+              path: /healthz
+              port: observability
+            {{- else }}
+            tcpSocket:
+              port: client
+            {{- end }}
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/fq/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/fq/data
+            {{- if and (eq $tokenSource "file") $needsAuthSecret }}
+            - name: auth
+              mountPath: {{ .Values.auth.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "fq.fullname" . }}-config
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (include "fq.fullname" .) .Values.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if and (eq $tokenSource "file") $needsAuthSecret }}
+        - name: auth
+          secret:
+            secretName: {{ include "fq.authSecretName" . }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

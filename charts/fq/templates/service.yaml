@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fq.fullname" . }}
+  labels:
+    {{- include "fq.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: client
+      port: {{ .Values.service.ports.client }}
+      targetPort: client
+      protocol: TCP
+    {{- if and .Values.config.replication.enabled (eq .Values.config.replication.replicaType "master") }}
+    - name: replication
+      port: {{ .Values.service.ports.replication }}
+      targetPort: replication
+      protocol: TCP
+    {{- end }}
+    {{- if .Values.config.observability.enabled }}
+    - name: observability
+      port: {{ .Values.service.ports.observability }}
+      targetPort: observability
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "fq.selectorLabels" . | nindent 4 }}

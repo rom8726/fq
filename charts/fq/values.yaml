@@ -1,0 +1,138 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/fq-db/fq
+  pullPolicy: IfNotPresent
+  tag: latest
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 65534
+  fsGroupChangePolicy: OnRootMismatch
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+
+service:
+  type: ClusterIP
+  annotations: {}
+  ports:
+    client: 1945
+    replication: 1946
+    observability: 2112
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  annotations: {}
+
+auth:
+  existingSecret: ""
+  createSecret: false
+  tokenSource: file
+  mountPath: /var/run/secrets/fq
+  secretKeys:
+    adminToken: FQ_ADMIN_TOKEN
+    rwToken: FQ_RW_TOKEN
+    roToken: FQ_RO_TOKEN
+    replicationToken: FQ_REPLICATION_TOKEN
+  secrets:
+    adminToken: ""
+    rwToken: ""
+    roToken: ""
+    replicationToken: ""
+
+config:
+  network:
+    address: ":1945"
+    maxConnections: 1000
+    maxMessageSize: 4KB
+    idleTimeout: 10m
+    auth:
+      enabled: false
+    tls: {}
+  persistence:
+    mode: wal_and_dump
+  observability:
+    enabled: true
+    address: ":2112"
+    pprof: false
+  wal:
+    syncCommit: "off"
+    flushingBatchLength: 8192
+    flushingBatchTimeout: 10ms
+    queueCapacity: 16384
+    maxSegmentSize: 64MB
+    dataDirectory: /var/lib/fq/data/wal/
+  engine:
+    type: in_memory
+    partitions: 16
+    walApplyWorkers: 1
+    keyIndex: false
+    cleanInterval: 5m
+    limitEventQueueCapacity: 16
+  dump:
+    interval: 1m
+    directory: /var/lib/fq/data/
+  replication:
+    enabled: false
+    replicaType: master
+    replicaId: ""
+    masterAddress: ":1946"
+    syncInterval: 1s
+    tls: {}
+  logging:
+    level: info
+
+resources: {}
+
+probes:
+  enabled: true
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  annotations: {}
+  interval: 30s
+  scrapeTimeout: 10s

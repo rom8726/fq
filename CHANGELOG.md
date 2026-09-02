@@ -20,6 +20,9 @@ change behavior, and patch releases are reserved for compatible fixes.
 - Added progress output and benchmark profile validation for release result runs.
 - Added periodic retry notifications in the interactive TUI while waiting for the
   server connection.
+- Added a Helm chart for Kubernetes deployments, including generated config,
+  Secret-file or environment-based tokens, persistent storage, probes, Service, and
+  optional ServiceMonitor.
 - Added repository hygiene files: security policy, contribution guide, code of
   conduct, issue templates, pull request template, and code owners.
 
