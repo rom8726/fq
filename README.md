@@ -55,6 +55,7 @@ guide (auth, TLS, replication, monitoring).
 - `INSPECT` diagnostic snapshot command (instance, WAL, dump, replication, engine, streams)
 - CLI client and live benchmark client
 - Go client: [fq-client-go](https://github.com/fq-db/fq-client-go)
+- Python client: [fq-client-py](https://github.com/fq-db/fq-client-py)
 
 ## Installation
 
