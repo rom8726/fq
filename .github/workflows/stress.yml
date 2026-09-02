@@ -2,7 +2,7 @@ name: Stress
 
 on:
   schedule:
-    - cron: "0 1 * * *"
+    - cron: "34 1 * * *"
   workflow_dispatch:
 
 jobs:
