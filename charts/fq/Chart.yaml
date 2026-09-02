@@ -3,7 +3,7 @@ name: fq
 description: A Helm chart for fq, a specialized database for frequency capping, rate limiting, and quota counters.
 type: application
 version: 0.1.0
-appVersion: "0.9.0"
+appVersion: "v0.9.1"
 keywords:
   - fq
   - rate-limiting
