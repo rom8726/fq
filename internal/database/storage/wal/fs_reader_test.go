@@ -77,6 +77,22 @@ func TestReadLogsIgnoresSegmentMetadataFiles(t *testing.T) {
 	require.Equal(t, uint64(1), logs[0].LSN)
 }
 
+func TestReadLogsCreatesMissingDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "wal")
+	logger := zerolog.Nop()
+	reader := NewFSReader(dir, &logger)
+
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, logs)
+
+	stat, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.True(t, stat.IsDir())
+}
+
 func TestReadLogsAfterSkipsSegmentsUsingMetadata(t *testing.T) {
 	t.Parallel()
 

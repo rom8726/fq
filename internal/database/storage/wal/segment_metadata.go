@@ -60,8 +60,8 @@ func readSegmentMetadata(segmentPath string) (segmentMetadata, error) {
 }
 
 func writeLastFlushDBLSN(directory string, lsn uint64) error {
-	if err := os.MkdirAll(directory, 0o750); err != nil {
-		return fmt.Errorf("create WAL directory: %w", err)
+	if err := ensureWALDirectory(directory); err != nil {
+		return err
 	}
 
 	path := filepath.Join(directory, lastFlushDBLSNFileName)
@@ -78,6 +78,14 @@ func writeLastFlushDBLSN(directory string, lsn uint64) error {
 	}
 
 	return syncDirectory(directory)
+}
+
+func ensureWALDirectory(directory string) error {
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return fmt.Errorf("create WAL directory: %w", err)
+	}
+
+	return nil
 }
 
 func readLastFlushDBLSN(directory string) (uint64, error) {
@@ -128,6 +136,10 @@ func removeSegmentAndMetadata(segmentPath string) error {
 }
 
 func walSegmentNames(directory string) ([]string, error) {
+	if err := ensureWALDirectory(directory); err != nil {
+		return nil, err
+	}
+
 	files, err := os.ReadDir(directory)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan WAL directory: %w", err)
