@@ -278,9 +278,10 @@ dropping events, and durability reminders for `sync_commit: off` or
 A field that does not apply to the current instance (for example `wal` fields on a
 `dump_only` server, or `repl.slave` on a master) is `null` rather than a zero value.
 
-Because a report can exceed one frame, `INSPECT` responses may span multiple frames
-(see [Wire protocol](protocol.md) for the chunked-response grammar). The Go CLI
-(`fq-cli`) and TCP client already implement reassembly.
+Because a report can exceed the default `4KB` frame size, `INSPECT` responses may span
+multiple frames. Each non-final frame is tagged `nxt|`, and the final frame is tagged
+`ok|`; see [Wire protocol](protocol.md) for the chunked-response grammar and chunk
+size rules. The Go CLI (`fq-cli`) and TCP client already implement reassembly.
 
 `fq-cli` also accepts `HINSPECT` (with the same optional section argument, e.g.
 `HINSPECT REPL`) as a client-side-only alias: it sends the equivalent `INSPECT` query

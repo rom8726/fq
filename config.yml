@@ -1,7 +1,7 @@
 network:
   address: ":1945"
   max_connections: 1000
-  max_message_size: 4096
+  max_message_size: 4KB
   idle_timeout: 10m
   auth:
     tokens:

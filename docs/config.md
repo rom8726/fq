@@ -22,7 +22,7 @@ The client port.
 network:
   address: ":1945"
   max_connections: 1000
-  max_message_size: 4096
+  max_message_size: 4KB
   idle_timeout: 10m
   auth:
     tokens:
@@ -40,6 +40,15 @@ network:
 | `idle_timeout` | duration | yes | Connection is closed after this much inactivity |
 | `auth` | [`AuthConfig`](#networkauth) | no | Omit entirely to disable authentication (logs a startup warning) |
 | `tls` | [`TLSConfig`](#tls-network-and-replication) | no | Omit to serve plaintext |
+
+The default `max_message_size` is intentionally small (`4KB`): fq's client protocol
+is optimized for short command/response frames with bounded per-connection buffers,
+and this limit also caps request payloads. Large diagnostic payloads should not require
+raising the global frame budget — `INSPECT` uses chunked responses instead. When an
+`INSPECT` report is larger than one frame, each non-final frame is sent as `nxt|` plus
+up to `max_message_size - len("nxt|")` bytes of JSON, followed by a final `ok|` frame.
+Increase this setting only if your clients and deployment are prepared for larger
+request and response frames across the whole client port.
 
 ### `network.auth`
 

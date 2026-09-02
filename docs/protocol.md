@@ -35,9 +35,11 @@ length followed by exactly that many bytes of payload.
 +--------+--------+--------+--------+---------------------------+
 ```
 
-The payload size limit is the `max_message_size` reported by the handshake. A request
-larger than the limit is refused with code 1004; a server response that would exceed it
-closes the connection.
+The payload size limit is the `max_message_size` reported by the handshake. fq keeps
+the default small (`4KB`) so ordinary client traffic uses bounded, predictable
+per-connection buffers; the setting can be raised, but it applies to the whole client
+port, not to one command. A request larger than the limit is refused with code 1004; a
+non-chunked server response that would exceed it closes the connection.
 
 ## Grammar
 
@@ -117,7 +119,9 @@ Every response begins with one of three tags.
 | `nxt\|` | A non-final chunk of a response that does not fit one frame. |
 
 A chunked response is a sequence of `nxt|` frames terminated by exactly one `ok|` or
-`err|` frame. Clients concatenate the payloads to reconstruct the whole document:
+`err|` frame. The frame limit still applies to every chunk: with a `4KB` limit, a
+non-final chunk can carry at most `4096 - len("nxt|")` bytes of response body. Clients
+concatenate the payloads to reconstruct the whole document:
 
 ```text
 nxt|<partial JSON>
@@ -126,7 +130,8 @@ ok|<final partial JSON>
 ```
 
 A response that fits one frame is returned directly, so a client that never encounters
-`nxt|` needs no special handling. Today `INSPECT` is the only command that chunks.
+`nxt|` needs no special handling. Today `INSPECT` is the only command that chunks; its
+reports are expected to exceed the default frame size on sufficiently busy instances.
 
 ## Error codes
 
