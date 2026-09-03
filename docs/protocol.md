@@ -195,6 +195,7 @@ same category. Codes are never reused for a different meaning.
 | 5001 | inspect is not available | The instance has no inspector configured |
 | 5002 | inspect report too large | The report exceeds the 1 MiB cap |
 | 5003 | max message size too small for a chunked response | The configured frame size cannot hold a chunk |
+| 5004 | replica does not support the configured compression codec | The master stores compressed WAL segments and the replica did not advertise the codec |
 
 ### 9xxx — internal
 

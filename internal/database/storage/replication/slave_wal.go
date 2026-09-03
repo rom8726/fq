@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/observability"
 )
@@ -33,7 +34,14 @@ func (e *walSegmentOffsetMismatchError) Error() string {
 }
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
-	request := NewWALRequest(s.secret.Reveal(), s.replicaID, s.lastSegmentName, s.lastSegmentOffset, s.lastAppliedLSN)
+	request := NewWALRequest(
+		s.secret.Reveal(),
+		s.replicaID,
+		s.lastSegmentName,
+		s.lastSegmentOffset,
+		s.lastAppliedLSN,
+		format.SupportedCodecs(),
+	)
 
 	requestData, err := Encode(&request)
 	if err != nil {

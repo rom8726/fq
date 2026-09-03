@@ -38,7 +38,7 @@ func newTestMaster(t *testing.T, secret security.Secret) *capturingServer {
 func TestMasterRejectsWrongToken(t *testing.T) {
 	server := newTestMaster(t, security.Secret("replication-token-value"))
 
-	request := NewWALRequest("wrong-token-value", "replica-1", "", 0, 0)
+	request := NewWALRequest("wrong-token-value", "replica-1", "", 0, 0, nil)
 	data, err := Encode(&request)
 	require.NoError(t, err)
 
@@ -62,7 +62,7 @@ func TestMasterRejectsMissingToken(t *testing.T) {
 func TestMasterRejectsDumpRequestWithWrongToken(t *testing.T) {
 	server := newTestMaster(t, security.Secret("replication-token-value"))
 
-	request := NewDumpRequest("wrong-token-value", "session-uuid", 0)
+	request := NewDumpRequest("wrong-token-value", "session-uuid", 0, nil)
 	data, err := Encode(&request)
 	require.NoError(t, err)
 
@@ -74,7 +74,7 @@ func TestMasterRejectsDumpRequestWithWrongToken(t *testing.T) {
 func TestMasterAcceptsCorrectToken(t *testing.T) {
 	server := newTestMaster(t, security.Secret("replication-token-value"))
 
-	request := NewWALRequest("replication-token-value", "replica-1", "", 0, 0)
+	request := NewWALRequest("replication-token-value", "replica-1", "", 0, 0, nil)
 	data, err := Encode(&request)
 	require.NoError(t, err)
 
@@ -85,7 +85,7 @@ func TestMasterAcceptsCorrectToken(t *testing.T) {
 func TestMasterRejectsEverythingWhenSecretIsEmpty(t *testing.T) {
 	server := newTestMaster(t, "")
 
-	request := NewWALRequest("", "replica-1", "", 0, 0)
+	request := NewWALRequest("", "replica-1", "", 0, 0, nil)
 	data, err := Encode(&request)
 	require.NoError(t, err)
 
@@ -95,12 +95,12 @@ func TestMasterRejectsEverythingWhenSecretIsEmpty(t *testing.T) {
 }
 
 func TestRequestConstructorsCarryToken(t *testing.T) {
-	walRequest := NewWALRequest("token-value", "replica-1", "segment", 7, 9)
+	walRequest := NewWALRequest("token-value", "replica-1", "segment", 7, 9, nil)
 	require.Equal(t, "token-value", walRequest.AuthToken)
 	require.Equal(t, "replica-1", walRequest.ReplicaID)
 	require.Equal(t, "segment", walRequest.LastSegmentName)
 
-	dumpRequest := NewDumpRequest("token-value", "session-uuid", 3)
+	dumpRequest := NewDumpRequest("token-value", "session-uuid", 3, nil)
 	require.Equal(t, "token-value", dumpRequest.AuthToken)
 	require.Equal(t, "session-uuid", dumpRequest.SessionUUID)
 	require.Equal(t, uint64(3), dumpRequest.LastSegmentNumber)
