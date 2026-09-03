@@ -157,16 +157,9 @@ func (w *FSWriter) encodeLogs(logs []*LogData) ([]byte, error) {
 		return nil, err
 	}
 
-	if err := format.CheckPayloadSize(data, MaxBatchSize); err != nil {
+	payload, err := encodeWALPayload(data, w.compression, MaxBatchSize)
+	if err != nil {
 		return nil, err
-	}
-
-	payload := data
-	if w.formatVersion() == segmentFormatVersionCompressed {
-		startedAt := now()
-		payload = format.EncodePayload(nil, data, w.compression)
-		observability.ObserveCompressionDuration("wal", "compress", now().Sub(startedAt))
-		observability.ObserveCompression("wal", len(data), len(payload))
 	}
 
 	buff := bytesBufferPool.Get()
@@ -180,6 +173,27 @@ func (w *FSWriter) encodeLogs(logs []*LogData) ([]byte, error) {
 	copy(result, buff.Bytes())
 
 	return result, nil
+}
+
+func encodeWALPayload(data []byte, compression format.Compression, maxPayloadSize int) ([]byte, error) {
+	if err := format.CheckPayloadSize(data, maxPayloadSize); err != nil {
+		return nil, err
+	}
+
+	if !compression.Enabled() {
+		return data, nil
+	}
+
+	startedAt := now()
+	payload := format.EncodePayload(nil, data, compression)
+	observability.ObserveCompressionDuration("wal", "compress", now().Sub(startedAt))
+	observability.ObserveCompression("wal", len(data), len(payload))
+
+	if err := format.CheckPayloadSize(payload, maxPayloadSize); err != nil {
+		return nil, err
+	}
+
+	return payload, nil
 }
 
 func (w *FSWriter) shouldRotate(nextBatchSize int) bool {

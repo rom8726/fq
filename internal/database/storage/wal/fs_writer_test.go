@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"bytes"
 	"context"
 	"log"
 	"os"
@@ -348,6 +349,18 @@ func TestCompressedSegmentRoundTrip(t *testing.T) {
 	require.Len(t, logs, 2)
 	require.Equal(t, uint64(1), logs[0].LSN)
 	require.Equal(t, uint64(2), logs[1].LSN)
+}
+
+func TestCompressedPayloadChecksSizeAfterCodecPrefix(t *testing.T) {
+	raw := bytes.Repeat([]byte("x"), 16)
+	compression := format.Compression{
+		Codec:        format.CodecZstd,
+		MinFrameSize: len(raw) + 1,
+	}
+
+	_, err := encodeWALPayload(raw, compression, len(raw))
+
+	require.ErrorIs(t, err, format.ErrFrameTooLarge)
 }
 
 func TestUncompressedWriterKeepsFormatVersionOne(t *testing.T) {
