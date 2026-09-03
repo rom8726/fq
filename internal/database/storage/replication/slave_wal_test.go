@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/security"
 )
@@ -377,4 +379,64 @@ func requireWALChunk(t *testing.T, walStream <-chan wal.Chunk) wal.Chunk {
 	}
 
 	return wal.Chunk{}
+}
+
+func TestSlaveDecodesCompressedWireChunk(t *testing.T) {
+	t.Parallel()
+
+	raw := bytes.Repeat([]byte("wal-chunk-"), 200)
+	encoded := format.EncodePayload(nil, raw, format.Compression{Codec: format.CodecZstd, MinFrameSize: 0})
+
+	slave := &Slave{}
+	decoded, err := slave.decodeWALChunk(WALResponse{
+		SegmentData:  encoded,
+		SegmentCodec: uint8(format.CodecZstd),
+	})
+	require.NoError(t, err)
+	require.Equal(t, raw, decoded)
+}
+
+func TestSlaveKeepsRawWireChunkUntouched(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte{0x01, 0x02, 0x03}
+
+	slave := &Slave{}
+	decoded, err := slave.decodeWALChunk(WALResponse{SegmentData: raw, SegmentCodec: 0})
+	require.NoError(t, err)
+	require.Equal(t, raw, decoded)
+}
+
+func TestSlaveRejectsWireChunkCodecMismatch(t *testing.T) {
+	t.Parallel()
+
+	encoded := format.EncodePayload(nil, []byte("payload"), format.Compression{Codec: format.CodecNone})
+
+	slave := &Slave{}
+	_, err := slave.decodeWALChunk(WALResponse{
+		SegmentData:  encoded,
+		SegmentCodec: uint8(format.CodecZstd),
+	})
+	require.Error(t, err)
+}
+
+func TestSlaveWritesDecompressedBytesToDisk(t *testing.T) {
+	directory := t.TempDir()
+	logger := zerolog.Nop()
+
+	raw := bytes.Repeat([]byte("segment-bytes-"), 100)
+	encoded := format.EncodePayload(nil, raw, format.Compression{Codec: format.CodecS2, MinFrameSize: 0})
+
+	slave := &Slave{walDirectory: directory, logger: &logger}
+
+	decoded, err := slave.decodeWALChunk(WALResponse{
+		SegmentData:  encoded,
+		SegmentCodec: uint8(format.CodecS2),
+	})
+	require.NoError(t, err)
+	require.NoError(t, slave.saveWALChunk("wal_1.log", 0, decoded))
+
+	stored, err := os.ReadFile(filepath.Join(directory, "wal_1.log"))
+	require.NoError(t, err)
+	require.Equal(t, raw, stored)
 }
