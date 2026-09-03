@@ -421,3 +421,58 @@ func validConfig() Config {
 		},
 	}
 }
+
+func TestCompressionDefaultsWhenSectionMissing(t *testing.T) {
+	cfg := Config{}
+	compression := cfg.CompressionValue()
+
+	require.Equal(t, "none", compression.WALCodec())
+	require.Equal(t, "none", compression.DumpCodec())
+	require.Equal(t, "none", compression.ReplicationCodec())
+	require.Equal(t, DefaultCompressionMinFrameSize, compression.MinFrameSizeValue())
+}
+
+func TestCompressionValuesFromSection(t *testing.T) {
+	cfg := Config{Compression: &CompressionConfig{
+		WAL:          "s2",
+		Dump:         "zstd",
+		MinFrameSize: 128,
+	}}
+	compression := cfg.CompressionValue()
+
+	require.Equal(t, "s2", compression.WALCodec())
+	require.Equal(t, "zstd", compression.DumpCodec())
+	require.Equal(t, "none", compression.ReplicationCodec())
+	require.Equal(t, 128, compression.MinFrameSizeValue())
+}
+
+func TestDecodeAcceptsCompressionSection(t *testing.T) {
+	data := []byte("compression:\n  wal: s2\n  dump: zstd\n  replication: none\n  min_frame_size: 256\n")
+
+	cfg := Config{}
+	require.NoError(t, decode(data, &cfg))
+	require.NotNil(t, cfg.Compression)
+	require.Equal(t, "s2", cfg.Compression.WAL)
+	require.Equal(t, 256, cfg.Compression.MinFrameSize)
+}
+
+func TestValidateRejectsUnknownCodec(t *testing.T) {
+	cfg := validConfig()
+	cfg.Compression = &CompressionConfig{WAL: "lz4"}
+
+	require.Error(t, validate(&cfg))
+}
+
+func TestValidateRejectsNegativeMinFrameSize(t *testing.T) {
+	cfg := validConfig()
+	cfg.Compression = &CompressionConfig{MinFrameSize: -1}
+
+	require.Error(t, validate(&cfg))
+}
+
+func TestValidateAcceptsKnownCodecs(t *testing.T) {
+	cfg := validConfig()
+	cfg.Compression = &CompressionConfig{WAL: "s2", Dump: "zstd", Replication: "none", MinFrameSize: 0}
+
+	require.NoError(t, validate(&cfg))
+}
