@@ -119,7 +119,18 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 		dumpSrv = dumper.New(dbEngine, dumpWAL, cfg.Dump.Directory, dumpCompression)
 	}
 
-	replica, err := CreateReplica(cfg.Replication, cfg.WAL, logger, dumpSrv, walStream, dumpStream)
+	replicationCodec, err := format.ParseCodec(compressionCfg.ReplicationCodec())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse replication compression codec: %w", err)
+	}
+
+	replicaCompression := replication.Compression{
+		SegmentCodec: walCodec,
+		WireCodec:    replicationCodec,
+		MinFrameSize: compressionCfg.MinFrameSizeValue(),
+	}
+
+	replica, err := CreateReplica(cfg.Replication, cfg.WAL, replicaCompression, logger, dumpSrv, walStream, dumpStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize replication: %w", err)
 	}

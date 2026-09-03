@@ -184,7 +184,7 @@ func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
 	require.NoError(t, err)
 
 	master, err := replication.NewMaster(
-		server, t.TempDir(), nil, security.Secret(testReplicationToken), &logger,
+		server, t.TempDir(), nil, security.Secret(testReplicationToken), replication.Compression{}, &logger,
 	)
 	require.NoError(t, err)
 
@@ -241,7 +241,7 @@ func TestReplicationPortRefusesDumpToImpostor(t *testing.T) {
 	require.NoError(t, err)
 
 	master, err := replication.NewMaster(
-		server, t.TempDir(), nil, security.Secret(testReplicationToken), &logger,
+		server, t.TempDir(), nil, security.Secret(testReplicationToken), replication.Compression{}, &logger,
 	)
 	require.NoError(t, err)
 
@@ -293,7 +293,7 @@ func TestReplicationPortOverMutualTLS(t *testing.T) {
 	require.NoError(t, err)
 
 	master, err := replication.NewMaster(
-		server, t.TempDir(), nil, security.Secret(testReplicationToken), &logger,
+		server, t.TempDir(), nil, security.Secret(testReplicationToken), replication.Compression{}, &logger,
 	)
 	require.NoError(t, err)
 

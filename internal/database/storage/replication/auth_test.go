@@ -27,7 +27,7 @@ func newTestMaster(t *testing.T, secret security.Secret) *capturingServer {
 	logger := zerolog.Nop()
 	server := &capturingServer{}
 
-	master, err := NewMaster(server, t.TempDir(), nil, secret, &logger)
+	master, err := NewMaster(server, t.TempDir(), nil, secret, Compression{}, &logger)
 	require.NoError(t, err)
 	require.NoError(t, master.Start(context.Background()))
 	require.NotNil(t, server.handler)

@@ -9,8 +9,8 @@ type DumpProvider interface {
 	GetNextData(sessionUUID string) ([]database.DumpElem, bool, error)
 }
 
-func (m *Master) processDump(request DumpRequest) []byte {
-	response := m.synchronizeDump(request)
+func (m *Master) processDump(request DumpRequest, codecs []uint8) []byte {
+	response := m.synchronizeDump(request, codecs)
 	responseData, err := Encode(&response)
 	if err != nil {
 		m.logger.Error().Err(err).Msg("failed to encode dump replication response")
@@ -19,7 +19,7 @@ func (m *Master) processDump(request DumpRequest) []byte {
 	return responseData
 }
 
-func (m *Master) synchronizeDump(request DumpRequest) DumpResponse {
+func (m *Master) synchronizeDump(request DumpRequest, _ []uint8) DumpResponse {
 	elems, ok, err := m.dumpProvider.GetNextData(request.SessionUUID)
 	if err != nil {
 		m.logger.Error().

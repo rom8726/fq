@@ -11,12 +11,13 @@ import (
 	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/observability"
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 const walReplicationChunkSize = 4 << 20
 
-func (m *Master) processWAL(request WALRequest) []byte {
-	response := m.synchronizeWAL(request)
+func (m *Master) processWAL(request WALRequest, codecs []uint8) []byte {
+	response := m.synchronizeWAL(request, codecs)
 	responseData, err := Encode(&response)
 	if err != nil {
 		m.logger.Error().Err(err).Msg("failed to encode WAL replication response")
@@ -25,7 +26,7 @@ func (m *Master) processWAL(request WALRequest) []byte {
 	return responseData
 }
 
-func (m *Master) synchronizeWAL(request WALRequest) WALResponse {
+func (m *Master) synchronizeWAL(request WALRequest, codecs []uint8) WALResponse {
 	if request.ReplicaID == "" {
 		m.logger.Error().Msg("replica id is required")
 
@@ -54,7 +55,7 @@ func (m *Master) synchronizeWAL(request WALRequest) WALResponse {
 		Msg("replica WAL ack received")
 
 	if request.LastSegmentName != "" {
-		response, ok, err := m.synchronizeWALSegment(request.LastSegmentName, request.SegmentOffset)
+		response, ok, err := m.synchronizeWALSegment(request.LastSegmentName, request.SegmentOffset, codecs)
 		if err != nil {
 			m.logger.Error().Err(err).Str("segment_name", request.LastSegmentName).Msg("failed to read WAL segment chunk")
 
@@ -81,7 +82,7 @@ func (m *Master) synchronizeWAL(request WALRequest) WALResponse {
 		return WALResponse{Succeed: true}
 	}
 
-	response, ok, err := m.synchronizeWALSegment(segmentName, 0)
+	response, ok, err := m.synchronizeWALSegment(segmentName, 0, codecs)
 	if err != nil {
 		m.logger.Error().Err(err).Str("segment_name", segmentName).Msg("failed to read WAL segment chunk")
 
@@ -94,12 +95,35 @@ func (m *Master) synchronizeWAL(request WALRequest) WALResponse {
 	return response
 }
 
-func (m *Master) synchronizeWALSegment(segmentName string, offset int64) (WALResponse, bool, error) {
+func (m *Master) synchronizeWALSegment(
+	segmentName string,
+	offset int64,
+	codecs []uint8,
+) (WALResponse, bool, error) {
 	if !isSafeWALSegmentName(segmentName) {
 		return WALResponse{}, false, fmt.Errorf("invalid wal segment name: %q", segmentName)
 	}
 
 	filename := filepath.Join(m.walDirectory, segmentName)
+
+	version, err := wal.SegmentFormatVersion(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return WALResponse{}, false, nil
+		}
+
+		return WALResponse{}, false, err
+	}
+
+	if version > 1 && !SupportsCodec(codecs, m.compression.SegmentCodec) {
+		m.logger.Warn().
+			Str("segment_name", segmentName).
+			Str("codec", m.compression.SegmentCodec.String()).
+			Msg("replica does not support the segment compression codec")
+
+		return WALResponse{Succeed: false, ErrorCode: protocol.CodeUnsupportedCompression}, true, nil
+	}
+
 	data, nextOffset, err := readCompleteWALChunk(filename, offset, walReplicationChunkSize)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -112,19 +136,37 @@ func (m *Master) synchronizeWALSegment(segmentName string, offset int64) (WALRes
 		return WALResponse{}, false, nil
 	}
 
+	chunkCodec := format.CodecNone
+	if version == 1 && m.compression.WireCodec != format.CodecNone &&
+		SupportsCodec(codecs, m.compression.WireCodec) {
+		encoded := format.EncodePayload(nil, data, format.Compression{
+			Codec:        m.compression.WireCodec,
+			MinFrameSize: m.compression.MinFrameSize,
+		})
+
+		if format.PayloadCodec(encoded) != format.CodecNone {
+			data = encoded
+			chunkCodec = m.compression.WireCodec
+		}
+	}
+
 	m.logger.Info().
 		Str("segment_name", segmentName).
 		Int64("segment_offset", offset).
 		Int64("next_segment_offset", nextOffset).
 		Int("chunk_size", len(data)).
+		Uint16("segment_format_version", version).
+		Str("chunk_codec", chunkCodec.String()).
 		Msg("sending WAL chunk to slave")
 
 	return WALResponse{
-		Succeed:           true,
-		SegmentData:       data,
-		SegmentName:       segmentName,
-		SegmentOffset:     offset,
-		NextSegmentOffset: nextOffset,
+		Succeed:              true,
+		SegmentData:          data,
+		SegmentName:          segmentName,
+		SegmentOffset:        offset,
+		NextSegmentOffset:    nextOffset,
+		SegmentFormatVersion: version,
+		SegmentCodec:         uint8(chunkCodec),
 	}, true, nil
 }
 

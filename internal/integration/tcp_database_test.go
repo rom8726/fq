@@ -1446,7 +1446,7 @@ func (a *testDatabaseApp) StartReplication() {
 	replicationServer, err := network.NewTCPServer(a.replicationAddr, 5, 16<<20, time.Second, a.logger)
 	require.NoError(a.t, err)
 	master, err := replication.NewMaster(
-		replicationServer, a.walDir, a.dumper, security.Secret(testReplicationToken), a.logger,
+		replicationServer, a.walDir, a.dumper, security.Secret(testReplicationToken), replication.Compression{}, a.logger,
 	)
 	require.NoError(a.t, err)
 
