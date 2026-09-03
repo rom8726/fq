@@ -80,7 +80,7 @@ func TestMasterChunksSurviveWALReader(t *testing.T) {
 	directory := t.TempDir()
 	logger := zerolog.Nop()
 
-	writer := wal.NewFSWriter(directory, 0, &logger)
+	writer := wal.NewFSWriter(directory, 0, format.Compression{}, &logger)
 	batch := []wal.Log{wal.NewLog(1, compute.IncrCommandID, []string{"key", "60"})}
 	writer.WriteBatch(batch)
 	for _, record := range batch {
@@ -100,7 +100,7 @@ func TestMasterChunksSurviveWALReader(t *testing.T) {
 	require.Zero(t, response.SegmentOffset)
 
 	reader := wal.NewFSReader(directory, &logger)
-	logs, err := reader.ReadSegmentData(context.Background(), response.SegmentData, response.SegmentOffset == 0)
+	logs, err := reader.ReadSegmentData(context.Background(), response.SegmentData, response.SegmentOffset == 0, 0)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 	require.Equal(t, uint64(1), logs[0].LSN)

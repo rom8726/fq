@@ -24,6 +24,7 @@ import (
 	"github.com/fq-db/fq/internal/database/storage"
 	"github.com/fq-db/fq/internal/database/storage/dumper"
 	inmemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/replication"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/network"
@@ -1206,7 +1207,7 @@ func startQueryServer(
 
 func newTestWAL(directory string, stream chan<- wal.Chunk, logger *zerolog.Logger) *wal.WAL {
 	return wal.NewWAL(
-		wal.NewFSWriter(directory, 1<<20, logger),
+		wal.NewFSWriter(directory, 1<<20, format.Compression{}, logger),
 		wal.NewFSReader(directory, logger),
 		stream,
 		time.Millisecond,

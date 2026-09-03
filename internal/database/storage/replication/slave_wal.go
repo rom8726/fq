@@ -304,7 +304,7 @@ func (s *Slave) applyDataToEngine(
 		return nil
 	}
 
-	logs, err := s.walReader.ReadSegmentData(ctx, segmentData, expectHeader)
+	logs, err := s.walReader.ReadSegmentData(ctx, segmentData, expectHeader, 0)
 	if err != nil {
 		return err
 	}

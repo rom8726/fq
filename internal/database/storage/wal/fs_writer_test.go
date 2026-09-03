@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database/compute"
+	"github.com/fq-db/fq/internal/database/storage/format"
 )
 
 const testWALDirectory = "/tmp/fq_wal_test_data"
@@ -35,7 +37,7 @@ func TestMain(m *testing.M) {
 func TestBatchWritingToWALSegment(t *testing.T) {
 	maxSegmentSize := 100 << 10
 	logger := zerolog.Nop()
-	fsWriter := NewFSWriter(testWALDirectory, maxSegmentSize, &logger)
+	fsWriter := NewFSWriter(testWALDirectory, maxSegmentSize, format.Compression{}, &logger)
 
 	originalNow := now
 	defer func() {
@@ -71,7 +73,7 @@ func TestBatchWritingToWALSegment(t *testing.T) {
 func TestWALSegmentsRotation(t *testing.T) {
 	maxSegmentSize := 10
 	logger := zerolog.Nop()
-	fsWriter := NewFSWriter(testWALDirectory, maxSegmentSize, &logger)
+	fsWriter := NewFSWriter(testWALDirectory, maxSegmentSize, format.Compression{}, &logger)
 	defer func() {
 		require.NoError(t, fsWriter.Close())
 	}()
@@ -127,7 +129,7 @@ func TestWALSegmentsRotation(t *testing.T) {
 
 func TestWALSegmentRotatesBeforeNextBatchExceedsLimit(t *testing.T) {
 	logger := zerolog.Nop()
-	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, format.Compression{}, &logger)
 	defer func() {
 		require.NoError(t, fsWriter.Close())
 	}()
@@ -174,7 +176,7 @@ func TestWALSegmentRotatesBeforeNextBatchExceedsLimit(t *testing.T) {
 
 func TestWALSegmentNamesRemainUniqueWithinSameMillisecond(t *testing.T) {
 	logger := zerolog.Nop()
-	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, format.Compression{}, &logger)
 	defer func() {
 		require.NoError(t, fsWriter.Close())
 	}()
@@ -216,7 +218,7 @@ func TestWALSegmentNamesRemainUniqueWithinSameMillisecond(t *testing.T) {
 
 func TestWALSegmentSyncIsSkippedWhenAlreadySynced(t *testing.T) {
 	logger := zerolog.Nop()
-	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, format.Compression{}, &logger)
 	defer func() {
 		require.NoError(t, fsWriter.Close())
 	}()
@@ -234,7 +236,7 @@ func TestWALSegmentSyncIsSkippedWhenAlreadySynced(t *testing.T) {
 
 func TestWALSegmentCloseIsIdempotentAndRejectsWrites(t *testing.T) {
 	logger := zerolog.Nop()
-	fsWriter := NewFSWriter(t.TempDir(), 100<<10, &logger)
+	fsWriter := NewFSWriter(t.TempDir(), 100<<10, format.Compression{}, &logger)
 
 	originalNow := now
 	now = func() time.Time {
@@ -270,7 +272,7 @@ func TestWALSegmentCloseIsIdempotentAndRejectsWrites(t *testing.T) {
 func TestWALSegmentTruncateRemovesFilesAndAllowsNewWrites(t *testing.T) {
 	logger := zerolog.Nop()
 	dir := t.TempDir()
-	fsWriter := NewFSWriter(dir, 100<<10, &logger)
+	fsWriter := NewFSWriter(dir, 100<<10, format.Compression{}, &logger)
 	defer func() {
 		require.NoError(t, fsWriter.Close())
 	}()
@@ -315,4 +317,108 @@ func TestWALSegmentTruncateRemovesFilesAndAllowsNewWrites(t *testing.T) {
 
 	_, err = os.Stat(filepath.Join(dir, "wal_21000.log"))
 	require.NoError(t, err)
+}
+
+func TestCompressedSegmentRoundTrip(t *testing.T) {
+	directory := filepath.Join(testWALDirectory, "compressed_round_trip")
+	require.NoError(t, os.MkdirAll(directory, os.ModePerm))
+
+	logger := zerolog.Nop()
+	compression := format.Compression{Codec: format.CodecZstd, MinFrameSize: 0}
+	writer := NewFSWriter(directory, 100<<10, compression, &logger)
+
+	batch := []Log{
+		NewLog(1, compute.IncrCommandID, []string{"key_1", "60"}),
+		NewLog(2, compute.IncrCommandID, []string{"key_2", "60"}),
+	}
+	writer.WriteBatch(batch)
+	require.NoError(t, writer.Close())
+
+	paths, err := walSegmentPaths(directory)
+	require.NoError(t, err)
+	require.Len(t, paths, 1)
+
+	version, err := SegmentFormatVersion(paths[0])
+	require.NoError(t, err)
+	require.Equal(t, segmentFormatVersionCompressed, version)
+
+	reader := NewFSReader(directory, &logger)
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	require.Equal(t, uint64(1), logs[0].LSN)
+	require.Equal(t, uint64(2), logs[1].LSN)
+}
+
+func TestUncompressedWriterKeepsFormatVersionOne(t *testing.T) {
+	directory := filepath.Join(testWALDirectory, "raw_version")
+	require.NoError(t, os.MkdirAll(directory, os.ModePerm))
+
+	logger := zerolog.Nop()
+	writer := NewFSWriter(directory, 100<<10, format.Compression{}, &logger)
+
+	writer.WriteBatch([]Log{NewLog(1, compute.IncrCommandID, []string{"key_1", "60"})})
+	require.NoError(t, writer.Close())
+
+	paths, err := walSegmentPaths(directory)
+	require.NoError(t, err)
+	require.Len(t, paths, 1)
+
+	version, err := SegmentFormatVersion(paths[0])
+	require.NoError(t, err)
+	require.Equal(t, segmentFormatVersionRaw, version)
+}
+
+func TestReaderHandlesMixedSegmentVersions(t *testing.T) {
+	directory := filepath.Join(testWALDirectory, "mixed_versions")
+	require.NoError(t, os.MkdirAll(directory, os.ModePerm))
+
+	logger := zerolog.Nop()
+
+	rawWriter := NewFSWriter(directory, 100<<10, format.Compression{}, &logger)
+	rawWriter.WriteBatch([]Log{NewLog(1, compute.IncrCommandID, []string{"key_1", "60"})})
+	require.NoError(t, rawWriter.Close())
+
+	compressedWriter := NewFSWriter(
+		directory,
+		100<<10,
+		format.Compression{Codec: format.CodecS2, MinFrameSize: 0},
+		&logger,
+	)
+	compressedWriter.WriteBatch([]Log{NewLog(2, compute.IncrCommandID, []string{"key_2", "60"})})
+	require.NoError(t, compressedWriter.Close())
+
+	reader := NewFSReader(directory, &logger)
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	require.Equal(t, uint64(1), logs[0].LSN)
+	require.Equal(t, uint64(2), logs[1].LSN)
+}
+
+func TestCompressedSegmentTornTailIsTruncated(t *testing.T) {
+	directory := filepath.Join(testWALDirectory, "torn_tail")
+	require.NoError(t, os.MkdirAll(directory, os.ModePerm))
+
+	logger := zerolog.Nop()
+	compression := format.Compression{Codec: format.CodecS2, MinFrameSize: 0}
+	writer := NewFSWriter(directory, 100<<10, compression, &logger)
+
+	writer.WriteBatch([]Log{NewLog(1, compute.IncrCommandID, []string{"key_1", "60"})})
+	writer.WriteBatch([]Log{NewLog(2, compute.IncrCommandID, []string{"key_2", "60"})})
+	require.NoError(t, writer.Close())
+
+	paths, err := walSegmentPaths(directory)
+	require.NoError(t, err)
+	require.Len(t, paths, 1)
+
+	info, err := os.Stat(paths[0])
+	require.NoError(t, err)
+	require.NoError(t, os.Truncate(paths[0], info.Size()-2))
+
+	reader := NewFSReader(directory, &logger)
+	logs, err := reader.ReadLogs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	require.Equal(t, uint64(1), logs[0].LSN)
 }

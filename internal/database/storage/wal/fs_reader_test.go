@@ -153,7 +153,9 @@ func testLogData(lsn uint64) *LogData {
 func mustEncodeLogs(t *testing.T, logs []*LogData) []byte {
 	t.Helper()
 
-	data, err := encodeLogs(logs)
+	writer := NewFSWriter("", 0, format.Compression{}, nil)
+
+	data, err := writer.encodeLogs(logs)
 	require.NoError(t, err)
 
 	return data
@@ -162,7 +164,7 @@ func mustEncodeLogs(t *testing.T, logs []*LogData) []byte {
 func writeWALSegment(t *testing.T, dir, name string, data []byte) string {
 	t.Helper()
 
-	return writeRawWALSegment(t, dir, name, append(segmentHeader(), data...))
+	return writeRawWALSegment(t, dir, name, append(segmentHeader(segmentFormatVersionRaw), data...))
 }
 
 func writeRawWALSegment(t *testing.T, dir, name string, data []byte) string {
@@ -187,7 +189,7 @@ func TestReadLogsRejectsChecksumMismatchInLastSegment(t *testing.T) {
 
 	dir := t.TempDir()
 	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
-	segment := formattest.CorruptPayload(t, append(segmentHeader(), batch...), format.HeaderSize)
+	segment := formattest.CorruptPayload(t, append(segmentHeader(segmentFormatVersionRaw), batch...), format.HeaderSize)
 	writeRawWALSegment(t, dir, "wal_1000.log", segment)
 
 	logger := zerolog.Nop()
@@ -202,7 +204,7 @@ func TestReadLogsRejectsChecksumMismatchInMiddleSegment(t *testing.T) {
 
 	dir := t.TempDir()
 	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
-	segment := formattest.CorruptPayload(t, append(segmentHeader(), batch...), format.HeaderSize)
+	segment := formattest.CorruptPayload(t, append(segmentHeader(segmentFormatVersionRaw), batch...), format.HeaderSize)
 	corruptedPath := writeRawWALSegment(t, dir, "wal_1000.log", segment)
 	writeWALSegment(t, dir, "wal_2000.log", mustEncodeLogs(t, []*LogData{testLogData(2)}))
 
@@ -222,7 +224,7 @@ func TestReadLogsRejectsForeignMagic(t *testing.T) {
 
 	dir := t.TempDir()
 	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
-	segment := formattest.CorruptMagic(t, append(segmentHeader(), batch...))
+	segment := formattest.CorruptMagic(t, append(segmentHeader(segmentFormatVersionRaw), batch...))
 	writeRawWALSegment(t, dir, "wal_1000.log", segment)
 
 	logger := zerolog.Nop()
@@ -237,7 +239,7 @@ func TestReadLogsRejectsUnknownFormatVersion(t *testing.T) {
 
 	dir := t.TempDir()
 	batch := mustEncodeLogs(t, []*LogData{testLogData(1)})
-	segment := formattest.SetVersion(t, append(segmentHeader(), batch...), segmentFormatVersion+1)
+	segment := formattest.SetVersion(t, append(segmentHeader(segmentFormatVersionRaw), batch...), segmentFormatVersionCompressed+1)
 	writeRawWALSegment(t, dir, "wal_1000.log", segment)
 
 	logger := zerolog.Nop()
@@ -273,6 +275,7 @@ func TestReadSegmentDataAcceptsChunkWithoutHeader(t *testing.T) {
 		context.Background(),
 		mustEncodeLogs(t, []*LogData{testLogData(5)}),
 		false,
+		0,
 	)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
@@ -285,9 +288,9 @@ func TestReadSegmentDataAcceptsChunkWithHeader(t *testing.T) {
 	logger := zerolog.Nop()
 	reader := NewFSReader(t.TempDir(), &logger)
 
-	chunk := append(segmentHeader(), mustEncodeLogs(t, []*LogData{testLogData(6)})...)
+	chunk := append(segmentHeader(segmentFormatVersionRaw), mustEncodeLogs(t, []*LogData{testLogData(6)})...)
 
-	logs, err := reader.ReadSegmentData(context.Background(), chunk, true)
+	logs, err := reader.ReadSegmentData(context.Background(), chunk, true, 0)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 	require.Equal(t, uint64(6), logs[0].LSN)

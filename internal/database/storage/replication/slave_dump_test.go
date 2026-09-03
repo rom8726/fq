@@ -126,7 +126,7 @@ func (c *staticDumpClient) Close() error {
 
 type testWALReader struct{}
 
-func (r testWALReader) ReadSegmentData(context.Context, []byte, bool) ([]*wal.LogData, error) {
+func (r testWALReader) ReadSegmentData(context.Context, []byte, bool, uint16) ([]*wal.LogData, error) {
 	return nil, nil
 }
 
