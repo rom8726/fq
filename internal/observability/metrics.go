@@ -7,6 +7,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const compressionTargetLabel = "target"
+
 var (
 	tcpActiveConnections = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "fq_tcp_active_connections",
@@ -66,6 +68,24 @@ var (
 		Name: "fq_protocol_errors_total",
 		Help: "Total number of error responses by protocol error code.",
 	}, []string{"code"})
+
+	compressionInputBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "fq_compression_input_bytes_total",
+		Help: "Total number of bytes submitted to compression.",
+	}, []string{compressionTargetLabel})
+	compressionOutputBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "fq_compression_output_bytes_total",
+		Help: "Total number of bytes produced by compression.",
+	}, []string{compressionTargetLabel})
+	compressionDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "fq_compression_duration_seconds",
+		Help:    "Compression and decompression duration in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{compressionTargetLabel, "op"})
+	replicationCompressionRejectedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "fq_replication_compression_rejected_total",
+		Help: "Total number of WAL chunks not served because the replica lacks the compression codec.",
+	})
 )
 
 func init() {
@@ -83,7 +103,24 @@ func init() {
 		replicationKnownReplicas,
 		authFailuresTotal,
 		protocolErrorsTotal,
+		compressionInputBytes,
+		compressionOutputBytes,
+		compressionDuration,
+		replicationCompressionRejectedTotal,
 	)
+}
+
+func ObserveCompression(target string, input, output int) {
+	compressionInputBytes.WithLabelValues(target).Add(float64(input))
+	compressionOutputBytes.WithLabelValues(target).Add(float64(output))
+}
+
+func ObserveCompressionDuration(target, op string, duration time.Duration) {
+	compressionDuration.WithLabelValues(target, op).Observe(duration.Seconds())
+}
+
+func IncReplicationCompressionRejected() {
+	replicationCompressionRejectedTotal.Inc()
 }
 
 func IncAuthFailures(port string) {

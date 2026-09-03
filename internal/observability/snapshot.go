@@ -14,6 +14,10 @@ type Snapshot struct {
 	ReplicationReconnectTotal         float64
 	ReplicationReconnectAttemptsTotal float64
 	ReplicationKnownReplicas          float64
+
+	DumpCompressionInputBytes           float64
+	DumpCompressionOutputBytes          float64
+	ReplicationCompressionRejectedTotal float64
 }
 
 func GetSnapshot() (Snapshot, error) {
@@ -41,10 +45,28 @@ func GetSnapshot() (Snapshot, error) {
 			snap.ReplicationReconnectAttemptsTotal = firstCounterValue(mf)
 		case "fq_replication_known_replicas":
 			snap.ReplicationKnownReplicas = firstGaugeValue(mf)
+		case "fq_compression_input_bytes_total":
+			snap.DumpCompressionInputBytes = labeledCounterValue(mf, "target", "dump")
+		case "fq_compression_output_bytes_total":
+			snap.DumpCompressionOutputBytes = labeledCounterValue(mf, "target", "dump")
+		case "fq_replication_compression_rejected_total":
+			snap.ReplicationCompressionRejectedTotal = firstCounterValue(mf)
 		}
 	}
 
 	return snap, nil
+}
+
+func labeledCounterValue(mf *dto.MetricFamily, label, value string) float64 {
+	for _, metric := range mf.GetMetric() {
+		for _, pair := range metric.GetLabel() {
+			if pair.GetName() == label && pair.GetValue() == value {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+
+	return 0
 }
 
 func firstGaugeValue(mf *dto.MetricFamily) float64 {

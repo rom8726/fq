@@ -83,3 +83,39 @@ func TestGetSnapshotReflectsMetricValues(t *testing.T) {
 	require.Equal(t, float64(2), snap.ReplicationKnownReplicas)
 	require.GreaterOrEqual(t, snap.TCPActiveConnections, float64(0))
 }
+
+func TestObserveCompressionCountsBytes(t *testing.T) {
+	compressionInputBytes.Reset()
+	compressionOutputBytes.Reset()
+
+	ObserveCompression("wal", 1000, 250)
+
+	require.InDelta(t, 1000, testutil.ToFloat64(compressionInputBytes.WithLabelValues("wal")), 0.001)
+	require.InDelta(t, 250, testutil.ToFloat64(compressionOutputBytes.WithLabelValues("wal")), 0.001)
+}
+
+func TestIncReplicationCompressionRejected(t *testing.T) {
+	before := testutil.ToFloat64(replicationCompressionRejectedTotal)
+
+	IncReplicationCompressionRejected()
+
+	require.InDelta(t, before+1, testutil.ToFloat64(replicationCompressionRejectedTotal), 0.001)
+}
+
+func TestObserveCompressionDurationDoesNotPanic(t *testing.T) {
+	require.NotPanics(t, func() {
+		ObserveCompressionDuration("dump", "compress", 5*time.Millisecond)
+	})
+}
+
+func TestSnapshotReportsCompressionCounters(t *testing.T) {
+	compressionInputBytes.Reset()
+	compressionOutputBytes.Reset()
+
+	ObserveCompression("dump", 900, 300)
+
+	snap, err := GetSnapshot()
+	require.NoError(t, err)
+	require.InDelta(t, 900, snap.DumpCompressionInputBytes, 0.001)
+	require.InDelta(t, 300, snap.DumpCompressionOutputBytes, 0.001)
+}

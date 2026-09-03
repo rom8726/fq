@@ -60,9 +60,11 @@ func (i *Inspector) Report(_ context.Context, sectionArg string) ([]byte, error)
 		snap := i.snapshot()
 		return marshal(&Report{Section: "wal", TS: now(), WAL: i.buildWAL(snap)})
 	case sectionDump:
-		return marshal(&Report{Section: "dump", TS: now(), Dump: i.buildDump()})
+		snap := i.snapshot()
+		return marshal(&Report{Section: "dump", TS: now(), Dump: i.buildDump(snap)})
 	case sectionRepl:
-		return marshal(&Report{Section: "repl", TS: now(), Repl: i.buildRepl(false)})
+		snap := i.snapshot()
+		return marshal(&Report{Section: "repl", TS: now(), Repl: i.buildRepl(snap, false)})
 	case sectionEngine:
 		return marshal(&Report{Section: "engine", TS: now(), Engine: i.buildEngine(true)})
 	case sectionStreams:
@@ -81,8 +83,8 @@ func (i *Inspector) buildReport(sectionName string, truncate bool) *Report {
 		Instance:    i.buildInstance(snap),
 		Persistence: i.buildPersistence(),
 		WAL:         i.buildWAL(snap),
-		Dump:        i.buildDump(),
-		Repl:        i.buildRepl(truncate),
+		Dump:        i.buildDump(snap),
+		Repl:        i.buildRepl(snap, truncate),
 		Engine:      i.buildEngine(!truncate),
 		Streams:     i.buildStreams(),
 	}

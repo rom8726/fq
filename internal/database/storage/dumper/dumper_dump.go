@@ -11,6 +11,7 @@ import (
 
 	"github.com/fq-db/fq/internal/database"
 	"github.com/fq-db/fq/internal/database/storage/format"
+	"github.com/fq-db/fq/internal/observability"
 )
 
 func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
@@ -180,7 +181,11 @@ func (d *Dumper) writeBatch(f *os.File, elems []database.DumpElem) error {
 
 	payload := buffer.Bytes()
 	if d.formatVersion() == dumpFormatVersionCompressed {
-		payload = format.EncodePayload(nil, payload, d.compression)
+		raw := payload
+		startedAt := time.Now()
+		payload = format.EncodePayload(nil, raw, d.compression)
+		observability.ObserveCompressionDuration("dump", "compress", time.Since(startedAt))
+		observability.ObserveCompression("dump", len(raw), len(payload))
 	}
 
 	if err := format.CheckPayloadSize(payload, dumpMaxFrameSize); err != nil {

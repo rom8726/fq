@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/fq-db/fq/internal/database/storage/format"
+	"github.com/fq-db/fq/internal/observability"
 )
 
 var now = time.Now
@@ -162,7 +163,10 @@ func (w *FSWriter) encodeLogs(logs []*LogData) ([]byte, error) {
 
 	payload := data
 	if w.formatVersion() == segmentFormatVersionCompressed {
+		startedAt := now()
 		payload = format.EncodePayload(nil, data, w.compression)
+		observability.ObserveCompressionDuration("wal", "compress", now().Sub(startedAt))
+		observability.ObserveCompression("wal", len(data), len(payload))
 	}
 
 	buff := bytesBufferPool.Get()

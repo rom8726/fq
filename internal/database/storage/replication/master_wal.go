@@ -116,6 +116,7 @@ func (m *Master) synchronizeWALSegment(
 	}
 
 	if version > 1 && !SupportsCodec(codecs, m.compression.SegmentCodec) {
+		observability.IncReplicationCompressionRejected()
 		m.logger.Warn().
 			Str("segment_name", segmentName).
 			Str("codec", m.compression.SegmentCodec.String()).
@@ -145,6 +146,7 @@ func (m *Master) synchronizeWALSegment(
 		})
 
 		if format.PayloadCodec(encoded) != format.CodecNone {
+			observability.ObserveCompression("replication", len(data), len(encoded))
 			data = encoded
 			chunkCodec = m.compression.WireCodec
 		}
