@@ -1,7 +1,9 @@
 package replication
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"errors"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/security"
 )
@@ -205,4 +208,41 @@ func requireClosed(t *testing.T, ch <-chan struct{}) {
 	case <-time.After(time.Second):
 		t.Fatal("channel was not closed")
 	}
+}
+
+func TestSlaveDecodesCompressedDumpBatch(t *testing.T) {
+	t.Parallel()
+
+	elems := []database.DumpElem{{Tx: 7}}
+
+	var buffer bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&buffer).Encode(elems))
+
+	payload := format.EncodePayload(nil, buffer.Bytes(), format.Compression{Codec: format.CodecS2, MinFrameSize: 0})
+
+	decoded, err := decodeDumpBatch(DumpResponse{
+		BatchCodec: uint8(format.PayloadCodec(payload)),
+		BatchData:  payload,
+	})
+	require.NoError(t, err)
+	require.Equal(t, elems, decoded)
+}
+
+func TestSlaveRejectsDumpBatchCodecMismatch(t *testing.T) {
+	t.Parallel()
+
+	payload := format.EncodePayload(nil, []byte("x"), format.Compression{Codec: format.CodecNone})
+
+	_, err := decodeDumpBatch(DumpResponse{BatchCodec: uint8(format.CodecZstd), BatchData: payload})
+	require.Error(t, err)
+}
+
+func TestSlaveFallsBackToSegmentData(t *testing.T) {
+	t.Parallel()
+
+	elems := []database.DumpElem{{Tx: 3}}
+
+	decoded, err := decodeDumpBatch(DumpResponse{SegmentData: elems})
+	require.NoError(t, err)
+	require.Equal(t, elems, decoded)
 }

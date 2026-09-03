@@ -21,20 +21,20 @@ type readSession struct {
 	lastAccess    time.Time
 }
 
-func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, error) {
+func (d *Dumper) nextFramePayload(sessionUUID string) (payload []byte, version uint16, ok bool, err error) {
 	d.sessMu.Lock()
 	if d.activeSessions >= d.maxSessions {
 		if _, exists := d.sessions[sessionUUID]; !exists {
 			d.sessMu.Unlock()
 
-			return nil, false, fmt.Errorf("maximum number of dump sessions (%d) reached", d.maxSessions)
+			return nil, 0, false, fmt.Errorf("maximum number of dump sessions (%d) reached", d.maxSessions)
 		}
 	}
 	d.sessMu.Unlock()
 
 	sess, err := d.getSession(sessionUUID)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 
 	d.sessMu.Lock()
@@ -42,7 +42,7 @@ func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, err
 		d.sessMu.Unlock()
 		d.CloseReadSession(sessionUUID)
 
-		return nil, false, database.ErrDumpReadSessionClosed
+		return nil, 0, false, database.ErrDumpReadSessionClosed
 	}
 
 	sess.lastAccess = time.Now()
@@ -51,7 +51,7 @@ func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, err
 		d.sessMu.Unlock()
 		d.CloseReadSession(sessionUUID)
 
-		return nil, false, nil
+		return nil, 0, false, nil
 	}
 
 	payload, rest, err := format.NextFrame(sess.data[sess.offset:], dumpMaxFrameSize)
@@ -60,13 +60,22 @@ func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, err
 		d.sessMu.Unlock()
 		d.CloseReadSession(sessionUUID)
 
-		return nil, false, fmt.Errorf("dump batch at offset %d: %w", frameOffset, err)
+		return nil, 0, false, fmt.Errorf("dump batch at offset %d: %w", frameOffset, err)
 	}
 
 	batchData := append([]byte(nil), payload...)
 	sessionVersion := sess.formatVersion
 	sess.offset = len(sess.data) - len(rest)
 	d.sessMu.Unlock()
+
+	return batchData, sessionVersion, true, nil
+}
+
+func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, error) {
+	batchData, sessionVersion, ok, err := d.nextFramePayload(sessionUUID)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
 
 	decoded, err := format.DecodePayload(nil, batchData, sessionVersion, dumpMaxFrameSize)
 	if err != nil {
@@ -83,6 +92,31 @@ func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, err
 	}
 
 	return batch, true, nil
+}
+
+func (d *Dumper) GetNextRawBatch(
+	sessionUUID string,
+	want format.CodecID,
+) (codec format.CodecID, batch []byte, ok bool, err error) {
+	payload, sessionVersion, ok, err := d.nextFramePayload(sessionUUID)
+	if err != nil || !ok {
+		return format.CodecNone, nil, ok, err
+	}
+
+	if sessionVersion >= dumpFormatVersionCompressed && format.PayloadCodec(payload) == want {
+		return want, payload, true, nil
+	}
+
+	raw, err := format.DecodePayload(nil, payload, sessionVersion, dumpMaxFrameSize)
+	if err != nil {
+		d.CloseReadSession(sessionUUID)
+
+		return format.CodecNone, nil, false, fmt.Errorf("decode dump payload: %w", err)
+	}
+
+	encoded := format.EncodePayload(nil, raw, format.Compression{Codec: want, MinFrameSize: 0})
+
+	return format.PayloadCodec(encoded), encoded, true, nil
 }
 
 func (d *Dumper) CloseReadSession(sessionUUID string) {
