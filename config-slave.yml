@@ -34,6 +34,11 @@ engine:
 dump:
   interval: 1m
   directory: ./fq_data-slave/
+#compression:
+#  wal: none          # none|s2|zstd
+#  dump: none         # none|s2|zstd
+#  replication: none  # none|s2|zstd
+#  min_frame_size: 512
 replication:
   replica_type: slave
   replica_id: "replica-1"

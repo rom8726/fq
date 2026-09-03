@@ -28,9 +28,10 @@ starts with an 8-byte header:
 ```
 
 Magic is `FQWL` for a WAL segment, `FQDP` for a dump, and `FQMT` for an LSN sidecar
-(`wal_*.log.meta`, `last_flushdb_lsn.meta`). Each format is versioned independently,
-and the current version of all three is 1. The reserved bytes are written as zeros and
-ignored on read.
+(`wal_*.log.meta`, `last_flushdb_lsn.meta`). Each format is versioned independently.
+Sidecars are always version 1. WAL segments and dumps are version 1 when their payloads
+are stored as-is and version 2 when payloads carry a compression codec prefix. The
+reserved bytes are written as zeros and ignored on read.
 
 The header is followed by a stream of frames:
 
@@ -56,6 +57,26 @@ Reaction to a damaged file:
 
 A zero-length WAL segment is treated as an empty segment and skipped: it means the
 process died between creating the file and writing its header.
+
+### Compression and format versions
+
+In a version 2 file the frame payload is `[codec 1B][body]`. Codec `0` means the body is
+the raw payload; codec `1` is s2 and codec `2` is zstd, and for those the body is
+`[uncompressed size uvarint][compressed bytes]`. The frame header is unchanged, and `len`
+and the CRC still describe the stored bytes, so frame scanning, torn-tail truncation, and
+replication chunking behave exactly as they do for version 1 files.
+
+Readers accept both versions. A file is written as version 2 only while the matching
+[`compression`](config.md#compression) codec is enabled, so:
+
+- turning a codec on affects files created from that point (WAL after the next segment
+  rotation, dumps at the next snapshot); existing files keep working;
+- turning it back off returns writes to version 1, and the version 2 files already on disk
+  are still read by the same build.
+
+Downgrading to a build that predates compression is only safe once no version 2 files
+remain: such a build rejects the unknown format version at startup. Clear or regenerate
+the WAL and dump directories first.
 
 !!! warning "Upgrade note"
     Files written by builds without format headers are not readable. Clear the WAL

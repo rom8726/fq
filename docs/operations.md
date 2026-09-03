@@ -283,6 +283,36 @@ not start without a secret configured. For what "async" actually means for durab
 and read staleness — and why there is no promote-to-master — see
 [Consistency model](consistency.md#system-architecture).
 
+## Enabling compression
+
+Compression of WAL segments, dumps, and replication traffic is off by default and
+configured in the [`compression`](config.md#compression) section. Roll it out in this
+order:
+
+1. **Upgrade every replica** to a build that supports compression. From then on each
+   replica advertises the codecs it understands in its replication requests.
+2. **Upgrade the master**, leaving `compression` unset. Nothing changes on disk or on
+   the wire.
+3. **Enable `compression.dump`.** Safe with a mixed cluster: the master reads its own
+   dump and still serves plain batches to a replica that advertises no codec.
+4. **Enable `compression.replication`** if you want to shrink replication traffic while
+   WAL segments stay uncompressed on disk.
+5. **Enable `compression.wal` last.** New segments are written in format version 2 after
+   the next rotation; existing segments keep replicating normally.
+
+!!! warning "Upgrade replicas before enabling `compression.wal`"
+    A replica that does not advertise the master's WAL codec cannot read compressed
+    segments, and the master cannot rewrite them without breaking the byte offsets the
+    replication cursor is built on. The master answers such a replica with error code
+    `5004` and increments `fq_replication_compression_rejected_total`; that replica stops
+    advancing and its lag grows until it is upgraded. `INSPECT repl` reports the same
+    condition as the `compression_replica_unsupported` warning.
+
+To roll back, set the codec to `none`: writes return to format version 1 and the files
+already written stay readable. Rolling back to a build without compression support needs
+the version 2 files gone first — see
+[Persistence](persistence.md#compression-and-format-versions).
+
 ## Monitoring
 
 Health and metrics endpoints are enabled when `observability.address` is set:
@@ -331,6 +361,13 @@ Available metrics:
   attempts on either port
 - `fq_protocol_errors_total{code}` — error responses by numeric protocol error code,
   see [Wire protocol](protocol.md#error-codes)
+- `fq_compression_input_bytes_total{target="wal"|"dump"|"replication"}` and
+  `fq_compression_output_bytes_total{...}` — bytes before and after compression; their
+  ratio is the compression ratio per target
+- `fq_compression_duration_seconds{target,op="compress"|"decompress"}`
+- `fq_replication_compression_rejected_total` — WAL chunks the master refused to serve
+  because the replica does not support the segment codec; any non-zero value means a
+  replica is stuck, see [Enabling compression](#enabling-compression)
 
 For an ad hoc, non-Prometheus look at instance state, use `INSPECT` — see
 [Commands](commands.md#diagnostics).
