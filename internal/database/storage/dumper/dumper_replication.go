@@ -13,11 +13,12 @@ import (
 )
 
 type readSession struct {
-	data        []byte
-	offset      int
-	closed      bool
-	dumpVersion uint64
-	lastAccess  time.Time
+	data          []byte
+	offset        int
+	closed        bool
+	formatVersion uint16
+	dumpVersion   uint64
+	lastAccess    time.Time
 }
 
 func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, error) {
@@ -63,11 +64,19 @@ func (d *Dumper) GetNextData(sessionUUID string) ([]database.DumpElem, bool, err
 	}
 
 	batchData := append([]byte(nil), payload...)
+	sessionVersion := sess.formatVersion
 	sess.offset = len(sess.data) - len(rest)
 	d.sessMu.Unlock()
 
+	decoded, err := format.DecodePayload(nil, batchData, sessionVersion, dumpMaxFrameSize)
+	if err != nil {
+		d.CloseReadSession(sessionUUID)
+
+		return nil, false, fmt.Errorf("decode dump payload: %w", err)
+	}
+
 	var batch []database.DumpElem
-	if err := gob.NewDecoder(bytes.NewReader(batchData)).Decode(&batch); err != nil {
+	if err := gob.NewDecoder(bytes.NewReader(decoded)).Decode(&batch); err != nil {
 		d.CloseReadSession(sessionUUID)
 
 		return nil, false, fmt.Errorf("decode batch: %w", err)
@@ -121,17 +130,24 @@ func (d *Dumper) getSession(sessionUUID string) (*readSession, error) {
 	}
 
 	var frames []byte
+	version := dumpFormatVersionRaw
 	if len(data) > 0 {
-		frames, err = format.ParseHeader(data, format.MagicDump, dumpFormatVersion)
+		frames, version, err = format.ParseHeaderVersions(
+			data,
+			format.MagicDump,
+			dumpFormatVersionRaw,
+			dumpFormatVersionCompressed,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("dump %s: %w", dumpPath, err)
 		}
 	}
 
 	sess = &readSession{
-		data:        frames,
-		dumpVersion: currentVersion,
-		lastAccess:  time.Now(),
+		data:          frames,
+		formatVersion: version,
+		dumpVersion:   currentVersion,
+		lastAccess:    time.Now(),
 	}
 	d.sessions[sessionUUID] = sess
 	d.activeSessions++

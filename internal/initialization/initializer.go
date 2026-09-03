@@ -70,6 +70,13 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 
 	walCompression := format.Compression{Codec: walCodec, MinFrameSize: compressionCfg.MinFrameSizeValue()}
 
+	dumpCodec, err := format.ParseCodec(compressionCfg.DumpCodec())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse dump compression codec: %w", err)
+	}
+
+	dumpCompression := format.Compression{Codec: dumpCodec, MinFrameSize: compressionCfg.MinFrameSizeValue()}
+
 	var wal *walPkg.WAL
 	if cfg.UsesWAL() {
 		wal, err = CreateWAL(cfg.WAL, walCompression, logger, walStream)
@@ -109,7 +116,7 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 		if wal != nil {
 			dumpWAL = wal
 		}
-		dumpSrv = dumper.New(dbEngine, dumpWAL, cfg.Dump.Directory)
+		dumpSrv = dumper.New(dbEngine, dumpWAL, cfg.Dump.Directory, dumpCompression)
 	}
 
 	replica, err := CreateReplica(cfg.Replication, cfg.WAL, logger, dumpSrv, walStream, dumpStream)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/format"
 )
 
 const (
@@ -29,9 +30,10 @@ type Engine interface {
 }
 
 type Dumper struct {
-	engine Engine
-	wal    WAL
-	dir    string
+	engine      Engine
+	wal         WAL
+	dir         string
+	compression format.Compression
 
 	walCleanupLSNProvider WALCleanupLSNProvider
 	walCleanupMu          sync.Mutex
@@ -54,12 +56,13 @@ type Dumper struct {
 	activeSessions int // current number of active sessions
 }
 
-func New(engine Engine, wal WAL, dir string) *Dumper {
+func New(engine Engine, wal WAL, dir string, compression format.Compression) *Dumper {
 	walCleanupCtx, walCleanupCancel := context.WithCancel(context.Background())
 	d := &Dumper{
 		engine:           engine,
 		wal:              wal,
 		dir:              dir,
+		compression:      compression,
 		sessions:         make(map[string]*readSession),
 		dumpVersion:      0,
 		sessionTTL:       30 * time.Minute, // default session TTL
@@ -86,6 +89,18 @@ func (d *Dumper) currentDumpFilePath() string {
 
 func (d *Dumper) CurrentDumpPath() string {
 	return d.currentDumpFilePath()
+}
+
+func (d *Dumper) DumpCodec() format.CodecID {
+	return d.compression.Codec
+}
+
+func (d *Dumper) formatVersion() uint16 {
+	if d.compression.Enabled() {
+		return dumpFormatVersionCompressed
+	}
+
+	return dumpFormatVersionRaw
 }
 
 func (d *Dumper) SetWALCleanupLSNProvider(provider WALCleanupLSNProvider) {

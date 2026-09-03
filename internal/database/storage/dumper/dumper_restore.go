@@ -24,7 +24,12 @@ func (d *Dumper) Restore(ctx context.Context) (database.Tx, error) {
 		return 0, fmt.Errorf("failed to read dump file: %w", err)
 	}
 
-	frames, err := format.ParseHeader(data, format.MagicDump, dumpFormatVersion)
+	frames, version, err := format.ParseHeaderVersions(
+		data,
+		format.MagicDump,
+		dumpFormatVersionRaw,
+		dumpFormatVersionCompressed,
+	)
 	if err != nil {
 		return 0, fmt.Errorf("dump %s: %w", dumpPath, err)
 	}
@@ -51,8 +56,13 @@ func (d *Dumper) Restore(ctx context.Context) (database.Tx, error) {
 			)
 		}
 
+		decoded, err := format.DecodePayload(nil, payload, version, dumpMaxFrameSize)
+		if err != nil {
+			return lastTx, fmt.Errorf("dump %s: batch #%d payload: %w", dumpPath, batchCount, err)
+		}
+
 		var batch []database.DumpElem
-		if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&batch); err != nil {
+		if err := gob.NewDecoder(bytes.NewReader(decoded)).Decode(&batch); err != nil {
 			return lastTx, fmt.Errorf("dump %s: failed to decode batch #%d: %w", dumpPath, batchCount, err)
 		}
 

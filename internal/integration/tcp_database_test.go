@@ -1014,7 +1014,7 @@ func startTestDatabaseWithDumpAndKeyIndex(
 	var dumpStore *dumper.Dumper
 	var dumpStorage storage.Dumper
 	if dumpDir != "" {
-		dumpStore = dumper.New(engine, walStore, dumpDir)
+		dumpStore = dumper.New(engine, walStore, dumpDir, format.Compression{})
 		dumpStorage = dumpStore
 	}
 	strg, err := storage.NewStorage(
@@ -1086,7 +1086,7 @@ func startTestDatabaseWithMasterReplication(t *testing.T, walDir, dumpDir, repli
 	require.NoError(t, err)
 
 	walStore := newTestWAL(walDir, walStream, &logger)
-	dumpStore := dumper.New(engine, walStore, dumpDir)
+	dumpStore := dumper.New(engine, walStore, dumpDir, format.Compression{})
 
 	strg, err := storage.NewStorage(
 		engine,
