@@ -5,6 +5,12 @@ All notable changes to fq will be documented in this file.
 This project follows semantic versioning while it is pre-1.0: minor releases may
 change behavior, and patch releases are reserved for compatible fixes.
 
+## [v0.9.1]
+
+### Added
+
+- Ensure WAL directory creation and handle missing directory creation in readLogs test.
+
 ## [v0.9.0]
 
 ### Added
