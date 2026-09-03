@@ -66,8 +66,9 @@ the raw payload; codec `1` is s2 and codec `2` is zstd, and for those the body i
 and the CRC still describe the stored bytes, so frame scanning, torn-tail truncation, and
 replication chunking behave exactly as they do for version 1 files.
 
-Readers accept both versions. A file is written as version 2 only while the matching
-[`compression`](config.md#compression) codec is enabled, so:
+Readers accept both versions. The default config enables `zstd`, so new WAL segments and
+dumps are normally written as version 2. A file is written as version 2 only while the
+matching [`compression`](config.md#compression) codec is enabled, so:
 
 - turning a codec on affects files created from that point (WAL after the next segment
   rotation, dumps at the next snapshot); existing files keep working;

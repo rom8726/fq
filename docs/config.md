@@ -121,27 +121,27 @@ dump:
 
 ## `compression`
 
-Optional. When the section is absent every codec is `none`, and fq writes exactly the
-same bytes it wrote before compression existed.
+The default config enables `zstd` for WAL, dump, and replication compression. Set any
+codec to `none` to disable compression for that target.
 
 ```yaml
 compression:
-  wal: none          # none|s2|zstd
-  dump: none         # none|s2|zstd
-  replication: none  # none|s2|zstd
+  wal: zstd          # none|s2|zstd
+  dump: zstd         # none|s2|zstd
+  replication: zstd  # none|s2|zstd
   min_frame_size: 512
 ```
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `wal` | `none`, `s2`, `zstd` | `none` | Compresses WAL batch payloads on disk |
-| `dump` | `none`, `s2`, `zstd` | `none` | Compresses dump batch payloads on disk |
-| `replication` | `none`, `s2`, `zstd` | `none` | Compresses replication payloads that are not already compressed on disk |
+| `wal` | `none`, `s2`, `zstd` | `zstd` | Compresses WAL batch payloads on disk |
+| `dump` | `none`, `s2`, `zstd` | `zstd` | Compresses dump batch payloads on disk |
+| `replication` | `none`, `s2`, `zstd` | `zstd` | Compresses replication payloads that are not already compressed on disk |
 | `min_frame_size` | int ≥ 0 | `512` | Payloads smaller than this are stored uncompressed |
 
-`s2` is the speed-first codec and is the safer choice for `wal`, which sits on the flush
-path. `zstd` compresses harder at a higher CPU cost and suits `dump`, which is written by
-a background job.
+`zstd` is the default because it gives stronger compression. `s2` is the speed-first
+codec and can be a better fit if WAL flush latency is more important than compression
+ratio.
 
 Compression never makes a payload larger: if the compressed result is not smaller than the
 input, or the input is below `min_frame_size`, the payload is stored as-is.

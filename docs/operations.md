@@ -283,16 +283,16 @@ not start without a secret configured. For what "async" actually means for durab
 and read staleness — and why there is no promote-to-master — see
 [Consistency model](consistency.md#system-architecture).
 
-## Enabling compression
+## Compression rollout
 
-Compression of WAL segments, dumps, and replication traffic is off by default and
-configured in the [`compression`](config.md#compression) section. Roll it out in this
-order:
+The default config enables `zstd` compression for WAL segments, dumps, and replication
+traffic. For a brand-new standalone node this needs no special rollout. When upgrading
+an existing replicated cluster from uncompressed WAL, roll compression out in this order:
 
 1. **Upgrade every replica** to a build that supports compression. From then on each
    replica advertises the codecs it understands in its replication requests.
-2. **Upgrade the master**, leaving `compression` unset. Nothing changes on disk or on
-   the wire.
+2. **Upgrade the master with `compression.wal: none`** if any replica is still on an old
+   build. Nothing changes on disk while WAL compression is held off.
 3. **Enable `compression.dump`.** Safe with a mixed cluster: the master reads its own
    dump and still serves plain batches to a replica that advertises no codec.
 4. **Enable `compression.replication`** if you want to shrink replication traffic while
@@ -367,7 +367,7 @@ Available metrics:
 - `fq_compression_duration_seconds{target,op="compress"|"decompress"}`
 - `fq_replication_compression_rejected_total` — WAL chunks the master refused to serve
   because the replica does not support the segment codec; any non-zero value means a
-  replica is stuck, see [Enabling compression](#enabling-compression)
+  replica is stuck, see [Compression rollout](#compression-rollout)
 
 For an ad hoc, non-Prometheus look at instance state, use `INSPECT` — see
 [Commands](commands.md#diagnostics).
