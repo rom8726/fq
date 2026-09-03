@@ -24,8 +24,29 @@ func buildWarnings(report *Report) []Warning {
 	warnings = append(warnings, streamWarnings(report.Streams)...)
 	warnings = append(warnings, dumpWarnings(report.Dump)...)
 	warnings = append(warnings, durabilityWarnings(report.Persistence, report.WAL)...)
+	warnings = append(warnings, compressionWarnings(report.WAL, report.Repl)...)
 
 	return warnings
+}
+
+func compressionWarnings(wal *WALInfo, repl *ReplInfo) []Warning {
+	if wal == nil || repl == nil || wal.Codec == nil {
+		return nil
+	}
+
+	if repl.Role != roleMaster || *wal.Codec == codecNone || repl.CompressionRejectedTotal == 0 {
+		return nil
+	}
+
+	return []Warning{{
+		Code:     "compression_replica_unsupported",
+		Severity: severityWarn,
+		Message:  "replica rejected: WAL segments are compressed with a codec the replica does not support",
+		Details: map[string]any{
+			"codec":          *wal.Codec,
+			"rejected_total": repl.CompressionRejectedTotal,
+		},
+	}}
 }
 
 func walQueueWarnings(wal *WALInfo) []Warning {

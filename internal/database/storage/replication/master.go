@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/observability"
 	"github.com/fq-db/fq/internal/protocol"
 	"github.com/fq-db/fq/internal/security"
@@ -19,12 +20,19 @@ type TCPServer interface {
 	Start(context.Context, func(context.Context, []byte) ([]byte, error)) error
 }
 
+type Compression struct {
+	SegmentCodec format.CodecID
+	WireCodec    format.CodecID
+	MinFrameSize int
+}
+
 type Master struct {
 	server       TCPServer
 	walDirectory string
 	dumpProvider DumpProvider
 	tracker      *ReplicaTracker
 	secret       security.Secret
+	compression  Compression
 	logger       *zerolog.Logger
 }
 
@@ -33,6 +41,7 @@ func NewMaster(
 	walDirectory string,
 	dumpProvider DumpProvider,
 	secret security.Secret,
+	compression Compression,
 	logger *zerolog.Logger,
 ) (*Master, error) {
 	if server == nil {
@@ -49,6 +58,7 @@ func NewMaster(
 		dumpProvider: dumpProvider,
 		tracker:      NewReplicaTracker(),
 		secret:       secret,
+		compression:  compression,
 		logger:       logger,
 	}, nil
 }
@@ -142,9 +152,9 @@ func (m *Master) Start(ctx context.Context) error {
 		}
 
 		if request.SessionUUID != "" {
-			return m.processDump(request.DumpRequest), nil
+			return m.processDump(request.DumpRequest, request.Codecs), nil
 		}
 
-		return m.processWAL(request.WALRequest), nil
+		return m.processWAL(request.WALRequest, request.Codecs), nil
 	})
 }

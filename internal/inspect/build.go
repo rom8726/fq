@@ -15,6 +15,9 @@ import (
 )
 
 const (
+	roleMaster = "master"
+	codecNone  = "none"
+
 	maxSummaryReplicas      = 5
 	minReplicaStaleInterval = 30 * time.Second
 	replicaStaleFactor      = 5
@@ -34,7 +37,7 @@ func (i *Inspector) buildInstance(snap observability.Snapshot) *InstanceInfo {
 	var replicaID *string
 	switch {
 	case i.deps.Master != nil:
-		role = "master"
+		role = roleMaster
 	case i.deps.Slave != nil:
 		role = "slave"
 		id := i.deps.Cfg.Replication.ReplicaID
@@ -81,6 +84,8 @@ func (i *Inspector) buildWAL(snap observability.Snapshot) *WALInfo {
 	info.SyncCommit = &syncCommit
 	dataDirectory := i.deps.Cfg.WAL.DataDirectory
 	info.DataDirectory = &dataDirectory
+	walCodec := i.deps.Cfg.CompressionValue().WALCodec()
+	info.Codec = &walCodec
 
 	if i.deps.Storage != nil {
 		lsn := i.deps.Storage.CurrentLSN()
@@ -122,7 +127,7 @@ func (i *Inspector) buildWAL(snap observability.Snapshot) *WALInfo {
 	return info
 }
 
-func (i *Inspector) buildDump() *DumpInfo {
+func (i *Inspector) buildDump(snap observability.Snapshot) *DumpInfo {
 	info := &DumpInfo{Enabled: i.deps.Cfg.UsesDump()}
 
 	if !info.Enabled {
@@ -133,6 +138,13 @@ func (i *Inspector) buildDump() *DumpInfo {
 	info.Directory = &directory
 	intervalSec := i.deps.Cfg.Dump.Interval.Seconds()
 	info.IntervalSec = &intervalSec
+	dumpCodec := i.deps.Cfg.CompressionValue().DumpCodec()
+	info.Codec = &dumpCodec
+
+	if dumpCodec != codecNone && snap.DumpCompressionOutputBytes > 0 {
+		ratio := snap.DumpCompressionInputBytes / snap.DumpCompressionOutputBytes
+		info.CompressionRatio = &ratio
+	}
 
 	if i.deps.Storage != nil {
 		at, duration, tx, dumpErr := i.deps.Storage.LastDump()
@@ -165,12 +177,16 @@ func (i *Inspector) buildDump() *DumpInfo {
 	return info
 }
 
-func (i *Inspector) buildRepl(truncate bool) *ReplInfo {
+func (i *Inspector) buildRepl(snap observability.Snapshot, truncate bool) *ReplInfo {
 	info := &ReplInfo{Role: "none", ProtocolVersion: int(replication.ProtocolVersion)}
+
+	replicationCodec := i.deps.Cfg.CompressionValue().ReplicationCodec()
+	info.Compression = &replicationCodec
+	info.CompressionRejectedTotal = uint64(snap.ReplicationCompressionRejectedTotal)
 
 	switch {
 	case i.deps.Master != nil:
-		info.Role = "master"
+		info.Role = roleMaster
 		info.Replicas = i.buildMasterReplicas(truncate, &info.Truncated)
 		info.KnownReplicas = len(info.Replicas)
 		if info.Truncated {

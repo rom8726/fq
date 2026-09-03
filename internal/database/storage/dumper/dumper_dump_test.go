@@ -18,7 +18,7 @@ import (
 
 func TestDumperWALCleanupUsesDumpTxWithoutProvider(t *testing.T) {
 	wal := &recordingWAL{}
-	d := New(emptyDumpEngine{}, wal, t.TempDir())
+	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
@@ -30,7 +30,7 @@ func TestDumperWALCleanupUsesDumpTxWithoutProvider(t *testing.T) {
 
 func TestDumperCreatesMissingDumpDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "missing", "dump")
-	d := New(emptyDumpEngine{}, nil, dir)
+	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
@@ -41,7 +41,7 @@ func TestDumperCreatesMissingDumpDirectory(t *testing.T) {
 
 func TestDumperWALCleanupIsCappedByReplicaAck(t *testing.T) {
 	wal := &recordingWAL{}
-	d := New(emptyDumpEngine{}, wal, t.TempDir())
+	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 	defer d.Shutdown()
 	d.SetWALCleanupLSNProvider(staticCleanupLSNProvider{lsn: 40, ok: true})
 
@@ -54,7 +54,7 @@ func TestDumperWALCleanupIsCappedByReplicaAck(t *testing.T) {
 
 func TestDumperWALCleanupUsesDumpTxWhenReplicaAckIsAhead(t *testing.T) {
 	wal := &recordingWAL{}
-	d := New(emptyDumpEngine{}, wal, t.TempDir())
+	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 	defer d.Shutdown()
 	d.SetWALCleanupLSNProvider(staticCleanupLSNProvider{lsn: 150, ok: true})
 
@@ -67,7 +67,7 @@ func TestDumperWALCleanupUsesDumpTxWhenReplicaAckIsAhead(t *testing.T) {
 
 func TestDumperWALCleanupKeepsWALWhenReplicaAckIsZero(t *testing.T) {
 	wal := &recordingWAL{}
-	d := New(emptyDumpEngine{}, wal, t.TempDir())
+	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 	defer d.Shutdown()
 	d.SetWALCleanupLSNProvider(staticCleanupLSNProvider{lsn: 0, ok: true})
 
@@ -80,7 +80,7 @@ func TestDumperWALCleanupKeepsWALWhenReplicaAckIsZero(t *testing.T) {
 
 func TestDumperDoesNotWaitForWALCleanup(t *testing.T) {
 	wal := &blockingWAL{release: make(chan struct{})}
-	d := New(emptyDumpEngine{}, wal, t.TempDir())
+	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
 	require.Eventually(t, func() bool {
@@ -94,7 +94,7 @@ func TestDumperDoesNotWaitForWALCleanup(t *testing.T) {
 
 func TestDumperShutdownCancelsRunningWALCleanup(t *testing.T) {
 	wal := &blockingWAL{release: make(chan struct{})}
-	d := New(emptyDumpEngine{}, wal, t.TempDir())
+	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
 	require.Eventually(t, func() bool {
@@ -192,7 +192,7 @@ func (p staticCleanupLSNProvider) WALCleanupLSN() (uint64, bool) {
 
 func TestDumpFileStartsWithFormatHeader(t *testing.T) {
 	dir := t.TempDir()
-	d := New(emptyDumpEngine{}, nil, dir)
+	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
@@ -200,7 +200,7 @@ func TestDumpFileStartsWithFormatHeader(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, currentDumpFileName))
 	require.NoError(t, err)
 
-	rest, err := format.ParseHeader(data, format.MagicDump, dumpFormatVersion)
+	rest, err := format.ParseHeader(data, format.MagicDump, dumpFormatVersionRaw)
 	require.NoError(t, err)
 	require.Empty(t, rest)
 }
@@ -208,7 +208,7 @@ func TestDumpFileStartsWithFormatHeader(t *testing.T) {
 func TestRestoreReadsBackWrittenElements(t *testing.T) {
 	dir := t.TempDir()
 	engine := &recordingRestoreEngine{}
-	d := New(engine, nil, dir)
+	d := New(engine, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
@@ -222,7 +222,7 @@ func TestRestoreReadsBackWrittenElements(t *testing.T) {
 func TestRestoreRejectsChecksumMismatch(t *testing.T) {
 	dir := t.TempDir()
 	engine := &recordingRestoreEngine{}
-	d := New(engine, nil, dir)
+	d := New(engine, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
@@ -239,7 +239,7 @@ func TestRestoreRejectsChecksumMismatch(t *testing.T) {
 
 func TestRestoreRejectsForeignMagic(t *testing.T) {
 	dir := t.TempDir()
-	d := New(emptyDumpEngine{}, nil, dir)
+	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
@@ -255,7 +255,7 @@ func TestRestoreRejectsForeignMagic(t *testing.T) {
 
 func TestRestoreRejectsUnknownFormatVersion(t *testing.T) {
 	dir := t.TempDir()
-	d := New(emptyDumpEngine{}, nil, dir)
+	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
@@ -263,7 +263,7 @@ func TestRestoreRejectsUnknownFormatVersion(t *testing.T) {
 	dumpPath := filepath.Join(dir, currentDumpFileName)
 	data, err := os.ReadFile(dumpPath)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(dumpPath, formattest.SetVersion(t, data, dumpFormatVersion+1), 0o600))
+	require.NoError(t, os.WriteFile(dumpPath, formattest.SetVersion(t, data, dumpFormatVersionCompressed+1), 0o600))
 
 	_, err = d.Restore(context.Background())
 	require.ErrorIs(t, err, format.ErrUnsupportedVersion)
@@ -271,7 +271,7 @@ func TestRestoreRejectsUnknownFormatVersion(t *testing.T) {
 
 func TestRestoreRejectsEmptyDumpFile(t *testing.T) {
 	dir := t.TempDir()
-	d := New(emptyDumpEngine{}, nil, dir)
+	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, currentDumpFileName), nil, 0o600))
@@ -281,7 +281,7 @@ func TestRestoreRejectsEmptyDumpFile(t *testing.T) {
 }
 
 func TestRestoreReturnsZeroWhenDumpIsMissing(t *testing.T) {
-	d := New(emptyDumpEngine{}, nil, t.TempDir())
+	d := New(emptyDumpEngine{}, nil, t.TempDir(), format.Compression{})
 	defer d.Shutdown()
 
 	tx, err := d.Restore(context.Background())
@@ -292,7 +292,7 @@ func TestRestoreReturnsZeroWhenDumpIsMissing(t *testing.T) {
 func TestGetNextDataRejectsChecksumMismatch(t *testing.T) {
 	dir := t.TempDir()
 	engine := &recordingRestoreEngine{}
-	d := New(engine, nil, dir)
+	d := New(engine, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
 	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
@@ -327,4 +327,54 @@ func (e *recordingRestoreEngine) RestoreDumpElem(_ context.Context, elem databas
 	e.restored = append(e.restored, elem)
 
 	return nil
+}
+
+func TestCompressedDumpRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	compression := format.Compression{Codec: format.CodecZstd, MinFrameSize: 0}
+	d := New(&recordingRestoreEngine{}, nil, dir, compression)
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(10)))
+
+	data, err := os.ReadFile(filepath.Join(dir, currentDumpFileName))
+	require.NoError(t, err)
+
+	_, version, err := format.ParseHeaderVersions(
+		data,
+		format.MagicDump,
+		dumpFormatVersionRaw,
+		dumpFormatVersionCompressed,
+	)
+	require.NoError(t, err)
+	require.Equal(t, dumpFormatVersionCompressed, version)
+
+	engine := &recordingRestoreEngine{}
+	reader := New(engine, nil, dir, format.Compression{})
+	defer reader.Shutdown()
+
+	lastTx, err := reader.Restore(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, database.Tx(1), lastTx)
+	require.Len(t, engine.restored, 1)
+}
+
+func TestUncompressedDumpKeepsFormatVersionOne(t *testing.T) {
+	dir := t.TempDir()
+	d := New(&recordingRestoreEngine{}, nil, dir, format.Compression{})
+	defer d.Shutdown()
+
+	require.NoError(t, d.Dump(context.Background(), database.Tx(3)))
+
+	data, err := os.ReadFile(filepath.Join(dir, currentDumpFileName))
+	require.NoError(t, err)
+
+	_, version, err := format.ParseHeaderVersions(
+		data,
+		format.MagicDump,
+		dumpFormatVersionRaw,
+		dumpFormatVersionCompressed,
+	)
+	require.NoError(t, err)
+	require.Equal(t, dumpFormatVersionRaw, version)
 }

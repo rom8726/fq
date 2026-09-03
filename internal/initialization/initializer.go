@@ -16,6 +16,7 @@ import (
 	"github.com/fq-db/fq/internal/database/compute"
 	"github.com/fq-db/fq/internal/database/storage"
 	"github.com/fq-db/fq/internal/database/storage/dumper"
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/replication"
 	walPkg "github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/inspect"
@@ -60,10 +61,25 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 	walStream := make(chan walPkg.Chunk, 1)
 	dumpStream := make(chan database.DumpChunk, 1)
 
+	compressionCfg := cfg.CompressionValue()
+
+	walCodec, err := format.ParseCodec(compressionCfg.WALCodec())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse wal compression codec: %w", err)
+	}
+
+	walCompression := format.Compression{Codec: walCodec, MinFrameSize: compressionCfg.MinFrameSizeValue()}
+
+	dumpCodec, err := format.ParseCodec(compressionCfg.DumpCodec())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse dump compression codec: %w", err)
+	}
+
+	dumpCompression := format.Compression{Codec: dumpCodec, MinFrameSize: compressionCfg.MinFrameSizeValue()}
+
 	var wal *walPkg.WAL
 	if cfg.UsesWAL() {
-		var err error
-		wal, err = CreateWAL(cfg.WAL, logger, walStream)
+		wal, err = CreateWAL(cfg.WAL, walCompression, logger, walStream)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize wal: %w", err)
 		}
@@ -100,10 +116,21 @@ func newInitializer(cfg config.Config, logger *zerolog.Logger) (*Initializer, er
 		if wal != nil {
 			dumpWAL = wal
 		}
-		dumpSrv = dumper.New(dbEngine, dumpWAL, cfg.Dump.Directory)
+		dumpSrv = dumper.New(dbEngine, dumpWAL, cfg.Dump.Directory, dumpCompression)
 	}
 
-	replica, err := CreateReplica(cfg.Replication, cfg.WAL, logger, dumpSrv, walStream, dumpStream)
+	replicationCodec, err := format.ParseCodec(compressionCfg.ReplicationCodec())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse replication compression codec: %w", err)
+	}
+
+	replicaCompression := replication.Compression{
+		SegmentCodec: walCodec,
+		WireCodec:    replicationCodec,
+		MinFrameSize: compressionCfg.MinFrameSizeValue(),
+	}
+
+	replica, err := CreateReplica(cfg.Replication, cfg.WAL, replicaCompression, logger, dumpSrv, walStream, dumpStream)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize replication: %w", err)
 	}

@@ -24,6 +24,7 @@ const replicationMessageOverheadMin = 1 << 20
 func CreateReplica(
 	replicationCfg config.ReplicationConfig,
 	walCfg *config.WALConfig,
+	compression replication.Compression,
 	logger *zerolog.Logger,
 	dumperSrv *dumper.Dumper,
 	walStream chan<- wal.Chunk,
@@ -84,7 +85,7 @@ func CreateReplica(
 			return nil, err
 		}
 
-		return replication.NewMaster(server, walDirectory, dumperSrv, secret, logger)
+		return replication.NewMaster(server, walDirectory, dumperSrv, secret, compression, logger)
 	}
 
 	clientTLS, err := replicationCfg.TLS.Options().ClientConfig()

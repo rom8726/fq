@@ -7,6 +7,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/tools"
 )
@@ -19,6 +20,7 @@ const defaultWALDataDirectory = "/var/lib/fq/data/wal"
 
 func CreateWAL(
 	cfg *config.WALConfig,
+	compression format.Compression,
 	logger *zerolog.Logger,
 	stream chan<- wal.Chunk,
 ) (*wal.WAL, error) {
@@ -55,7 +57,7 @@ func CreateWAL(
 		}
 
 		fsReader := wal.NewFSReader(dataDirectory, logger)
-		fsWriter := wal.NewFSWriter(dataDirectory, maxSegmentSize, logger)
+		fsWriter := wal.NewFSWriter(dataDirectory, maxSegmentSize, compression, logger)
 
 		return wal.NewWAL(
 			fsWriter,

@@ -40,6 +40,8 @@ const (
 	CodeInspectReportTooLarge Code = 5002
 	CodeMessageSizeTooSmall   Code = 5003
 
+	CodeUnsupportedCompression Code = 5004
+
 	CodeInternal              Code = 9000
 	CodeInternalConfiguration Code = 9001
 )
@@ -83,6 +85,11 @@ var codes = []CodeInfo{
 	{CodeInspectUnavailable, "CodeInspectUnavailable", "inspect is not available"},
 	{CodeInspectReportTooLarge, "CodeInspectReportTooLarge", "inspect report too large"},
 	{CodeMessageSizeTooSmall, "CodeMessageSizeTooSmall", "max message size too small for a chunked response"},
+	{
+		CodeUnsupportedCompression,
+		"CodeUnsupportedCompression",
+		"replica does not support the configured compression codec",
+	},
 	{CodeInternal, "CodeInternal", "internal error"},
 	{CodeInternalConfiguration, "CodeInternalConfiguration", "internal configuration error"},
 }

@@ -10,7 +10,8 @@ helm install fq ./charts/fq
 ```
 
 The default install is a single unauthenticated fq instance for trusted development
-namespaces. It uses `wal_and_dump` persistence with an `8Gi` PVC and exposes:
+namespaces. It uses `wal_and_dump` persistence with zstd compression, an `8Gi` PVC, and
+exposes:
 
 - `1945` for the fq client protocol;
 - `2112` for `/healthz`, `/metrics`, and `/v1/info`.

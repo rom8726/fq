@@ -119,6 +119,36 @@ dump:
 | `interval` | duration > 0 | yes | How often a full dump snapshot is written |
 | `directory` | path | yes | Where dump files are written |
 
+## `compression`
+
+The default config enables `zstd` for WAL, dump, and replication compression. Set any
+codec to `none` to disable compression for that target.
+
+```yaml
+compression:
+  wal: zstd          # none|s2|zstd
+  dump: zstd         # none|s2|zstd
+  replication: zstd  # none|s2|zstd
+  min_frame_size: 512
+```
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `wal` | `none`, `s2`, `zstd` | `zstd` | Compresses WAL batch payloads on disk |
+| `dump` | `none`, `s2`, `zstd` | `zstd` | Compresses dump batch payloads on disk |
+| `replication` | `none`, `s2`, `zstd` | `zstd` | Compresses replication payloads that are not already compressed on disk |
+| `min_frame_size` | int ≥ 0 | `512` | Payloads smaller than this are stored uncompressed |
+
+`zstd` is the default because it gives stronger compression. `s2` is the speed-first
+codec and can be a better fit if WAL flush latency is more important than compression
+ratio.
+
+Compression never makes a payload larger: if the compressed result is not smaller than the
+input, or the input is below `min_frame_size`, the payload is stored as-is.
+
+Enabling `wal` changes the WAL segment format version, which replicas must understand.
+See [Operations](operations.md) for the rollout order.
+
 ## `engine`
 
 ```yaml

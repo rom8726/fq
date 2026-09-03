@@ -38,6 +38,7 @@ type PersistenceInfo struct {
 type WALInfo struct {
 	Enabled             bool     `json:"enabled"`
 	SyncCommit          *string  `json:"sync_commit"`
+	Codec               *string  `json:"codec"`
 	DataDirectory       *string  `json:"data_directory"`
 	QueueDepth          *int     `json:"queue_depth"`
 	QueueCapacity       *int     `json:"queue_capacity"`
@@ -54,6 +55,8 @@ type WALInfo struct {
 type DumpInfo struct {
 	Enabled              bool     `json:"enabled"`
 	Directory            *string  `json:"directory"`
+	Codec                *string  `json:"codec"`
+	CompressionRatio     *float64 `json:"compression_ratio"`
 	IntervalSec          *float64 `json:"interval_sec"`
 	LastDumpAt           *int64   `json:"last_dump_at"`
 	LastDumpDurationMs   *float64 `json:"last_dump_duration_ms"`
@@ -87,12 +90,14 @@ type SlaveInfo struct {
 }
 
 type ReplInfo struct {
-	Role            string        `json:"role"`
-	ProtocolVersion int           `json:"protocol_version"`
-	KnownReplicas   int           `json:"known_replicas,omitempty"`
-	Replicas        []ReplicaInfo `json:"replicas,omitempty"`
-	Slave           *SlaveInfo    `json:"slave,omitempty"`
-	Truncated       bool          `json:"truncated,omitempty"`
+	Role                     string        `json:"role"`
+	ProtocolVersion          int           `json:"protocol_version"`
+	Compression              *string       `json:"compression,omitempty"`
+	CompressionRejectedTotal uint64        `json:"compression_rejected_total,omitempty"`
+	KnownReplicas            int           `json:"known_replicas,omitempty"`
+	Replicas                 []ReplicaInfo `json:"replicas,omitempty"`
+	Slave                    *SlaveInfo    `json:"slave,omitempty"`
+	Truncated                bool          `json:"truncated,omitempty"`
 }
 
 type PartitionStat struct {

@@ -30,6 +30,8 @@ const (
 	DefaultLimitEventQueueCapacity = 16
 	DefaultEnginePartitions        = 16
 	DefaultEngineWALApplyWorkers   = 1
+
+	DefaultCompressionMinFrameSize = 512
 )
 
 type Config struct {
@@ -41,6 +43,7 @@ type Config struct {
 	Logging       LoggingConfig       `yaml:"logging"`
 	Dump          DumpConfig          `yaml:"dump"`
 	Replication   ReplicationConfig   `yaml:"replication"`
+	Compression   *CompressionConfig  `yaml:"compression"`
 }
 
 func (cfg Config) PersistenceMode() string {
@@ -213,6 +216,49 @@ type WALConfig struct {
 type DumpConfig struct {
 	Interval  time.Duration `yaml:"interval"`
 	Directory string        `yaml:"directory"`
+}
+
+type CompressionConfig struct {
+	WAL          string `yaml:"wal"`
+	Dump         string `yaml:"dump"`
+	Replication  string `yaml:"replication"`
+	MinFrameSize int    `yaml:"min_frame_size"`
+}
+
+func (cfg Config) CompressionValue() CompressionConfig {
+	if cfg.Compression == nil {
+		return CompressionConfig{}
+	}
+
+	return *cfg.Compression
+}
+
+func (cfg CompressionConfig) WALCodec() string {
+	return codecOrNone(cfg.WAL)
+}
+
+func (cfg CompressionConfig) DumpCodec() string {
+	return codecOrNone(cfg.Dump)
+}
+
+func (cfg CompressionConfig) ReplicationCodec() string {
+	return codecOrNone(cfg.Replication)
+}
+
+func (cfg CompressionConfig) MinFrameSizeValue() int {
+	if cfg.MinFrameSize <= 0 {
+		return DefaultCompressionMinFrameSize
+	}
+
+	return cfg.MinFrameSize
+}
+
+func codecOrNone(value string) string {
+	if value == "" {
+		return "none"
+	}
+
+	return value
 }
 
 //nolint:tagliatelle // it's ok
@@ -452,6 +498,18 @@ func validate(cfg *Config) error {
 
 	if err := validateReplicationTLSConfig(cfg.Replication.ReplicaType, cfg.Replication.TLS); err != nil {
 		return fmt.Errorf("validate replication tls section: %w", err)
+	}
+
+	if cfg.Compression != nil {
+		err = validation.ValidateStruct(cfg.Compression,
+			validation.Field(&cfg.Compression.WAL, validation.In("", "none", "s2", "zstd")),
+			validation.Field(&cfg.Compression.Dump, validation.In("", "none", "s2", "zstd")),
+			validation.Field(&cfg.Compression.Replication, validation.In("", "none", "s2", "zstd")),
+			validation.Field(&cfg.Compression.MinFrameSize, validation.Min(0)),
+		)
+		if err != nil {
+			return fmt.Errorf("validate compression section: %w", err)
+		}
 	}
 
 	if cfg.Replication.ReplicaType != "" && cfg.PersistenceMode() != PersistenceModeWALAndDump {

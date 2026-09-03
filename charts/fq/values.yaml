@@ -97,6 +97,11 @@ config:
   dump:
     interval: 1m
     directory: /var/lib/fq/data/
+  compression:
+    wal: zstd
+    dump: zstd
+    replication: zstd
+    minFrameSize: 512
   replication:
     enabled: false
     replicaType: master

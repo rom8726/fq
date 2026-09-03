@@ -11,6 +11,7 @@ import (
 
 	"github.com/fq-db/fq/internal/database"
 	"github.com/fq-db/fq/internal/database/storage/format"
+	"github.com/fq-db/fq/internal/observability"
 )
 
 func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
@@ -41,7 +42,7 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 
 	defer func() { _ = f.Close() }()
 
-	if err := format.WriteHeader(f, format.MagicDump, dumpFormatVersion); err != nil {
+	if err := format.WriteHeader(f, format.MagicDump, d.formatVersion()); err != nil {
 		return fmt.Errorf("write dump header: %w", err)
 	}
 
@@ -173,24 +174,25 @@ func (d *Dumper) walCleanupLSN(dumpLSN uint64) uint64 {
 func (d *Dumper) writeBatch(f *os.File, elems []database.DumpElem) error {
 	var buffer bytes.Buffer
 
-	var header [format.FrameHeaderSize]byte
-	buffer.Write(header[:])
-
 	encoder := gob.NewEncoder(&buffer)
 	if err := encoder.Encode(elems); err != nil {
 		return fmt.Errorf("encode dump elements: %w", err)
 	}
 
-	frame := buffer.Bytes()
-	payload := frame[format.FrameHeaderSize:]
+	payload := buffer.Bytes()
+	if d.formatVersion() == dumpFormatVersionCompressed {
+		raw := payload
+		startedAt := time.Now()
+		payload = format.EncodePayload(nil, raw, d.compression)
+		observability.ObserveCompressionDuration("dump", "compress", time.Since(startedAt))
+		observability.ObserveCompression("dump", len(raw), len(payload))
+	}
 
 	if err := format.CheckPayloadSize(payload, dumpMaxFrameSize); err != nil {
 		return fmt.Errorf("dump batch: %w", err)
 	}
 
-	format.PutFrameHeader(frame, payload)
-
-	if _, err := f.Write(frame); err != nil {
+	if _, err := f.Write(format.AppendFrame(nil, payload)); err != nil {
 		return fmt.Errorf("write dump elements: %w", err)
 	}
 

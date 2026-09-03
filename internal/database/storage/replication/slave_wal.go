@@ -11,11 +11,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/observability"
 )
 
 const walDirectoryPerm = 0o750
+
+const maxWALChunkSize = wal.MaxBatchSize + format.FrameHeaderSize + format.HeaderSize
+
+func (s *Slave) decodeWALChunk(response WALResponse) ([]byte, error) {
+	if response.SegmentCodec == uint8(format.CodecNone) {
+		return response.SegmentData, nil
+	}
+
+	if format.PayloadCodec(response.SegmentData) != format.CodecID(response.SegmentCodec) {
+		return nil, fmt.Errorf(
+			"wal chunk codec mismatch: response %d, payload %d",
+			response.SegmentCodec,
+			format.PayloadCodec(response.SegmentData),
+		)
+	}
+
+	decoded, err := format.DecodePayload(
+		nil,
+		response.SegmentData,
+		format.PayloadVersionCompressed,
+		maxWALChunkSize,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("decode wal chunk: %w", err)
+	}
+
+	return decoded, nil
+}
 
 type walSegmentOffsetMismatchError struct {
 	segmentName string
@@ -33,7 +62,14 @@ func (e *walSegmentOffsetMismatchError) Error() string {
 }
 
 func (s *Slave) synchronizeWAL(ctx context.Context) error {
-	request := NewWALRequest(s.secret.Reveal(), s.replicaID, s.lastSegmentName, s.lastSegmentOffset, s.lastAppliedLSN)
+	request := NewWALRequest(
+		s.secret.Reveal(),
+		s.replicaID,
+		s.lastSegmentName,
+		s.lastSegmentOffset,
+		s.lastAppliedLSN,
+		format.SupportedCodecs(),
+	)
 
 	requestData, err := Encode(&request)
 	if err != nil {
@@ -97,17 +133,23 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 		return nil
 	}
 
+	segmentData, err := s.decodeWALChunk(response)
+	if err != nil {
+		return fmt.Errorf("decode wal chunk: %w", err)
+	}
+
 	s.logger.Debug().
 		Str("segment_name", filename).
 		Int64("segment_offset", response.SegmentOffset).
 		Int64("next_segment_offset", response.NextSegmentOffset).
-		Int("chunk_size", len(response.SegmentData)).
+		Int("chunk_size", len(segmentData)).
+		Uint16("segment_format_version", response.SegmentFormatVersion).
 		Str("last_segment_name", s.lastSegmentName).
 		Int64("last_segment_offset", s.lastSegmentOffset).
 		Uint64("dump_last_segment_number", s.dumpLastSegmentNumber).
 		Msg("received WAL chunk from master")
 
-	if err := s.saveWALChunk(filename, response.SegmentOffset, response.SegmentData); err != nil {
+	if err := s.saveWALChunk(filename, response.SegmentOffset, segmentData); err != nil {
 		var offsetMismatchErr *walSegmentOffsetMismatchError
 		if errors.As(err, &offsetMismatchErr) {
 			s.rewindWALCursor(offsetMismatchErr)
@@ -118,9 +160,10 @@ func (s *Slave) handleResponse(ctx context.Context, response WALResponse) error 
 
 	if err := s.applyDataToEngine(
 		ctx,
-		response.SegmentData,
+		segmentData,
 		response.SegmentName,
 		response.SegmentOffset == 0,
+		response.SegmentFormatVersion,
 	); err != nil {
 		return fmt.Errorf("apply data to engine chunk: %w", err)
 	}
@@ -298,13 +341,14 @@ func (s *Slave) applyDataToEngine(
 	segmentData []byte,
 	segmentName string,
 	expectHeader bool,
+	formatVersion uint16,
 ) error {
 	if len(segmentData) == 0 {
 		s.logger.Warn().Str("segment_name", segmentName).Msg("received empty segment data, skipping")
 		return nil
 	}
 
-	logs, err := s.walReader.ReadSegmentData(ctx, segmentData, expectHeader)
+	logs, err := s.walReader.ReadSegmentData(ctx, segmentData, expectHeader, formatVersion)
 	if err != nil {
 		return err
 	}

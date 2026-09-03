@@ -184,7 +184,7 @@ func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
 	require.NoError(t, err)
 
 	master, err := replication.NewMaster(
-		server, t.TempDir(), nil, security.Secret(testReplicationToken), &logger,
+		server, t.TempDir(), nil, security.Secret(testReplicationToken), replication.Compression{}, &logger,
 	)
 	require.NoError(t, err)
 
@@ -209,7 +209,7 @@ func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = impostor.Close() }()
 
-	request := replication.NewWALRequest("wrong-token-value", "replica-1", "", 0, 0)
+	request := replication.NewWALRequest("wrong-token-value", "replica-1", "", 0, 0, nil)
 	data, err := replication.Encode(&request)
 	require.NoError(t, err)
 
@@ -224,7 +224,7 @@ func TestReplicationPortRejectsUnauthenticatedPeer(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = legitimate.Close() }()
 
-	request = replication.NewWALRequest(testReplicationToken, "replica-1", "", 0, 0)
+	request = replication.NewWALRequest(testReplicationToken, "replica-1", "", 0, 0, nil)
 	data, err = replication.Encode(&request)
 	require.NoError(t, err)
 
@@ -241,7 +241,7 @@ func TestReplicationPortRefusesDumpToImpostor(t *testing.T) {
 	require.NoError(t, err)
 
 	master, err := replication.NewMaster(
-		server, t.TempDir(), nil, security.Secret(testReplicationToken), &logger,
+		server, t.TempDir(), nil, security.Secret(testReplicationToken), replication.Compression{}, &logger,
 	)
 	require.NoError(t, err)
 
@@ -265,7 +265,7 @@ func TestReplicationPortRefusesDumpToImpostor(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = impostor.Close() }()
 
-	request := replication.NewDumpRequest("", "session-uuid", 0)
+	request := replication.NewDumpRequest("", "session-uuid", 0, nil)
 	data, err := replication.Encode(&request)
 	require.NoError(t, err)
 
@@ -293,7 +293,7 @@ func TestReplicationPortOverMutualTLS(t *testing.T) {
 	require.NoError(t, err)
 
 	master, err := replication.NewMaster(
-		server, t.TempDir(), nil, security.Secret(testReplicationToken), &logger,
+		server, t.TempDir(), nil, security.Secret(testReplicationToken), replication.Compression{}, &logger,
 	)
 	require.NoError(t, err)
 
@@ -324,7 +324,7 @@ func TestReplicationPortOverMutualTLS(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = replica.Close() }()
 
-	request := replication.NewWALRequest(testReplicationToken, "replica-1", "", 0, 0)
+	request := replication.NewWALRequest(testReplicationToken, "replica-1", "", 0, 0, nil)
 	data, err := replication.Encode(&request)
 	require.NoError(t, err)
 

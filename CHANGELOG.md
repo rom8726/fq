@@ -5,6 +5,17 @@ All notable changes to fq will be documented in this file.
 This project follows semantic versioning while it is pre-1.0: minor releases may
 change behavior, and patch releases are reserved for compatible fixes.
 
+## [v0.10.0]
+
+### Added
+
+- Added s2/zstd compression for WAL segments, dump files, and replication traffic,
+  configured in the new `compression` config section. The default config now uses
+  `zstd` for WAL, dumps, and replication; set a codec to `none` to disable it.
+  Compressed files use format version 2; readers accept both versions, and a master with
+  compressed WAL segments refuses to serve a replica that does not support the codec
+  (error code `5004`) instead of sending bytes it cannot read.
+
 ## [v0.9.1]
 
 ### Added

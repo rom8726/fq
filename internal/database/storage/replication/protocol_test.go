@@ -14,7 +14,7 @@ import (
 func TestNewDumpRequestCarriesProtocolVersion(t *testing.T) {
 	t.Parallel()
 
-	request := replication.NewDumpRequest("token", "session-uuid", 7)
+	request := replication.NewDumpRequest("token", "session-uuid", 7, nil)
 
 	require.Equal(t, replication.ProtocolVersion, request.ProtocolVersion)
 }
@@ -22,7 +22,7 @@ func TestNewDumpRequestCarriesProtocolVersion(t *testing.T) {
 func TestNewWALRequestCarriesProtocolVersion(t *testing.T) {
 	t.Parallel()
 
-	request := replication.NewWALRequest("token", "replica-1", "0001.wal", 0, 0)
+	request := replication.NewWALRequest("token", "replica-1", "0001.wal", 0, 0, nil)
 
 	require.Equal(t, replication.ProtocolVersion, request.ProtocolVersion)
 }

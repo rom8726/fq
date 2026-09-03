@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fq-db/fq/internal/config"
+	"github.com/fq-db/fq/internal/database/storage/replication"
 	"github.com/fq-db/fq/internal/security"
 )
 
@@ -20,7 +21,7 @@ func TestCreateReplicaRejectsMasterWithoutSecret(t *testing.T) {
 			MasterAddress: ":19460",
 			SyncInterval:  time.Second,
 		},
-		nil, &logger, nil, nil, nil,
+		nil, replication.Compression{}, &logger, nil, nil, nil,
 	)
 
 	require.Error(t, err)
@@ -36,7 +37,7 @@ func TestCreateReplicaRejectsSlaveWithoutSecret(t *testing.T) {
 			MasterAddress: ":19460",
 			SyncInterval:  time.Second,
 		},
-		nil, &logger, nil, nil, nil,
+		nil, replication.Compression{}, &logger, nil, nil, nil,
 	)
 
 	require.Error(t, err)
@@ -45,7 +46,7 @@ func TestCreateReplicaRejectsSlaveWithoutSecret(t *testing.T) {
 func TestCreateReplicaSkipsWhenReplicationIsDisabled(t *testing.T) {
 	logger := zerolog.Nop()
 
-	replica, err := CreateReplica(config.ReplicationConfig{}, nil, &logger, nil, nil, nil)
+	replica, err := CreateReplica(config.ReplicationConfig{}, nil, replication.Compression{}, &logger, nil, nil, nil)
 
 	require.NoError(t, err)
 	require.Nil(t, replica)

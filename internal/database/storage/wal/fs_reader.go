@@ -64,7 +64,7 @@ func (r *FSReader) ReadLogsAfter(ctx context.Context, lsn uint64) ([]*LogData, e
 		}
 
 		isLastSegment := i == len(filenames)-1
-		segmentedLogs, err := r.readSegmentData(ctx, data, true, isLastSegment, filename)
+		segmentedLogs, err := r.readSegmentData(ctx, data, true, isLastSegment, filename, 0)
 		if err != nil {
 			return nil, fmt.Errorf("failed to recover WAL segment %s: %w", filename, err)
 		}
@@ -123,11 +123,16 @@ func (r *FSReader) ReadSegment(ctx context.Context, filename string) ([]*LogData
 		return nil, nil
 	}
 
-	return r.readSegmentData(ctx, data, true, false, filename)
+	return r.readSegmentData(ctx, data, true, false, filename, 0)
 }
 
-func (r *FSReader) ReadSegmentData(ctx context.Context, data []byte, expectHeader bool) ([]*LogData, error) {
-	return r.readSegmentData(ctx, data, expectHeader, false, "")
+func (r *FSReader) ReadSegmentData(
+	ctx context.Context,
+	data []byte,
+	expectHeader bool,
+	version uint16,
+) ([]*LogData, error) {
+	return r.readSegmentData(ctx, data, expectHeader, false, "", version)
 }
 
 func (r *FSReader) readSegmentData(
@@ -136,12 +141,22 @@ func (r *FSReader) readSegmentData(
 	expectHeader bool,
 	allowTruncatedTail bool,
 	segmentName string,
+	version uint16,
 ) ([]*LogData, error) {
 	frames := data
 	baseOffset := 0
 
+	if version == 0 {
+		version = segmentFormatVersionRaw
+	}
+
 	if expectHeader {
-		rest, err := format.ParseHeader(data, format.MagicWAL, segmentFormatVersion)
+		rest, parsedVersion, err := format.ParseHeaderVersions(
+			data,
+			format.MagicWAL,
+			segmentFormatVersionRaw,
+			segmentFormatVersionCompressed,
+		)
 		if err != nil {
 			if errors.Is(err, format.ErrIncompleteFrame) && allowTruncatedTail {
 				if truncateErr := r.truncateTail(segmentName, 0, err); truncateErr != nil {
@@ -155,6 +170,7 @@ func (r *FSReader) readSegmentData(
 		}
 
 		frames = rest
+		version = parsedVersion
 		baseOffset = format.HeaderSize
 	}
 
@@ -181,8 +197,13 @@ func (r *FSReader) readSegmentData(
 			return nil, fmt.Errorf("WAL segment at offset %d: %w", baseOffset+offset, err)
 		}
 
+		decoded, err := format.DecodePayload(nil, payload, version, MaxBatchSize)
+		if err != nil {
+			return nil, fmt.Errorf("WAL segment payload at offset %d: %w", baseOffset+offset, err)
+		}
+
 		var batch LogDataArray
-		if err := proto.Unmarshal(payload, &batch); err != nil {
+		if err := proto.Unmarshal(decoded, &batch); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal WAL batch at offset %d: %w", baseOffset+offset, err)
 		}
 

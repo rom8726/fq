@@ -49,6 +49,7 @@ guide (auth, TLS, replication, monitoring).
 - Counter commands for frequency capping
 - In-memory storage engine
 - WAL and periodic dumps for recovery
+- Default zstd compression for WAL, dumps, and replication traffic
 - Optional async master-slave replication
 - Replica ack tracking and replication lag metrics
 - Prometheus metrics and health endpoint

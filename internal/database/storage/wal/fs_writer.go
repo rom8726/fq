@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/fq-db/fq/internal/database/storage/format"
+	"github.com/fq-db/fq/internal/observability"
 )
 
 var now = time.Now
@@ -36,17 +37,33 @@ type FSWriter struct {
 	segmentSequence  int
 	closed           bool
 
+	compression format.Compression
+
 	lastSyncedLSN atomic.Uint64
 
 	logger *zerolog.Logger
 }
 
-func NewFSWriter(directory string, maxSegmentSize int, logger *zerolog.Logger) *FSWriter {
+func NewFSWriter(
+	directory string,
+	maxSegmentSize int,
+	compression format.Compression,
+	logger *zerolog.Logger,
+) *FSWriter {
 	return &FSWriter{
 		directory:      directory,
 		maxSegmentSize: maxSegmentSize,
+		compression:    compression,
 		logger:         logger,
 	}
+}
+
+func (w *FSWriter) formatVersion() uint16 {
+	if w.compression.Enabled() {
+		return segmentFormatVersionCompressed
+	}
+
+	return segmentFormatVersionRaw
 }
 
 func (w *FSWriter) WriteBatch(batch []Log) {
@@ -99,7 +116,7 @@ func (w *FSWriter) writeBatch(batch []Log) error {
 		logs[i] = log.data
 	}
 
-	data, err := encodeLogs(logs)
+	data, err := w.encodeLogs(logs)
 	if err != nil {
 		w.logger.Warn().Err(err).Msg("failed to encode logs data")
 
@@ -133,28 +150,50 @@ func (w *FSWriter) writeBatch(batch []Log) error {
 	return nil
 }
 
-func encodeLogs(logs []*LogData) ([]byte, error) {
+func (w *FSWriter) encodeLogs(logs []*LogData) ([]byte, error) {
 	logDataArray := LogDataArray{Elems: logs}
 	data, err := proto.Marshal(&logDataArray)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := format.CheckPayloadSize(data, MaxBatchSize); err != nil {
+	payload, err := encodeWALPayload(data, w.compression, MaxBatchSize)
+	if err != nil {
 		return nil, err
 	}
 
 	buff := bytesBufferPool.Get()
 	defer bytesBufferPool.Put(buff)
 
-	buff.Grow(len(data) + format.FrameHeaderSize)
-	buff.Write(format.FrameHeader(data))
-	buff.Write(data)
+	buff.Grow(len(payload) + format.FrameHeaderSize)
+	buff.Write(format.FrameHeader(payload))
+	buff.Write(payload)
 
 	result := make([]byte, buff.Len())
 	copy(result, buff.Bytes())
 
 	return result, nil
+}
+
+func encodeWALPayload(data []byte, compression format.Compression, maxPayloadSize int) ([]byte, error) {
+	if err := format.CheckPayloadSize(data, maxPayloadSize); err != nil {
+		return nil, err
+	}
+
+	if !compression.Enabled() {
+		return data, nil
+	}
+
+	startedAt := now()
+	payload := format.EncodePayload(nil, data, compression)
+	observability.ObserveCompressionDuration("wal", "compress", now().Sub(startedAt))
+	observability.ObserveCompression("wal", len(data), len(payload))
+
+	if err := format.CheckPayloadSize(payload, maxPayloadSize); err != nil {
+		return nil, err
+	}
+
+	return payload, nil
 }
 
 func (w *FSWriter) shouldRotate(nextBatchSize int) bool {
@@ -223,7 +262,7 @@ func (w *FSWriter) rotateSegment() error {
 }
 
 func (w *FSWriter) writeSegmentHeader() error {
-	if err := w.writeBytes(segmentHeader()); err != nil {
+	if err := w.writeBytes(segmentHeader(w.formatVersion())); err != nil {
 		return err
 	}
 

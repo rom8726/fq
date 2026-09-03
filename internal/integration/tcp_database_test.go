@@ -24,6 +24,7 @@ import (
 	"github.com/fq-db/fq/internal/database/storage"
 	"github.com/fq-db/fq/internal/database/storage/dumper"
 	inmemory "github.com/fq-db/fq/internal/database/storage/engine/in-memory"
+	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/replication"
 	"github.com/fq-db/fq/internal/database/storage/wal"
 	"github.com/fq-db/fq/internal/network"
@@ -1013,7 +1014,7 @@ func startTestDatabaseWithDumpAndKeyIndex(
 	var dumpStore *dumper.Dumper
 	var dumpStorage storage.Dumper
 	if dumpDir != "" {
-		dumpStore = dumper.New(engine, walStore, dumpDir)
+		dumpStore = dumper.New(engine, walStore, dumpDir, format.Compression{})
 		dumpStorage = dumpStore
 	}
 	strg, err := storage.NewStorage(
@@ -1085,7 +1086,7 @@ func startTestDatabaseWithMasterReplication(t *testing.T, walDir, dumpDir, repli
 	require.NoError(t, err)
 
 	walStore := newTestWAL(walDir, walStream, &logger)
-	dumpStore := dumper.New(engine, walStore, dumpDir)
+	dumpStore := dumper.New(engine, walStore, dumpDir, format.Compression{})
 
 	strg, err := storage.NewStorage(
 		engine,
@@ -1206,7 +1207,7 @@ func startQueryServer(
 
 func newTestWAL(directory string, stream chan<- wal.Chunk, logger *zerolog.Logger) *wal.WAL {
 	return wal.NewWAL(
-		wal.NewFSWriter(directory, 1<<20, logger),
+		wal.NewFSWriter(directory, 1<<20, format.Compression{}, logger),
 		wal.NewFSReader(directory, logger),
 		stream,
 		time.Millisecond,
@@ -1445,7 +1446,7 @@ func (a *testDatabaseApp) StartReplication() {
 	replicationServer, err := network.NewTCPServer(a.replicationAddr, 5, 16<<20, time.Second, a.logger)
 	require.NoError(a.t, err)
 	master, err := replication.NewMaster(
-		replicationServer, a.walDir, a.dumper, security.Secret(testReplicationToken), a.logger,
+		replicationServer, a.walDir, a.dumper, security.Secret(testReplicationToken), replication.Compression{}, a.logger,
 	)
 	require.NoError(a.t, err)
 

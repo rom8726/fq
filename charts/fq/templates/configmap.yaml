@@ -58,6 +58,11 @@ data:
       interval: {{ .Values.config.dump.interval }}
       directory: {{ .Values.config.dump.directory }}
     {{- end }}
+    compression:
+      wal: {{ .Values.config.compression.wal | quote }}
+      dump: {{ .Values.config.compression.dump | quote }}
+      replication: {{ .Values.config.compression.replication | quote }}
+      min_frame_size: {{ .Values.config.compression.minFrameSize }}
     {{- if .Values.config.replication.enabled }}
     replication:
       replica_type: {{ .Values.config.replication.replicaType | quote }}

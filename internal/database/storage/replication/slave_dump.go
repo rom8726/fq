@@ -1,15 +1,18 @@
 package replication
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"fmt"
 	"time"
 
 	"github.com/fq-db/fq/internal/database"
+	"github.com/fq-db/fq/internal/database/storage/format"
 )
 
 func (s *Slave) synchronizeDump(ctx context.Context) error {
-	request := NewDumpRequest(s.secret.Reveal(), s.sessionUUID, s.dumpLastSegmentNumber)
+	request := NewDumpRequest(s.secret.Reveal(), s.sessionUUID, s.dumpLastSegmentNumber, format.SupportedCodecs())
 
 	requestData, err := Encode(&request)
 	if err != nil {
@@ -44,6 +47,11 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 	}
 
 	if response.Succeed {
+		elems, err := decodeDumpBatch(response)
+		if err != nil {
+			return fmt.Errorf("decode dump response: %w", err)
+		}
+
 		wasReadingDump := s.readDump
 		endOfDump := response.EndOfDump
 		var applied chan error
@@ -52,22 +60,22 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 		}
 
 		chunk := database.DumpChunk{
-			Elems:   response.SegmentData,
+			Elems:   elems,
 			Applied: applied,
 		}
 		if err := s.sendToDumpStream(ctx, chunk); err != nil {
 			return fmt.Errorf("failed to send dump data to stream: %w", err)
 		}
 
-		if len(response.SegmentData) > 0 {
-			s.dumpLastSegmentNumber = maxLSN(response.SegmentData)
+		if len(elems) > 0 {
+			s.dumpLastSegmentNumber = maxLSN(elems)
 		}
 
 		if wasReadingDump && endOfDump {
 			s.logger.Info().
 				Str("session_uuid", s.sessionUUID).
 				Uint64("last_segment_number", s.dumpLastSegmentNumber).
-				Int("last_batch_size", len(response.SegmentData)).
+				Int("last_batch_size", len(elems)).
 				Msg("dump synchronization completed, waiting for engine to apply")
 
 			if err := s.waitForDumpChunkApplied(ctx, applied); err != nil {
@@ -88,6 +96,43 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 	}
 
 	return s.recordMasterError(response.ErrorCode, "dump")
+}
+
+const dumpReplicationMaxBatchSize = 100 * 1024 * 1024
+
+func decodeDumpBatch(response DumpResponse) ([]database.DumpElem, error) {
+	if response.BatchData == nil {
+		return response.SegmentData, nil
+	}
+
+	if format.PayloadCodec(response.BatchData) != format.CodecID(response.BatchCodec) {
+		return nil, fmt.Errorf(
+			"dump batch codec mismatch: response %d, payload %d",
+			response.BatchCodec,
+			format.PayloadCodec(response.BatchData),
+		)
+	}
+
+	decoded, err := format.DecodePayload(
+		nil,
+		response.BatchData,
+		format.PayloadVersionCompressed,
+		dumpReplicationMaxBatchSize,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("decode dump batch: %w", err)
+	}
+
+	if len(decoded) == 0 {
+		return nil, nil
+	}
+
+	var elems []database.DumpElem
+	if err := gob.NewDecoder(bytes.NewReader(decoded)).Decode(&elems); err != nil {
+		return nil, fmt.Errorf("decode dump elems: %w", err)
+	}
+
+	return elems, nil
 }
 
 func maxLSN(elems []database.DumpElem) uint64 {

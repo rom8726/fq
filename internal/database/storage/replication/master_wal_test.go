@@ -12,6 +12,7 @@ import (
 	"github.com/fq-db/fq/internal/database/compute"
 	"github.com/fq-db/fq/internal/database/storage/format"
 	"github.com/fq-db/fq/internal/database/storage/wal"
+	"github.com/fq-db/fq/internal/protocol"
 )
 
 func TestReadCompleteWALChunkStopsAtFrameBoundary(t *testing.T) {
@@ -67,7 +68,7 @@ func TestMasterSynchronizeWALReturnsChunkFromOffset(t *testing.T) {
 		ReplicaID:       "replica-1",
 		LastSegmentName: "wal_1.log",
 		SegmentOffset:   int64(firstEnd),
-	})
+	}, nil)
 
 	require.True(t, response.Succeed)
 	require.Equal(t, "wal_1.log", response.SegmentName)
@@ -80,7 +81,7 @@ func TestMasterChunksSurviveWALReader(t *testing.T) {
 	directory := t.TempDir()
 	logger := zerolog.Nop()
 
-	writer := wal.NewFSWriter(directory, 0, &logger)
+	writer := wal.NewFSWriter(directory, 0, format.Compression{}, &logger)
 	batch := []wal.Log{wal.NewLog(1, compute.IncrCommandID, []string{"key", "60"})}
 	writer.WriteBatch(batch)
 	for _, record := range batch {
@@ -94,13 +95,13 @@ func TestMasterChunksSurviveWALReader(t *testing.T) {
 	require.NotEmpty(t, segmentName)
 
 	master := &Master{walDirectory: directory, logger: &logger}
-	response := master.synchronizeWAL(WALRequest{ReplicaID: "replica-1", LastSegmentName: segmentName})
+	response := master.synchronizeWAL(WALRequest{ReplicaID: "replica-1", LastSegmentName: segmentName}, nil)
 	require.True(t, response.Succeed)
 	require.NotEmpty(t, response.SegmentData)
 	require.Zero(t, response.SegmentOffset)
 
 	reader := wal.NewFSReader(directory, &logger)
-	logs, err := reader.ReadSegmentData(context.Background(), response.SegmentData, response.SegmentOffset == 0)
+	logs, err := reader.ReadSegmentData(context.Background(), response.SegmentData, response.SegmentOffset == 0, 0)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 	require.Equal(t, uint64(1), logs[0].LSN)
@@ -114,7 +115,7 @@ func TestMasterSynchronizeWALRejectsMissingReplicaID(t *testing.T) {
 		logger:       &logger,
 	}
 
-	response := master.synchronizeWAL(WALRequest{})
+	response := master.synchronizeWAL(WALRequest{}, nil)
 
 	require.False(t, response.Succeed)
 	require.Empty(t, master.ReplicaCursors())
@@ -133,7 +134,7 @@ func TestMasterSynchronizeWALSavesReplicaCursor(t *testing.T) {
 		LastSegmentName: "wal_1.log",
 		SegmentOffset:   128,
 		LastAppliedLSN:  42,
-	})
+	}, nil)
 
 	require.True(t, response.Succeed)
 	cursors := master.ReplicaCursors()
@@ -166,8 +167,8 @@ func TestMasterSynchronizeWALUpdatesExistingReplicaCursor(t *testing.T) {
 		LastAppliedLSN:  84,
 	}
 
-	require.True(t, master.synchronizeWAL(first).Succeed)
-	require.True(t, master.synchronizeWAL(second).Succeed)
+	require.True(t, master.synchronizeWAL(first, nil).Succeed)
+	require.True(t, master.synchronizeWAL(second, nil).Succeed)
 
 	cursors := master.ReplicaCursors()
 	require.Len(t, cursors, 1)
@@ -188,12 +189,12 @@ func TestMasterSynchronizeWALTracksReplicasIndependently(t *testing.T) {
 		ReplicaID:      "replica-1",
 		SegmentOffset:  128,
 		LastAppliedLSN: 42,
-	}).Succeed)
+	}, nil).Succeed)
 	require.True(t, master.synchronizeWAL(WALRequest{
 		ReplicaID:      "replica-2",
 		SegmentOffset:  256,
 		LastAppliedLSN: 84,
-	}).Succeed)
+	}, nil).Succeed)
 
 	cursors := master.ReplicaCursors()
 	require.Len(t, cursors, 2)
@@ -216,4 +217,101 @@ func testWALSegment(payloads ...string) []byte {
 	}
 
 	return data
+}
+
+func testCompressedWALSegment(t *testing.T, directory, name string) {
+	t.Helper()
+
+	data := format.AppendHeader(nil, format.MagicWAL, 2)
+	payload := format.EncodePayload(
+		nil,
+		[]byte("compressible-compressible-compressible-compressible"),
+		format.Compression{Codec: format.CodecZstd, MinFrameSize: 0},
+	)
+	data = format.AppendFrame(data, payload)
+
+	require.NoError(t, os.WriteFile(filepath.Join(directory, name), data, 0o644))
+}
+
+func TestMasterRejectsCompressedSegmentForLegacySlave(t *testing.T) {
+	directory := t.TempDir()
+	testCompressedWALSegment(t, directory, "wal_1.log")
+
+	logger := zerolog.Nop()
+	master := &Master{
+		walDirectory: directory,
+		compression:  Compression{SegmentCodec: format.CodecZstd},
+		logger:       &logger,
+	}
+
+	response := master.synchronizeWAL(WALRequest{ReplicaID: "replica-1"}, nil)
+
+	require.False(t, response.Succeed)
+	require.Equal(t, protocol.CodeUnsupportedCompression, response.ErrorCode)
+}
+
+func TestMasterServesCompressedSegmentToCapableSlave(t *testing.T) {
+	directory := t.TempDir()
+	testCompressedWALSegment(t, directory, "wal_1.log")
+
+	logger := zerolog.Nop()
+	master := &Master{
+		walDirectory: directory,
+		compression:  Compression{SegmentCodec: format.CodecZstd},
+		logger:       &logger,
+	}
+
+	response := master.synchronizeWAL(WALRequest{ReplicaID: "replica-1"}, format.SupportedCodecs())
+
+	require.True(t, response.Succeed)
+	require.Equal(t, uint16(2), response.SegmentFormatVersion)
+	require.Equal(t, uint8(format.CodecNone), response.SegmentCodec)
+	require.NotEmpty(t, response.SegmentData)
+}
+
+func TestMasterCompressesRawSegmentOnTheWire(t *testing.T) {
+	directory := t.TempDir()
+	segment := testWALSegment("compressible-compressible-compressible-compressible")
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "wal_1.log"), segment, 0o644))
+
+	logger := zerolog.Nop()
+	master := &Master{
+		walDirectory: directory,
+		compression:  Compression{WireCodec: format.CodecZstd, MinFrameSize: 0},
+		logger:       &logger,
+	}
+
+	response := master.synchronizeWAL(WALRequest{ReplicaID: "replica-1"}, format.SupportedCodecs())
+
+	require.True(t, response.Succeed)
+	require.Equal(t, uint16(1), response.SegmentFormatVersion)
+	require.Equal(t, uint8(format.CodecZstd), response.SegmentCodec)
+
+	restored, err := format.DecodePayload(
+		nil,
+		response.SegmentData,
+		format.PayloadVersionCompressed,
+		wal.MaxBatchSize,
+	)
+	require.NoError(t, err)
+	require.Equal(t, segment, restored)
+}
+
+func TestMasterKeepsRawSegmentForLegacySlave(t *testing.T) {
+	directory := t.TempDir()
+	segment := testWALSegment("first")
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "wal_1.log"), segment, 0o644))
+
+	logger := zerolog.Nop()
+	master := &Master{
+		walDirectory: directory,
+		compression:  Compression{WireCodec: format.CodecZstd, MinFrameSize: 0},
+		logger:       &logger,
+	}
+
+	response := master.synchronizeWAL(WALRequest{ReplicaID: "replica-1"}, nil)
+
+	require.True(t, response.Succeed)
+	require.Equal(t, uint8(format.CodecNone), response.SegmentCodec)
+	require.Equal(t, segment, response.SegmentData)
 }
