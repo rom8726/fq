@@ -74,6 +74,35 @@ func ParseHeader(data []byte, magic Magic, version uint16) ([]byte, error) {
 	return data[HeaderSize:], nil
 }
 
+func ParseHeaderVersions(
+	data []byte,
+	magic Magic,
+	minVersion, maxVersion uint16,
+) (rest []byte, version uint16, err error) {
+	if len(data) < HeaderSize {
+		return nil, 0, fmt.Errorf("%w: format header needs %d bytes, got %d", ErrIncompleteFrame, HeaderSize, len(data))
+	}
+
+	var got Magic
+	copy(got[:], data[:magicSize])
+	if got != magic {
+		return nil, 0, fmt.Errorf("%w: want %q, got %q", ErrBadMagic, magic.String(), got.String())
+	}
+
+	version = binary.BigEndian.Uint16(data[magicSize : magicSize+versionSize])
+	if version < minVersion || version > maxVersion {
+		return nil, 0, fmt.Errorf(
+			"%w: want %d..%d, got %d",
+			ErrUnsupportedVersion,
+			minVersion,
+			maxVersion,
+			version,
+		)
+	}
+
+	return data[HeaderSize:], version, nil
+}
+
 func FrameHeader(payload []byte) []byte {
 	head := make([]byte, FrameHeaderSize)
 	PutFrameHeader(head, payload)
