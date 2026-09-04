@@ -301,17 +301,14 @@ func (s *Slave) Start(ctx context.Context) {
 			}
 
 			if s.readDump {
-				select {
-				case <-s.closeCh:
+				if !s.waitBeforeRetry(ctx) {
 					return
-				case <-ctx.Done():
-					return
-				default:
-					if err := s.synchronizeDump(ctx); err != nil {
-						s.handleSyncError(err, "dump")
-					} else {
-						s.resetRetryState()
-					}
+				}
+
+				if err := s.synchronizeDump(ctx); err != nil {
+					s.handleSyncError(ctx, err, "dump")
+				} else {
+					s.resetRetryState()
 				}
 			} else {
 				if err := s.waitForDumpApplied(ctx); err != nil {
@@ -325,7 +322,7 @@ func (s *Slave) Start(ctx context.Context) {
 					return
 				case <-time.After(s.getRetryDelay()):
 					if err := s.synchronizeWAL(ctx); err != nil {
-						s.handleSyncError(err, "wal")
+						s.handleSyncError(ctx, err, "wal")
 					} else {
 						s.resetRetryState()
 					}
@@ -341,7 +338,7 @@ func (s *Slave) Shutdown() {
 }
 
 // handleSyncError handles synchronization errors with exponential backoff
-func (s *Slave) handleSyncError(err error, syncType string) {
+func (s *Slave) handleSyncError(ctx context.Context, err error, syncType string) {
 	s.consecutiveErrors++
 	s.refreshStatus(false)
 	s.logger.Error().
@@ -352,13 +349,46 @@ func (s *Slave) handleSyncError(err error, syncType string) {
 		Dur("next_retry_delay", s.getRetryDelay()).
 		Msg("synchronization error")
 
-	if s.consecutiveErrors >= s.maxRetries {
-		s.logger.Error().
-			Int("max_retries", s.maxRetries).
-			Msg("max retries reached, entering wait mode")
-		// Reset counter after long wait
-		time.Sleep(s.maxRetryDelay)
+	if s.consecutiveErrors < s.maxRetries {
+		return
+	}
+
+	s.logger.Error().
+		Int("max_retries", s.maxRetries).
+		Dur("wait", s.maxRetryDelay).
+		Msg("max retries reached, entering wait mode")
+
+	if s.waitOrStop(ctx, s.maxRetryDelay) {
 		s.consecutiveErrors = 0
+	}
+}
+
+func (s *Slave) waitBeforeRetry(ctx context.Context) bool {
+	if s.consecutiveErrors > 0 {
+		return s.waitOrStop(ctx, s.getRetryDelay())
+	}
+
+	select {
+	case <-s.closeCh:
+		return false
+	case <-ctx.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+func (s *Slave) waitOrStop(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-s.closeCh:
+		return false
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
