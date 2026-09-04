@@ -18,7 +18,7 @@ const (
 	CrashLoopScenario          = "crash-loop"
 	DumpRecoveryScenario       = "dump-recovery"
 	ReplicationStressScenario  = "replication-stress"
-	counterWindow              = 600
+	counterWindow              = 1_000_000_000
 	defaultConvergenceDeadline = 10 * time.Second
 	eventServerReady           = "server_ready"
 )
