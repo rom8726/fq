@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -464,26 +465,25 @@ func (s *Slave) isNetworkError(err error) bool {
 		return false
 	}
 
-	// Check for network errors
-	if netErr, ok := err.(net.Error); ok {
-		return netErr.Timeout()
-	}
-
-	// Check for connection closed errors
-	if errors.Is(err, net.ErrClosed) {
-		return true
-	}
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 
-	// Check for broken pipe errors
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		return opErr.Op == "write" || opErr.Op == "read"
+	if errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ETIMEDOUT) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH) {
+		return true
 	}
 
-	return false
+	var netErr net.Error
+
+	return errors.As(err, &netErr)
 }
 
 // waitForDumpApplied waits until dump is fully applied to the engine.
