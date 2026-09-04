@@ -26,6 +26,8 @@ const (
 	cleanChunkTimeBudget = 2 * time.Millisecond
 	keyIndexDegree       = 32
 
+	snapshotCancelCheckStride = 4096
+
 	indexCompactStaleThreshold      = 10_000
 	indexCompactSmallStaleThreshold = 1_000
 	indexCompactSmallLiveThreshold  = 10_000
@@ -551,141 +553,106 @@ func (s *HashTable) deleteEmptyQuotas(ctx context.Context, items []cleanQuotaIte
 	}
 }
 
-func (s *HashTable) Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem) {
+func (s *HashTable) Snapshot(ctx context.Context, dumpTx database.Tx) []database.DumpElem {
 	s.mu.RLock()
-	// Create a snapshot to avoid holding lock during channel operations
-	items := make([]struct {
-		key  hashTableKey
-		elem *FqElem
-	}, 0, len(s.m))
-	for k, v := range s.m {
-		items = append(items, struct {
-			key  hashTableKey
-			elem *FqElem
-		}{k, v})
-	}
-	swItems := make([]struct {
-		key  hashTableKey
-		elem *SlidingWindowElem
-	}, 0, len(s.sw))
-	for k, v := range s.sw {
-		swItems = append(swItems, struct {
-			key  hashTableKey
-			elem *SlidingWindowElem
-		}{k, v})
-	}
-	tbItems := make([]struct {
-		key  hashTableKey
-		elem *TokenBucketElem
-	}, 0, len(s.tb))
-	for k, v := range s.tb {
-		tbItems = append(tbItems, struct {
-			key  hashTableKey
-			elem *TokenBucketElem
-		}{k, v})
-	}
-	qItems := make([]struct {
-		key  string
-		elem *QuotaElem
-	}, 0, len(s.q))
-	for k, v := range s.q {
-		qItems = append(qItems, struct {
-			key  string
-			elem *QuotaElem
-		}{k, v})
-	}
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	for _, item := range items {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			value, txAt, tx := item.elem.DumpValue(dumpTx)
-			if value == database.ErrorValue {
-				continue
-			}
-
-			ch <- database.DumpElem{
-				Kind:      database.DumpElemKindCounter,
-				Key:       item.key.key,
-				BatchSize: item.key.batchSize,
-				Value:     value,
-				TxAt:      txAt,
-				Tx:        tx,
-			}
+	elems := make([]database.DumpElem, 0, len(s.m)+len(s.sw)+len(s.tb)+len(s.q))
+	checked := 0
+	canceled := func() bool {
+		checked++
+		if checked%snapshotCancelCheckStride != 0 {
+			return false
 		}
+
+		return ctx.Err() != nil
 	}
 
-	for _, item := range swItems {
-		item.elem.Dump(ctx.Done(), item.key, dumpTx, ch)
-	}
+	for key, elem := range s.m {
+		if canceled() {
+			return elems
+		}
 
-	for _, item := range tbItems {
-		value, txAt, tx := item.elem.DumpValue(dumpTx)
+		value, txAt, tx := elem.DumpValue(dumpTx)
 		if value == database.ErrorValue {
 			continue
 		}
 
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		ch <- database.DumpElem{
-			Kind:      database.DumpElemKindTokenBucket,
-			Key:       item.key.key,
-			BatchSize: item.key.batchSize,
+		elems = append(elems, database.DumpElem{
+			Kind:      database.DumpElemKindCounter,
+			Key:       key.key,
+			BatchSize: key.batchSize,
 			Value:     value,
 			TxAt:      txAt,
 			Tx:        tx,
+		})
+	}
+
+	for key, elem := range s.sw {
+		if canceled() {
+			return elems
 		}
+
+		elems = elem.AppendDump(elems, key, dumpTx)
+	}
+
+	for key, elem := range s.tb {
+		if canceled() {
+			return elems
+		}
+
+		value, txAt, tx := elem.DumpValue(dumpTx)
+		if value == database.ErrorValue {
+			continue
+		}
+
+		elems = append(elems, database.DumpElem{
+			Kind:      database.DumpElemKindTokenBucket,
+			Key:       key.key,
+			BatchSize: key.batchSize,
+			Value:     value,
+			TxAt:      txAt,
+			Tx:        tx,
+		})
 	}
 
 	now := database.TxTime(time.Now().Unix())
-	for _, item := range qItems {
-		if config := item.elem.dumpConfig(dumpTx); config.ok {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+	for key, elem := range s.q {
+		if canceled() {
+			return elems
+		}
 
-			ch <- database.DumpElem{
+		if config := elem.dumpConfig(dumpTx); config.ok {
+			elems = append(elems, database.DumpElem{
 				Kind:      database.DumpElemKindQuotaConfig,
-				Key:       item.key,
+				Key:       key,
 				Limit:     config.limit,
 				Ownership: config.ownership,
 				Policy:    config.policy,
 				Clients:   config.clients,
 				Tx:        config.tx,
-			}
+			})
 		}
 
-		limit := item.elem.Limit()
-		for _, allocation := range item.elem.dumpAllocations(dumpTx, now) {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			ch <- database.DumpElem{
+		limit := elem.Limit()
+		for _, allocation := range elem.dumpAllocations(dumpTx, now) {
+			elems = append(elems, database.DumpElem{
 				Kind:      database.DumpElemKindQuotaAllocation,
-				Key:       item.key,
+				Key:       key,
 				Limit:     limit,
 				Value:     allocation.amount,
-				Ownership: item.elem.Ownership(),
-				Policy:    item.elem.Policy(),
-				Clients:   item.elem.Clients(),
+				Ownership: elem.Ownership(),
+				Policy:    elem.Policy(),
+				Clients:   elem.Clients(),
 				ClientID:  allocation.clientID,
 				ExpiresAt: allocation.expiresAt,
 				TxAt:      allocation.txAt,
 				Tx:        allocation.tx,
-			}
+			})
 		}
 	}
+
+	return elems
 }
 
 func (s *HashTable) RestoreDumpElem(elem database.DumpElem) {

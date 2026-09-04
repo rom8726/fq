@@ -35,6 +35,7 @@ func (d *Dumper) Restore(ctx context.Context) (database.Tx, error) {
 	}
 
 	var lastTx database.Tx
+	hasCheckpoint := false
 	batchCount := 0
 	offset := 0
 
@@ -69,16 +70,27 @@ func (d *Dumper) Restore(ctx context.Context) (database.Tx, error) {
 		batchCount++
 
 		for _, elem := range batch {
-			if err := d.engine.RestoreDumpElem(ctx, elem); err != nil {
-				return lastTx, fmt.Errorf("failed to restore dump elem (batch #%d, tx=%d): %w", batchCount, elem.Tx, err)
+			if elem.Kind == database.DumpElemKindCheckpoint {
+				lastTx = elem.Tx
+				hasCheckpoint = true
+
+				continue
 			}
 
-			if elem.Tx > lastTx {
-				lastTx = elem.Tx
+			if !hasCheckpoint {
+				return lastTx, fmt.Errorf("dump %s: missing checkpoint before batch #%d", dumpPath, batchCount)
+			}
+
+			if err := d.engine.RestoreDumpElem(ctx, elem); err != nil {
+				return lastTx, fmt.Errorf("failed to restore dump elem (batch #%d, tx=%d): %w", batchCount, elem.Tx, err)
 			}
 		}
 
 		offset = len(frames) - len(rest)
+	}
+
+	if !hasCheckpoint {
+		return lastTx, fmt.Errorf("dump %s: missing checkpoint", dumpPath)
 	}
 
 	return lastTx, nil

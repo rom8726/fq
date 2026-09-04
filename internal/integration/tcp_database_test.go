@@ -498,7 +498,7 @@ func TestTCPDatabaseDumpDuringWriteLoadRecoversAllAcknowledgedWrites(t *testing.
 		successful.Add(1)
 		if i == totalWrites/2 {
 			go func(tx database.Tx) {
-				dumpErr <- first.dumper.Dump(context.Background(), tx)
+				dumpErr <- first.makeDump(tx)
 			}(database.Tx(successful.Load()))
 		}
 	}
@@ -508,7 +508,7 @@ func TestTCPDatabaseDumpDuringWriteLoadRecoversAllAcknowledgedWrites(t *testing.
 	case <-time.After(5 * time.Second):
 		t.Fatal("dump during write load did not finish")
 	}
-	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(successful.Load())))
+	require.NoError(t, first.makeDump(database.Tx(successful.Load())))
 	first.Close()
 
 	second := startTestDatabaseWithDump(t, walDir, dumpDir, true)
@@ -854,7 +854,7 @@ func TestTCPDatabaseFlushDBRemovesOldDumpBeforeRecovery(t *testing.T) {
 
 	first := startTestDatabaseWithDump(t, walDir, dumpDir, false)
 	first.RequireQuery("INCR dumped 60", "ok|1")
-	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(1)))
+	require.NoError(t, first.makeDump(database.Tx(1)))
 	first.RequireQuery("FLUSHDB", "ok|1")
 	first.Close()
 
@@ -873,7 +873,7 @@ func TestTCPDatabaseTruncateClearsMemoryDumpAndLeavesReplicatedWALMarker(t *test
 	first := startTestDatabaseWithDump(t, walDir, dumpDir, false)
 	first.RequireQuery("INCR durable 60", "ok|1")
 	first.RequireQuery("QUOTA SET server_quota 10", "ok|1")
-	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(2)))
+	require.NoError(t, first.makeDump(database.Tx(2)))
 	_, err := os.Stat(filepath.Join(dumpDir, "current.dump"))
 	require.NoError(t, err)
 
@@ -909,7 +909,7 @@ func TestTCPDatabaseRecoversSlidingWindowFromDumpAfterRestart(t *testing.T) {
 	for i := 1; i <= 6; i++ {
 		first.RequireRateLimit("RLIMIT SW key_sw 10 600", true, database.ValueType(i), database.ValueType(10-i), 600)
 	}
-	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(6)))
+	require.NoError(t, first.makeDump(database.Tx(6)))
 	first.Close()
 
 	second := startTestDatabaseWithDump(t, walDir, dumpDir, true)
@@ -926,7 +926,7 @@ func TestTCPDatabaseRecoversTokenBucketFromDumpAfterRestart(t *testing.T) {
 	first.RequireRateLimit("RLIMIT TB key_tb 5 1 600", true, 1, 4, 600)
 	first.RequireRateLimit("RLIMIT TB key_tb 5 1 600", true, 2, 3, 600)
 	first.RequireRateLimit("RLIMIT TB key_tb 5 1 600", true, 3, 2, 600)
-	require.NoError(t, first.dumper.Dump(context.Background(), database.Tx(3)))
+	require.NoError(t, first.makeDump(database.Tx(3)))
 	first.Close()
 
 	second := startTestDatabaseWithDump(t, walDir, dumpDir, true)
@@ -967,6 +967,7 @@ type testDatabaseApp struct {
 	address         string
 	client          *network.TCPClient
 	storage         *storage.Storage
+	engine          *inmemory.Engine
 	dumper          *dumper.Dumper
 	walDir          string
 	cancel          context.CancelFunc
@@ -976,6 +977,17 @@ type testDatabaseApp struct {
 	replicationDone chan error
 	master          *replication.Master
 	logger          *zerolog.Logger
+}
+
+func (a *testDatabaseApp) makeDump(tx database.Tx) error {
+	a.t.Helper()
+
+	snapshot, err := a.engine.Snapshot(context.Background(), tx)
+	if err != nil {
+		return err
+	}
+
+	return a.dumper.Dump(context.Background(), tx, snapshot)
 }
 
 func startTestDatabase(t *testing.T, walDir string) *testDatabaseApp {
@@ -1067,6 +1079,7 @@ func startTestDatabaseWithDumpAndKeyIndex(
 		address: address,
 		client:  client,
 		storage: strg,
+		engine:  engine,
 		dumper:  dumpStore,
 		walDir:  walDir,
 		cancel:  cancel,

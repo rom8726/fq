@@ -51,7 +51,7 @@ type Engine interface {
 	Stats() database.EngineStats
 	Scan(prefix, cursor string, count uint32) (database.ScanResult, error)
 	Clean(context.Context)
-	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
+	Snapshot(context.Context, database.Tx) (database.DumpSnapshot, error)
 	RestoreDumpElem(context.Context, database.DumpElem) error
 }
 
@@ -111,7 +111,7 @@ type WAL interface {
 }
 
 type Dumper interface {
-	Dump(ctx context.Context, dumpTx database.Tx) error
+	Dump(ctx context.Context, dumpTx database.Tx, snapshot database.DumpSnapshot) error
 	Truncate(ctx context.Context) error
 }
 
@@ -147,6 +147,8 @@ type Storage struct {
 
 	tx                      atomic.Uint64
 	dumpTx                  atomic.Uint64
+	mutationMu              sync.RWMutex
+	dumpOpMu                sync.Mutex
 	limitEvents             map[chan database.LimitEvent]*limitEventSubscriber
 	quotaEvents             map[chan database.QuotaEvent]*quotaEventSubscriber
 	limitEventQueueCapacity int
@@ -260,7 +262,11 @@ func (s *Storage) Start(ctx context.Context) {
 
 	go s.gcLoop(ctx)
 	if s.dumper != nil {
-		go s.dumpLoop(ctx)
+		if s.replica == nil || s.replica.IsMaster() {
+			go s.dumpLoop(ctx)
+		} else {
+			s.logger.Info().Msg("periodic dump is disabled on a replica")
+		}
 	}
 }
 
@@ -297,6 +303,9 @@ func (s *Storage) Shutdown() {
 }
 
 func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.ValueType, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	return s.engine.Incr(txCtx, key, func() error {
@@ -304,11 +313,15 @@ func (s *Storage) Incr(ctx context.Context, key database.BatchKey) (database.Val
 	})
 }
 
+//nolint:dupl // ok
 func (s *Storage) RLimitFixedWindow(
 	ctx context.Context,
 	key database.BatchKey,
 	limit database.ValueType,
 ) (database.RateLimitResult, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitFixedWindow(txCtx, key, limit, func() error {
@@ -323,11 +336,15 @@ func (s *Storage) RLimitFixedWindow(
 	return result, nil
 }
 
+//nolint:dupl // ok
 func (s *Storage) RLimitSlidingWindow(
 	ctx context.Context,
 	key database.BatchKey,
 	limit database.ValueType,
 ) (database.RateLimitResult, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitSlidingWindow(txCtx, key, limit, func() error {
@@ -348,6 +365,9 @@ func (s *Storage) RLimitTokenBucket(
 	capacity database.ValueType,
 	refillAmount database.ValueType,
 ) (database.RateLimitResult, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.RLimitTokenBucket(txCtx, key, capacity, refillAmount, func() error {
@@ -366,6 +386,9 @@ func (s *Storage) QuotaAcquire(
 	ctx context.Context,
 	request database.QuotaAcquireRequest,
 ) (database.QuotaAcquireResult, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 	if request.TTL > 0 {
 		request.ExpiresAt = txCtx.CurrTime + database.TxTime(request.TTL)
@@ -393,6 +416,9 @@ func (s *Storage) QuotaAcquire(
 }
 
 func (s *Storage) QuotaSet(ctx context.Context, request database.QuotaSetRequest) (bool, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	changed, err := s.engine.QuotaSet(txCtx, request, func() error {
@@ -406,6 +432,9 @@ func (s *Storage) QuotaSet(ctx context.Context, request database.QuotaSetRequest
 }
 
 func (s *Storage) QuotaRelease(ctx context.Context, name, clientID string) (bool, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	result, err := s.engine.QuotaRelease(txCtx, name, clientID, func() error {
@@ -430,6 +459,9 @@ func (s *Storage) QuotaRelease(ctx context.Context, name, clientID string) (bool
 }
 
 func (s *Storage) QuotaDelete(ctx context.Context, name string) (bool, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	deleted, err := s.engine.QuotaDelete(txCtx, name, func() error {
@@ -461,6 +493,9 @@ func (s *Storage) Get(_ context.Context, key database.BatchKey) (database.ValueT
 }
 
 func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	if err := s.writeDelWAL(ctx, txCtx, key); err != nil {
@@ -471,6 +506,9 @@ func (s *Storage) Del(ctx context.Context, key database.BatchKey) (bool, error) 
 }
 
 func (s *Storage) MDel(ctx context.Context, keys []database.BatchKey) ([]bool, error) {
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
 	txCtx := s.makeTxContext()
 
 	if err := s.writeMDelWAL(ctx, txCtx, keys); err != nil {
@@ -481,12 +519,19 @@ func (s *Storage) MDel(ctx context.Context, keys []database.BatchKey) ([]bool, e
 }
 
 func (s *Storage) FlushDB(ctx context.Context) error {
-	txCtx := s.makeTxContext()
+	s.dumpOpMu.Lock()
+	defer s.dumpOpMu.Unlock()
+
 	if s.dumper != nil {
 		if err := s.dumper.Truncate(ctx); err != nil {
 			return err
 		}
 	}
+
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
+	txCtx := s.makeTxContext()
 	if s.wal != nil {
 		future := s.wal.FlushDB(ctx, txCtx)
 		if err := future.Get(); err != nil {
@@ -500,12 +545,19 @@ func (s *Storage) FlushDB(ctx context.Context) error {
 }
 
 func (s *Storage) Truncate(ctx context.Context) error {
-	txCtx := s.makeTxContext()
+	s.dumpOpMu.Lock()
+	defer s.dumpOpMu.Unlock()
+
 	if s.dumper != nil {
 		if err := s.dumper.Truncate(ctx); err != nil {
 			return err
 		}
 	}
+
+	s.mutationMu.RLock()
+	defer s.mutationMu.RUnlock()
+
+	txCtx := s.makeTxContext()
 	if s.wal != nil {
 		future := s.wal.Truncate(ctx, txCtx)
 		if err := future.Get(); err != nil {

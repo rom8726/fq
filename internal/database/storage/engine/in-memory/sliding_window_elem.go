@@ -93,12 +93,11 @@ func (e *SlidingWindowElem) Clean(now database.TxTime) bool {
 	return len(e.buckets) == 0
 }
 
-func (e *SlidingWindowElem) Dump(
-	ctxDone <-chan struct{},
+func (e *SlidingWindowElem) AppendDump(
+	dst []database.DumpElem,
 	key hashTableKey,
 	dumpTx database.Tx,
-	ch chan<- database.DumpElem,
-) {
+) []database.DumpElem {
 	now := database.TxTime(0)
 	e.mu.RLock()
 	buckets := make([]slidingWindowBucket, 0, len(e.buckets))
@@ -131,21 +130,17 @@ func (e *SlidingWindowElem) Dump(
 			continue
 		}
 
-		select {
-		case <-ctxDone:
-			return
-		default:
-		}
-
-		ch <- database.DumpElem{
+		dst = append(dst, database.DumpElem{
 			Kind:      database.DumpElemKindSlidingWindowBucket,
 			Key:       key.key,
 			BatchSize: key.batchSize,
 			Value:     count,
 			TxAt:      bucket.at,
 			Tx:        tx,
-		}
+		})
 	}
+
+	return dst
 }
 
 func (e *SlidingWindowElem) RestoreBucket(elem database.DumpElem) {

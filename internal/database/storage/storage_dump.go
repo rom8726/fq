@@ -31,12 +31,22 @@ func (s *Storage) dump(ctx context.Context) error {
 		return errDumpDisabled
 	}
 
+	s.dumpOpMu.Lock()
+	defer s.dumpOpMu.Unlock()
+
+	s.mutationMu.Lock()
 	dumpTx := database.Tx(s.tx.Load())
 	s.dumpTx.Store(uint64(dumpTx))
+	snapshot, snapshotErr := s.engine.Snapshot(ctx, dumpTx)
+	s.mutationMu.Unlock()
+
+	if snapshotErr != nil {
+		return snapshotErr
+	}
 
 	start := time.Now()
 	s.logger.Info().Any("dump_tx", dumpTx).Msg("Start of dump creation")
-	err := s.dumper.Dump(ctx, dumpTx)
+	err := s.dumper.Dump(ctx, dumpTx, snapshot)
 	elapsed := time.Since(start)
 	s.logger.Info().Str("elapsed", elapsed.String()).Msg("Dump creation finished")
 

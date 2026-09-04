@@ -14,7 +14,7 @@ import (
 	"github.com/fq-db/fq/internal/observability"
 )
 
-func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
+func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx, snapshot database.DumpSnapshot) error {
 	// Lock write access during dump creation
 	d.readDumpMu.Lock()
 	defer d.readDumpMu.Unlock()
@@ -46,23 +46,28 @@ func (d *Dumper) Dump(ctx context.Context, dumpTx database.Tx) error {
 		return fmt.Errorf("write dump header: %w", err)
 	}
 
-	dumpBatch := make([]database.DumpElem, 0, dumpBatchSize)
+	dumpBatch := []database.DumpElem{{
+		Kind: database.DumpElemKindCheckpoint,
+		Tx:   dumpTx,
+	}}
 
-	elemsC, errC := d.engine.Dump(ctx, dumpTx)
-	for elem := range elemsC {
-		dumpBatch = append(dumpBatch, elem)
-		if len(dumpBatch) >= dumpBatchSize {
-			err := d.writeBatch(f, dumpBatch)
-			if err != nil {
+	for _, group := range snapshot {
+		for _, elem := range group {
+			dumpBatch = append(dumpBatch, elem)
+			if len(dumpBatch) < dumpBatchSize {
+				continue
+			}
+
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			if err := d.writeBatch(f, dumpBatch); err != nil {
 				return fmt.Errorf("write batch: %w", err)
 			}
 
 			dumpBatch = dumpBatch[:0]
 		}
-	}
-
-	if err := <-errC; err != nil {
-		return fmt.Errorf("dump engine: %w", err)
 	}
 
 	if len(dumpBatch) > 0 {

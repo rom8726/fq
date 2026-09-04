@@ -1,7 +1,9 @@
 package dumper
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,7 +23,7 @@ func TestDumperWALCleanupUsesDumpTxWithoutProvider(t *testing.T) {
 	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 
 	require.Eventually(t, func() bool {
 		return wal.equalLSNs([]uint64{100})
@@ -33,7 +35,7 @@ func TestDumperCreatesMissingDumpDirectory(t *testing.T) {
 	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 
 	_, err := os.Stat(filepath.Join(dir, currentDumpFileName))
 	require.NoError(t, err)
@@ -45,7 +47,7 @@ func TestDumperWALCleanupIsCappedByReplicaAck(t *testing.T) {
 	defer d.Shutdown()
 	d.SetWALCleanupLSNProvider(staticCleanupLSNProvider{lsn: 40, ok: true})
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 
 	require.Eventually(t, func() bool {
 		return wal.equalLSNs([]uint64{40})
@@ -58,7 +60,7 @@ func TestDumperWALCleanupUsesDumpTxWhenReplicaAckIsAhead(t *testing.T) {
 	defer d.Shutdown()
 	d.SetWALCleanupLSNProvider(staticCleanupLSNProvider{lsn: 150, ok: true})
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 
 	require.Eventually(t, func() bool {
 		return wal.equalLSNs([]uint64{100})
@@ -71,7 +73,7 @@ func TestDumperWALCleanupKeepsWALWhenReplicaAckIsZero(t *testing.T) {
 	defer d.Shutdown()
 	d.SetWALCleanupLSNProvider(staticCleanupLSNProvider{lsn: 0, ok: true})
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 
 	require.Eventually(t, func() bool {
 		return wal.equalLSNs([]uint64{0})
@@ -82,7 +84,7 @@ func TestDumperDoesNotWaitForWALCleanup(t *testing.T) {
 	wal := &blockingWAL{release: make(chan struct{})}
 	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 	require.Eventually(t, func() bool {
 		return wal.startedCleanup()
 	}, time.Second, 10*time.Millisecond)
@@ -96,7 +98,7 @@ func TestDumperShutdownCancelsRunningWALCleanup(t *testing.T) {
 	wal := &blockingWAL{release: make(chan struct{})}
 	d := New(emptyDumpEngine{}, wal, t.TempDir(), format.Compression{})
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 	require.Eventually(t, func() bool {
 		return wal.startedCleanup()
 	}, time.Second, 10*time.Millisecond)
@@ -117,17 +119,15 @@ func TestDumperShutdownCancelsRunningWALCleanup(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
-type emptyDumpEngine struct{}
-
-func (e emptyDumpEngine) Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error) {
-	elems := make(chan database.DumpElem)
-	errs := make(chan error, 1)
-	close(elems)
-	errs <- nil
-	close(errs)
-
-	return elems, errs
+func testSnapshot(elems ...database.DumpElem) database.DumpSnapshot {
+	return database.DumpSnapshot{elems}
 }
+
+func singleElemSnapshot() database.DumpSnapshot {
+	return testSnapshot(database.DumpElem{Tx: 1, Key: "key"})
+}
+
+type emptyDumpEngine struct{}
 
 func (e emptyDumpEngine) RestoreDumpElem(context.Context, database.DumpElem) error {
 	return nil
@@ -195,14 +195,25 @@ func TestDumpFileStartsWithFormatHeader(t *testing.T) {
 	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(100)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(100), nil))
 
 	data, err := os.ReadFile(filepath.Join(dir, currentDumpFileName))
 	require.NoError(t, err)
 
 	rest, err := format.ParseHeader(data, format.MagicDump, dumpFormatVersionRaw)
 	require.NoError(t, err)
+
+	payload, rest, err := format.NextFrame(rest, dumpMaxFrameSize)
+	require.NoError(t, err)
 	require.Empty(t, rest)
+	decoded, err := format.DecodePayload(nil, payload, format.PayloadVersionRaw, dumpMaxFrameSize)
+	require.NoError(t, err)
+	var batch []database.DumpElem
+	require.NoError(t, gob.NewDecoder(bytes.NewReader(decoded)).Decode(&batch))
+	require.Equal(t, []database.DumpElem{{
+		Kind: database.DumpElemKindCheckpoint,
+		Tx:   100,
+	}}, batch)
 }
 
 func TestRestoreReadsBackWrittenElements(t *testing.T) {
@@ -211,7 +222,7 @@ func TestRestoreReadsBackWrittenElements(t *testing.T) {
 	d := New(engine, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1), singleElemSnapshot()))
 
 	tx, err := d.Restore(context.Background())
 	require.NoError(t, err)
@@ -225,7 +236,7 @@ func TestRestoreRejectsChecksumMismatch(t *testing.T) {
 	d := New(engine, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1), singleElemSnapshot()))
 
 	dumpPath := filepath.Join(dir, currentDumpFileName)
 	data, err := os.ReadFile(dumpPath)
@@ -242,7 +253,7 @@ func TestRestoreRejectsForeignMagic(t *testing.T) {
 	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1), singleElemSnapshot()))
 
 	dumpPath := filepath.Join(dir, currentDumpFileName)
 	data, err := os.ReadFile(dumpPath)
@@ -258,7 +269,7 @@ func TestRestoreRejectsUnknownFormatVersion(t *testing.T) {
 	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1), singleElemSnapshot()))
 
 	dumpPath := filepath.Join(dir, currentDumpFileName)
 	data, err := os.ReadFile(dumpPath)
@@ -289,13 +300,32 @@ func TestRestoreReturnsZeroWhenDumpIsMissing(t *testing.T) {
 	require.Zero(t, tx)
 }
 
+func TestRestoreRejectsDumpWithoutCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	d := New(emptyDumpEngine{}, nil, dir, format.Compression{})
+	defer d.Shutdown()
+
+	f, err := os.OpenFile(filepath.Join(dir, currentDumpFileName), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
+	require.NoError(t, err)
+	require.NoError(t, format.WriteHeader(f, format.MagicDump, dumpFormatVersionRaw))
+	require.NoError(t, d.writeBatch(f, []database.DumpElem{
+		{Kind: database.DumpElemKindCounter, Key: "old", BatchSize: 60, Tx: 3, TxAt: database.TxTime(time.Now().Unix())},
+		{Kind: database.DumpElemKindCounter, Key: "new", BatchSize: 60, Tx: 5, TxAt: database.TxTime(time.Now().Unix())},
+	}))
+	require.NoError(t, f.Close())
+
+	tx, err := d.Restore(context.Background())
+	require.ErrorContains(t, err, "missing checkpoint")
+	require.Zero(t, tx)
+}
+
 func TestGetNextDataRejectsChecksumMismatch(t *testing.T) {
 	dir := t.TempDir()
 	engine := &recordingRestoreEngine{}
 	d := New(engine, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(1)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(1), singleElemSnapshot()))
 
 	dumpPath := filepath.Join(dir, currentDumpFileName)
 	data, err := os.ReadFile(dumpPath)
@@ -311,18 +341,6 @@ type recordingRestoreEngine struct {
 	restored []database.DumpElem
 }
 
-func (e *recordingRestoreEngine) Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error) {
-	elems := make(chan database.DumpElem, 1)
-	errs := make(chan error, 1)
-
-	elems <- database.DumpElem{Tx: 1, Key: "key"}
-	close(elems)
-	errs <- nil
-	close(errs)
-
-	return elems, errs
-}
-
 func (e *recordingRestoreEngine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
 	e.restored = append(e.restored, elem)
 
@@ -335,7 +353,7 @@ func TestCompressedDumpRoundTrip(t *testing.T) {
 	d := New(&recordingRestoreEngine{}, nil, dir, compression)
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(10)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(10), singleElemSnapshot()))
 
 	data, err := os.ReadFile(filepath.Join(dir, currentDumpFileName))
 	require.NoError(t, err)
@@ -355,16 +373,16 @@ func TestCompressedDumpRoundTrip(t *testing.T) {
 
 	lastTx, err := reader.Restore(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, database.Tx(1), lastTx)
+	require.Equal(t, database.Tx(10), lastTx)
 	require.Len(t, engine.restored, 1)
 }
 
-func TestUncompressedDumpKeepsFormatVersionOne(t *testing.T) {
+func TestUncompressedDumpUsesRawFormatVersion(t *testing.T) {
 	dir := t.TempDir()
 	d := New(&recordingRestoreEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(3)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(3), nil))
 
 	data, err := os.ReadFile(filepath.Join(dir, currentDumpFileName))
 	require.NoError(t, err)

@@ -37,14 +37,18 @@ func TestDumper_GetNextData(t *testing.T) {
 	)
 
 	d := New(engine, nil, "/tmp", format.Compression{})
-	err = d.Dump(context.Background(), 1)
+	snapshot, err := engine.Snapshot(context.Background(), 1)
 	require.NoError(t, err)
+	require.NoError(t, d.Dump(context.Background(), 1, snapshot))
 
 	sessionUUID := "session1"
 	batch, ok, err := d.GetNextData(sessionUUID)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, 1, len(batch))
+	require.Len(t, batch, 2)
+	require.Equal(t, database.DumpElemKindCheckpoint, batch[0].Kind)
+	require.Equal(t, database.Tx(1), batch[0].Tx)
+	require.Equal(t, "key1", batch[1].Key)
 
 	batch, ok, err = d.GetNextData(sessionUUID)
 	require.NoError(t, err)
@@ -55,10 +59,10 @@ func TestDumper_GetNextData(t *testing.T) {
 func TestGetNextRawBatchPassesThroughMatchingCodec(t *testing.T) {
 	dir := t.TempDir()
 	compression := format.Compression{Codec: format.CodecZstd, MinFrameSize: 0}
-	d := New(compressibleDumpEngine{}, nil, dir, compression)
+	d := New(emptyDumpEngine{}, nil, dir, compression)
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(5)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(5), compressibleSnapshot()))
 
 	codec, data, ok, err := d.GetNextRawBatch("session-1", format.CodecZstd)
 	require.NoError(t, err)
@@ -70,10 +74,10 @@ func TestGetNextRawBatchPassesThroughMatchingCodec(t *testing.T) {
 func TestGetNextRawBatchRecodesToRequestedCodec(t *testing.T) {
 	dir := t.TempDir()
 	compression := format.Compression{Codec: format.CodecZstd, MinFrameSize: 0}
-	d := New(compressibleDumpEngine{}, nil, dir, compression)
+	d := New(emptyDumpEngine{}, nil, dir, compression)
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(5)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(5), compressibleSnapshot()))
 
 	codec, data, ok, err := d.GetNextRawBatch("session-2", format.CodecS2)
 	require.NoError(t, err)
@@ -93,7 +97,7 @@ func TestGetNextRawBatchOnUncompressedDump(t *testing.T) {
 	d := New(&recordingRestoreEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(5)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(5), singleElemSnapshot()))
 
 	_, data, ok, err := d.GetNextRawBatch("session-3", format.CodecS2)
 	require.NoError(t, err)
@@ -112,7 +116,7 @@ func TestGetNextRawBatchReturnsFalseAtEndOfDump(t *testing.T) {
 	d := New(&recordingRestoreEngine{}, nil, dir, format.Compression{})
 	defer d.Shutdown()
 
-	require.NoError(t, d.Dump(context.Background(), database.Tx(5)))
+	require.NoError(t, d.Dump(context.Background(), database.Tx(5), singleElemSnapshot()))
 
 	_, _, ok, err := d.GetNextRawBatch("session-4", format.CodecS2)
 	require.NoError(t, err)
@@ -123,22 +127,11 @@ func TestGetNextRawBatchReturnsFalseAtEndOfDump(t *testing.T) {
 	require.False(t, ok)
 }
 
-type compressibleDumpEngine struct{}
-
-func (compressibleDumpEngine) Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error) {
-	elems := make(chan database.DumpElem, 512)
-	errs := make(chan error, 1)
-
+func compressibleSnapshot() database.DumpSnapshot {
+	elems := make([]database.DumpElem, 0, 512)
 	for i := range 512 {
-		elems <- database.DumpElem{Tx: database.Tx(i + 1), Key: "repeating-key-prefix"}
+		elems = append(elems, database.DumpElem{Tx: database.Tx(i + 1), Key: "repeating-key-prefix"})
 	}
-	close(elems)
-	errs <- nil
-	close(errs)
 
-	return elems, errs
-}
-
-func (compressibleDumpEngine) RestoreDumpElem(context.Context, database.DumpElem) error {
-	return nil
+	return database.DumpSnapshot{elems}
 }

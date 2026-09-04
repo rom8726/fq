@@ -260,13 +260,8 @@ func (e *txRecordingEngine) Scan(string, string, uint32) (database.ScanResult, e
 
 func (e *txRecordingEngine) Clean(context.Context) {}
 
-func (e *txRecordingEngine) Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error) {
-	elems := make(chan database.DumpElem)
-	errs := make(chan error, 1)
-	close(elems)
-	close(errs)
-
-	return elems, errs
+func (e *txRecordingEngine) Snapshot(context.Context, database.Tx) (database.DumpSnapshot, error) {
+	return nil, nil
 }
 
 func (e *txRecordingEngine) RestoreDumpElem(context.Context, database.DumpElem) error {

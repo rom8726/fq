@@ -25,7 +25,6 @@ type WALCleanupLSNProvider interface {
 }
 
 type Engine interface {
-	Dump(context.Context, database.Tx) (<-chan database.DumpElem, <-chan error)
 	RestoreDumpElem(ctx context.Context, elem database.DumpElem) error
 }
 

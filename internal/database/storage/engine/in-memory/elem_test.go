@@ -232,11 +232,10 @@ func TestSlidingWindowElem_DumpRespectsDumpTxInsideBucket(t *testing.T) {
 	e.AddEvent(database.TxContext{Tx: 1, CurrTime: now})
 	e.AddEvent(database.TxContext{Tx: 2, CurrTime: now})
 
-	ch := make(chan database.DumpElem, 1)
-	e.Dump(nil, hashTableKey{key: "key", batchSize: 60}, 1, ch)
+	elems := e.AppendDump(nil, hashTableKey{key: "key", batchSize: 60}, 1)
 
-	require.Len(t, ch, 1)
-	elem := <-ch
+	require.Len(t, elems, 1)
+	elem := elems[0]
 	require.Equal(t, database.DumpElemKindSlidingWindowBucket, elem.Kind)
 	require.Equal(t, database.ValueType(1), elem.Value)
 	require.Equal(t, database.Tx(1), elem.Tx)

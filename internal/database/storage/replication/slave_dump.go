@@ -67,8 +67,8 @@ func (s *Slave) synchronizeDump(ctx context.Context) error {
 			return fmt.Errorf("failed to send dump data to stream: %w", err)
 		}
 
-		if len(elems) > 0 {
-			s.dumpLastSegmentNumber = maxLSN(elems)
+		if batchMaxLSN := maxLSN(elems); batchMaxLSN > s.dumpLastSegmentNumber {
+			s.dumpLastSegmentNumber = batchMaxLSN
 		}
 
 		if wasReadingDump && endOfDump {

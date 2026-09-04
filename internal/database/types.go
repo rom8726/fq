@@ -10,6 +10,7 @@ const (
 	DumpElemKindTokenBucket         uint32 = 2
 	DumpElemKindQuotaAllocation     uint32 = 3
 	DumpElemKindQuotaConfig         uint32 = 4
+	DumpElemKindCheckpoint          uint32 = 5
 )
 
 type ValueType int32
@@ -66,6 +67,8 @@ type DumpElem struct {
 	TxAt      TxTime
 	Tx        Tx
 }
+
+type DumpSnapshot [][]DumpElem
 
 type DumpChunk struct {
 	Elems   []DumpElem

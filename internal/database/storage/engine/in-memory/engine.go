@@ -77,7 +77,7 @@ type hashTable interface {
 	Scan(prefix string, after hashTableKey, count uint32) []database.BatchKey
 	Clean(ctx context.Context)
 	CompactIndex(ctx context.Context, maxDeletes int, budget time.Duration) bool
-	Dump(ctx context.Context, dumpTx database.Tx, ch chan<- database.DumpElem)
+	Snapshot(ctx context.Context, dumpTx database.Tx) []database.DumpElem
 	RestoreDumpElem(elem database.DumpElem)
 }
 
@@ -501,23 +501,32 @@ func (e *Engine) Clean(ctx context.Context) {
 	}
 }
 
-func (e *Engine) Dump(ctx context.Context, dumpTx database.Tx) (resC <-chan database.DumpElem, errsC <-chan error) {
-	ch := make(chan database.DumpElem, 1)
-	errC := make(chan error, 1)
+func (e *Engine) Snapshot(ctx context.Context, dumpTx database.Tx) (database.DumpSnapshot, error) {
+	snapshot := make(database.DumpSnapshot, len(e.partitions))
 
-	go func() {
-		defer close(ch)
-		defer close(errC)
+	var wg sync.WaitGroup
+	for i, partition := range e.partitions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		for _, partition := range e.partitions {
-			partition.Dump(ctx, dumpTx, ch)
-		}
-	}()
+			snapshot[i] = partition.Snapshot(ctx, dumpTx)
+		}()
+	}
+	wg.Wait()
 
-	return ch, errC
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	return snapshot, nil
 }
 
 func (e *Engine) RestoreDumpElem(_ context.Context, elem database.DumpElem) error {
+	if elem.Kind == database.DumpElemKindCheckpoint {
+		return nil
+	}
+
 	if elem.Kind == database.DumpElemKindTokenBucket || elem.Kind == database.DumpElemKindQuotaConfig {
 		idx := e.partitionIdx(elem.Key)
 		partition := e.partitions[idx]

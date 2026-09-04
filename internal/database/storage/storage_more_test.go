@@ -415,6 +415,31 @@ func (w *recordingWAL) TryRecoverWALSegments(context.Context, uint64) (uint64, e
 	return w.recoverLSN, nil
 }
 
+type blockingIncrWAL struct {
+	recordingWAL
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *blockingIncrWAL) Incr(ctx context.Context, txCtx database.TxContext, key database.BatchKey) tools.FutureError {
+	w.recordingWAL.Incr(ctx, txCtx, key)
+	promise := tools.NewPromise[error]()
+	w.once.Do(func() {
+		close(w.started)
+	})
+	go func() {
+		select {
+		case <-w.release:
+			promise.Set(nil)
+		case <-ctx.Done():
+			promise.Set(ctx.Err())
+		}
+	}()
+
+	return promise.GetFuture()
+}
+
 type recordingReplica struct {
 	master       bool
 	recoveredLSN uint64
@@ -429,23 +454,50 @@ func (r *recordingReplica) SetRecoveredWALState(lastAppliedLSN uint64) {
 }
 
 type fakeDumper struct {
-	dumped    atomic.Bool
-	truncated atomic.Bool
+	dumped          atomic.Bool
+	truncated       atomic.Bool
+	mu              sync.Mutex
+	dumpTxs         []database.Tx
+	dumpStart       chan database.Tx
+	snapshots       []database.DumpSnapshot
+	truncateStarted chan struct{}
+	truncateRelease chan struct{}
 }
 
-func (d *fakeDumper) Dump(context.Context, database.Tx) error {
+func (d *fakeDumper) Dump(_ context.Context, tx database.Tx, snapshot database.DumpSnapshot) error {
 	d.dumped.Store(true)
+	d.mu.Lock()
+	d.dumpTxs = append(d.dumpTxs, tx)
+	d.snapshots = append(d.snapshots, snapshot)
+	d.mu.Unlock()
+	if d.dumpStart != nil {
+		select {
+		case d.dumpStart <- tx:
+		default:
+		}
+	}
 
 	return nil
 }
 
 func (d *fakeDumper) Truncate(context.Context) error {
+	if d.truncateStarted != nil {
+		close(d.truncateStarted)
+		<-d.truncateRelease
+	}
+
 	d.truncated.Store(true)
 
 	return nil
 }
 
 func newTestStorageWithWAL(t *testing.T, wal WAL, syncCommit bool) *Storage {
+	t.Helper()
+
+	return newTestStorageWithWALAndDumper(t, wal, nil, syncCommit)
+}
+
+func newTestStorageWithWALAndDumper(t *testing.T, wal WAL, dumper Dumper, syncCommit bool) *Storage {
 	t.Helper()
 
 	logger := zerolog.Nop()
@@ -455,7 +507,7 @@ func newTestStorageWithWAL(t *testing.T, wal WAL, syncCommit bool) *Storage {
 	strg, err := NewStorage(
 		engine,
 		wal,
-		nil,
+		dumper,
 		nil,
 		&logger,
 		time.Hour,
@@ -532,6 +584,134 @@ func TestWriteWALAsyncCommitUsesAsynchronousCalls(t *testing.T) {
 		"IncrAsync", "DelAsync", "MDelAsync", "RLimitFixedWindowAsync", "RLimitSlidingWindowAsync",
 		"RLimitTokenBucketAsync", "QuotaSetAsync", "QuotaAcquireAsync", "QuotaReleaseAsync", "QuotaDeleteAsync",
 	}, wal.calls)
+}
+
+func TestDumpWaitsForInFlightMutationBeforeChoosingDumpTx(t *testing.T) {
+	wal := &blockingIncrWAL{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	dumper := &fakeDumper{dumpStart: make(chan database.Tx, 1)}
+	strg := newTestStorageWithWALAndDumper(t, wal, dumper, true)
+	ctx := context.Background()
+	key := database.BatchKey{Key: "k", BatchSize: 60, BatchSizeStr: "60"}
+
+	incrDone := make(chan error, 1)
+	go func() {
+		_, err := strg.Incr(ctx, key)
+		incrDone <- err
+	}()
+
+	select {
+	case <-wal.started:
+	case <-time.After(time.Second):
+		t.Fatal("INCR did not reach WAL write")
+	}
+
+	dumpDone := make(chan error, 1)
+	go func() {
+		dumpDone <- strg.dump(ctx)
+	}()
+
+	select {
+	case tx := <-dumper.dumpStart:
+		t.Fatalf("dump started before in-flight tx was applied: dump tx %d", tx)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(wal.release)
+	require.NoError(t, <-incrDone)
+	require.NoError(t, <-dumpDone)
+
+	dumper.mu.Lock()
+	require.Equal(t, []database.Tx{1}, dumper.dumpTxs)
+	dumper.mu.Unlock()
+}
+
+func TestDumpLoopRunsOnMasterOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		replica    Replica
+		wantDumped bool
+	}{
+		{name: "without replication", replica: nil, wantDumped: true},
+		{name: "master", replica: &recordingReplica{master: true}, wantDumped: true},
+		{name: "replica", replica: &recordingReplica{master: false}, wantDumped: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger := zerolog.Nop()
+			engine, err := inmemory.NewEngineWithKeyIndex(inmemory.IndexedHashTableBuilder, 1, &logger, nil, nil, true)
+			require.NoError(t, err)
+
+			dumper := &fakeDumper{}
+			strg, err := NewStorage(
+				engine,
+				nil,
+				dumper,
+				tc.replica,
+				&logger,
+				time.Hour,
+				10*time.Millisecond,
+				true,
+				config.DefaultLimitEventQueueCapacity,
+			)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			strg.Start(ctx)
+
+			if tc.wantDumped {
+				require.Eventually(t, dumper.dumped.Load, time.Second, 5*time.Millisecond)
+
+				return
+			}
+
+			require.Never(t, dumper.dumped.Load, 200*time.Millisecond, 10*time.Millisecond)
+		})
+	}
+}
+
+func TestFlushDBDoesNotBlockWritersWhileTruncatingDump(t *testing.T) {
+	dumper := &fakeDumper{
+		truncateStarted: make(chan struct{}),
+		truncateRelease: make(chan struct{}),
+	}
+	strg := newTestStorageWithWALAndDumper(t, &recordingWAL{}, dumper, true)
+	ctx := context.Background()
+
+	flushDone := make(chan error, 1)
+	go func() {
+		flushDone <- strg.FlushDB(ctx)
+	}()
+
+	select {
+	case <-dumper.truncateStarted:
+	case <-time.After(time.Second):
+		t.Fatal("FlushDB did not reach dumper truncate")
+	}
+
+	dumpDone := make(chan error, 1)
+	go func() {
+		dumpDone <- strg.dump(ctx)
+	}()
+
+	incrDone := make(chan error, 1)
+	go func() {
+		_, err := strg.Incr(ctx, database.BatchKey{Key: "k", BatchSize: 60, BatchSizeStr: "60"})
+		incrDone <- err
+	}()
+
+	select {
+	case err := <-incrDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("writer blocked while FlushDB was waiting for the dumper")
+	}
+
+	close(dumper.truncateRelease)
+	require.NoError(t, <-flushDone)
+	require.NoError(t, <-dumpDone)
 }
 
 func TestFlushDBAndTruncateUseWALAndDumper(t *testing.T) {
