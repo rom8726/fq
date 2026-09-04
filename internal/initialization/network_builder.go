@@ -92,5 +92,7 @@ func CreateNetwork(
 		logger.Warn().Str("address", address).Msg("client port has no authentication configured")
 	}
 
+	warnCleartextAuth(logger, clientPortName, address, registry.Enabled(), tlsConfig != nil)
+
 	return network.NewTCPServer(address, maxConnectionsNumber, maxMessageSize, idleTimeout, logger, options...)
 }

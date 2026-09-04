@@ -78,6 +78,8 @@ func CreateReplica(
 			options = append(options, network.WithTLS(serverTLS))
 		}
 
+		warnCleartextAuth(logger, replicationPortName, masterAddress, true, serverTLS != nil)
+
 		server, err := network.NewTCPServer(
 			masterAddress, maxReplicasNumber, maxMessageSize, idleTimeout, logger, options...,
 		)
@@ -92,6 +94,8 @@ func CreateReplica(
 	if err != nil {
 		return nil, fmt.Errorf("replication tls: %w", err)
 	}
+
+	warnCleartextAuth(logger, replicationPortName, masterAddress, true, clientTLS != nil)
 
 	// Create client factory for reconnection support
 	clientFactory := replication.NewTCPClientFactory(masterAddress, maxMessageSize, idleTimeout, clientTLS)

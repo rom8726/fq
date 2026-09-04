@@ -1,6 +1,7 @@
 package initialization
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
@@ -96,4 +97,51 @@ func TestReadOnlyIsTrueOnlyForSlave(t *testing.T) {
 	require.False(t, (&Initializer{}).readOnly())
 	require.False(t, (&Initializer{master: &replication.Master{}}).readOnly())
 	require.True(t, (&Initializer{slave: &replication.Slave{}}).readOnly())
+}
+
+func TestWarnCleartextAuthLogsWhenTLSIsDisabled(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := zerolog.New(&buffer)
+
+	warnCleartextAuth(&logger, clientPortName, "127.0.0.1:1945", true, false)
+
+	require.Contains(t, buffer.String(), "cleartext")
+	require.Contains(t, buffer.String(), clientPortName)
+	require.Contains(t, buffer.String(), "127.0.0.1:1945")
+}
+
+func TestWarnCleartextAuthIsSilentWhenTLSIsEnabled(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := zerolog.New(&buffer)
+
+	warnCleartextAuth(&logger, replicationPortName, ":1946", true, true)
+
+	require.Empty(t, buffer.String())
+}
+
+func TestWarnCleartextAuthIsSilentWithoutAuth(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := zerolog.New(&buffer)
+
+	warnCleartextAuth(&logger, clientPortName, ":1945", false, false)
+
+	require.Empty(t, buffer.String())
+}
+
+func TestCreateNetworkWarnsAboutCleartextTokens(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := zerolog.New(&buffer)
+
+	registry := security.NewRegistry()
+	require.NoError(t, registry.Add("admin-token-value", security.RoleAdmin))
+
+	_, err := CreateNetwork(config.NetworkConfig{
+		Address:        "127.0.0.1:0",
+		MaxConnections: 10,
+		MaxMessageSize: "4KB",
+		IdleTimeout:    time.Second,
+	}, registry, &logger)
+
+	require.NoError(t, err)
+	require.Contains(t, buffer.String(), "cleartext")
 }
