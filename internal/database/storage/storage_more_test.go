@@ -628,7 +628,24 @@ func TestDumpWaitsForInFlightMutationBeforeChoosingDumpTx(t *testing.T) {
 	dumper.mu.Unlock()
 }
 
-func TestDumpLoopRunsOnMasterOnly(t *testing.T) {
+type bootstrapReplica struct {
+	recordingReplica
+	dumpApplied chan struct{}
+}
+
+func (r *bootstrapReplica) WaitDumpApplied(ctx context.Context) error {
+	select {
+	case <-r.dumpApplied:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestDumpLoopWaitsForReplicationBootstrap(t *testing.T) {
+	bootstrapped := make(chan struct{})
+	close(bootstrapped)
+
 	for _, tc := range []struct {
 		name       string
 		replica    Replica
@@ -636,7 +653,21 @@ func TestDumpLoopRunsOnMasterOnly(t *testing.T) {
 	}{
 		{name: "without replication", replica: nil, wantDumped: true},
 		{name: "master", replica: &recordingReplica{master: true}, wantDumped: true},
-		{name: "replica", replica: &recordingReplica{master: false}, wantDumped: false},
+		{
+			name:       "replica after bootstrap",
+			replica:    &bootstrapReplica{dumpApplied: bootstrapped},
+			wantDumped: true,
+		},
+		{
+			name:       "replica still bootstrapping",
+			replica:    &bootstrapReplica{dumpApplied: make(chan struct{})},
+			wantDumped: false,
+		},
+		{
+			name:       "replica without bootstrap signal",
+			replica:    &recordingReplica{master: false},
+			wantDumped: false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logger := zerolog.Nop()
@@ -670,6 +701,34 @@ func TestDumpLoopRunsOnMasterOnly(t *testing.T) {
 			require.Never(t, dumper.dumped.Load, 200*time.Millisecond, 10*time.Millisecond)
 		})
 	}
+}
+
+func TestReplicaDumpUsesAppliedTxInsteadOfLocalCounter(t *testing.T) {
+	logger := zerolog.Nop()
+	engine := &txRecordingEngine{appliedTx: 42}
+	dumper := &fakeDumper{}
+	bootstrapped := make(chan struct{})
+	close(bootstrapped)
+
+	strg, err := NewStorage(
+		engine,
+		nil,
+		dumper,
+		&bootstrapReplica{dumpApplied: bootstrapped},
+		&logger,
+		time.Hour,
+		time.Hour,
+		true,
+		config.DefaultLimitEventQueueCapacity,
+	)
+	require.NoError(t, err)
+	strg.tx.Store(7)
+
+	require.NoError(t, strg.dump(context.Background()))
+
+	dumper.mu.Lock()
+	defer dumper.mu.Unlock()
+	require.Equal(t, []database.Tx{42}, dumper.dumpTxs)
 }
 
 func TestFlushDBDoesNotBlockWritersWhileTruncatingDump(t *testing.T) {

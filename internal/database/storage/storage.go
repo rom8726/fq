@@ -52,6 +52,8 @@ type Engine interface {
 	Scan(prefix, cursor string, count uint32) (database.ScanResult, error)
 	Clean(context.Context)
 	Snapshot(context.Context, database.Tx) (database.DumpSnapshot, error)
+	SnapshotApplied(context.Context) (database.DumpSnapshot, database.Tx, error)
+	SetAppliedTx(database.Tx)
 	RestoreDumpElem(context.Context, database.DumpElem) error
 }
 
@@ -123,6 +125,10 @@ type Replica interface {
 
 type walRecoveryObserver interface {
 	SetRecoveredWALState(lastAppliedLSN uint64)
+}
+
+type dumpBootstrapWaiter interface {
+	WaitDumpApplied(ctx context.Context) error
 }
 
 type quotaEventPublisher interface {
@@ -224,6 +230,7 @@ func NewStorage(
 func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
 	if s.wal == nil {
 		s.tx.Store(uint64(dumpLastTx))
+		s.engine.SetAppliedTx(dumpLastTx)
 
 		return nil
 	}
@@ -238,6 +245,7 @@ func (s *Storage) LoadWAL(ctx context.Context, dumpLastTx database.Tx) error {
 	}
 
 	s.tx.Store(lastLSN)
+	s.engine.SetAppliedTx(database.Tx(lastLSN))
 	if s.replica != nil && !s.replica.IsMaster() {
 		if observer, ok := s.replica.(walRecoveryObserver); ok {
 			observer.SetRecoveredWALState(lastLSN)
@@ -262,11 +270,7 @@ func (s *Storage) Start(ctx context.Context) {
 
 	go s.gcLoop(ctx)
 	if s.dumper != nil {
-		if s.replica == nil || s.replica.IsMaster() {
-			go s.dumpLoop(ctx)
-		} else {
-			s.logger.Info().Msg("periodic dump is disabled on a replica")
-		}
+		go s.dumpLoop(ctx)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -82,6 +83,8 @@ type hashTable interface {
 }
 
 type Engine struct {
+	applyMu             sync.RWMutex
+	appliedTx           atomic.Uint64
 	partitions          []hashTable
 	logger              *zerolog.Logger
 	walApplyWorkers     int
@@ -502,6 +505,31 @@ func (e *Engine) Clean(ctx context.Context) {
 }
 
 func (e *Engine) Snapshot(ctx context.Context, dumpTx database.Tx) (database.DumpSnapshot, error) {
+	e.applyMu.Lock()
+	defer e.applyMu.Unlock()
+
+	return e.snapshotLocked(ctx, dumpTx)
+}
+
+func (e *Engine) SnapshotApplied(ctx context.Context) (database.DumpSnapshot, database.Tx, error) {
+	e.applyMu.Lock()
+	defer e.applyMu.Unlock()
+
+	appliedTx := database.Tx(e.appliedTx.Load())
+
+	snapshot, err := e.snapshotLocked(ctx, appliedTx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return snapshot, appliedTx, nil
+}
+
+func (e *Engine) SetAppliedTx(tx database.Tx) {
+	e.advanceAppliedTx(uint64(tx))
+}
+
+func (e *Engine) snapshotLocked(ctx context.Context, dumpTx database.Tx) (database.DumpSnapshot, error) {
 	snapshot := make(database.DumpSnapshot, len(e.partitions))
 
 	var wg sync.WaitGroup
@@ -574,12 +602,36 @@ func (e *Engine) partitionIdx(key string) int {
 }
 
 func (e *Engine) applyLogs(logs []*wal.LogData) {
+	e.applyMu.RLock()
+	defer e.applyMu.RUnlock()
+
 	if e.walApplyWorkers <= 1 || len(logs) <= 1 {
 		e.applyLogsSequentially(logs)
-		return
+	} else {
+		e.applyLogsConcurrently(logs)
 	}
 
-	e.applyLogsConcurrently(logs)
+	e.advanceAppliedTx(maxLogLSN(logs))
+}
+
+func maxLogLSN(logs []*wal.LogData) uint64 {
+	maxLSN := uint64(0)
+	for _, log := range logs {
+		if log.LSN > maxLSN {
+			maxLSN = log.LSN
+		}
+	}
+
+	return maxLSN
+}
+
+func (e *Engine) advanceAppliedTx(tx uint64) {
+	for {
+		current := e.appliedTx.Load()
+		if tx <= current || e.appliedTx.CompareAndSwap(current, tx) {
+			return
+		}
+	}
 }
 
 //nolint:gocritic
@@ -1106,13 +1158,25 @@ func (e *Engine) applyMDelFromLog(log *wal.LogData) {
 }
 
 func (e *Engine) applyDump(dumpElems []database.DumpElem) error {
+	e.applyMu.RLock()
+	defer e.applyMu.RUnlock()
+
 	ctx := context.Background()
 	var result error
+	checkpoint := uint64(0)
 	for _, elem := range dumpElems {
+		if elem.Kind == database.DumpElemKindCheckpoint && uint64(elem.Tx) > checkpoint {
+			checkpoint = uint64(elem.Tx)
+		}
+
 		if err := e.RestoreDumpElem(ctx, elem); err != nil {
 			e.logger.Error().Err(err).Msg("failed to restore dump event")
 			result = errors.Join(result, err)
 		}
+	}
+
+	if result == nil {
+		e.advanceAppliedTx(checkpoint)
 	}
 
 	return result

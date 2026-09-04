@@ -1,6 +1,7 @@
 package inmemory
 
 import (
+	"context"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -374,4 +375,73 @@ func requireKeysFromDifferentPartitions(t *testing.T, engine *Engine) (database.
 
 	t.Fatal("could not find keys from different partitions")
 	return database.BatchKey{}, database.BatchKey{}
+}
+
+func snapshotElems(snapshot database.DumpSnapshot) []database.DumpElem {
+	elems := make([]database.DumpElem, 0)
+	for _, group := range snapshot {
+		elems = append(elems, group...)
+	}
+
+	return elems
+}
+
+func TestSnapshotAppliedCoversWritesFromWALApply(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngine(HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+
+	engine.SetAppliedTx(3)
+
+	now := database.TxTime(time.Now().Unix())
+	key := database.BatchKey{Key: "k", BatchSize: 600, BatchSizeStr: "600"}
+	for _, lsn := range []uint64{4, 5} {
+		_, incrErr := engine.Incr(
+			database.TxContext{Tx: database.Tx(lsn), CurrTime: now, FromWAL: true}, key, nil)
+		require.NoError(t, incrErr)
+	}
+	engine.SetAppliedTx(5)
+
+	snapshot, appliedTx, err := engine.SnapshotApplied(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, database.Tx(5), appliedTx)
+
+	elems := snapshotElems(snapshot)
+	require.Len(t, elems, 1)
+	require.Equal(t, "k", elems[0].Key)
+	require.Equal(t, database.ValueType(2), elems[0].Value)
+
+	stale, err := engine.Snapshot(context.Background(), 3)
+	require.NoError(t, err)
+	require.Empty(t, snapshotElems(stale))
+}
+
+func TestApplyDumpAdvancesAppliedTxToCheckpoint(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngine(HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+
+	now := database.TxTime(time.Now().Unix())
+	require.NoError(t, engine.applyDump([]database.DumpElem{
+		{Kind: database.DumpElemKindCheckpoint, Tx: 77},
+		{Kind: database.DumpElemKindCounter, Key: "k", BatchSize: 600, Value: 5, Tx: 70, TxAt: now},
+	}))
+
+	snapshot, appliedTx, err := engine.SnapshotApplied(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, database.Tx(77), appliedTx)
+	require.Len(t, snapshotElems(snapshot), 1)
+}
+
+func TestAppliedTxNeverGoesBackwards(t *testing.T) {
+	logger := zerolog.Nop()
+	engine, err := NewEngine(HashTableBuilder, 1, &logger, nil, nil)
+	require.NoError(t, err)
+
+	engine.SetAppliedTx(10)
+	engine.SetAppliedTx(4)
+
+	_, appliedTx, err := engine.SnapshotApplied(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, database.Tx(10), appliedTx)
 }

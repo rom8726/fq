@@ -11,6 +11,10 @@ import (
 var errDumpDisabled = errors.New("dump is disabled")
 
 func (s *Storage) dumpLoop(ctx context.Context) {
+	if !s.waitForDumpBootstrap(ctx) {
+		return
+	}
+
 	t := time.NewTicker(s.dumpInterval)
 	defer t.Stop()
 
@@ -26,6 +30,27 @@ func (s *Storage) dumpLoop(ctx context.Context) {
 	}
 }
 
+func (s *Storage) waitForDumpBootstrap(ctx context.Context) bool {
+	if s.replica == nil || s.replica.IsMaster() {
+		return true
+	}
+
+	waiter, ok := s.replica.(dumpBootstrapWaiter)
+	if !ok {
+		s.logger.Warn().Msg("periodic dump is disabled: replica cannot report replication bootstrap")
+
+		return false
+	}
+
+	if err := waiter.WaitDumpApplied(ctx); err != nil {
+		s.logger.Info().Err(err).Msg("periodic dump stopped while waiting for replication bootstrap")
+
+		return false
+	}
+
+	return true
+}
+
 func (s *Storage) dump(ctx context.Context) error {
 	if s.dumper == nil {
 		return errDumpDisabled
@@ -35,9 +60,10 @@ func (s *Storage) dump(ctx context.Context) error {
 	defer s.dumpOpMu.Unlock()
 
 	s.mutationMu.Lock()
-	dumpTx := database.Tx(s.tx.Load())
-	s.dumpTx.Store(uint64(dumpTx))
-	snapshot, snapshotErr := s.engine.Snapshot(ctx, dumpTx)
+	dumpTx, snapshot, snapshotErr := s.takeDumpSnapshot(ctx)
+	if snapshotErr == nil {
+		s.dumpTx.Store(uint64(dumpTx))
+	}
 	s.mutationMu.Unlock()
 
 	if snapshotErr != nil {
@@ -58,4 +84,17 @@ func (s *Storage) dump(ctx context.Context) error {
 	})
 
 	return err
+}
+
+func (s *Storage) takeDumpSnapshot(ctx context.Context) (database.Tx, database.DumpSnapshot, error) {
+	if s.replica != nil && !s.replica.IsMaster() {
+		snapshot, appliedTx, err := s.engine.SnapshotApplied(ctx)
+
+		return appliedTx, snapshot, err
+	}
+
+	dumpTx := database.Tx(s.tx.Load())
+	snapshot, err := s.engine.Snapshot(ctx, dumpTx)
+
+	return dumpTx, snapshot, err
 }

@@ -516,6 +516,10 @@ func (s *Slave) isNetworkError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
+func (s *Slave) WaitDumpApplied(ctx context.Context) error {
+	return s.waitForDumpApplied(ctx)
+}
+
 // waitForDumpApplied waits until dump is fully applied to the engine.
 func (s *Slave) waitForDumpApplied(ctx context.Context) error {
 	select {

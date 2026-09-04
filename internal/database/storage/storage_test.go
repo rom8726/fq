@@ -122,7 +122,8 @@ func TestLimitEventSubscriptionFiltersByPrefix(t *testing.T) {
 }
 
 type txRecordingEngine struct {
-	lastTx database.Tx
+	lastTx    database.Tx
+	appliedTx database.Tx
 }
 
 func (e *txRecordingEngine) Incr(
@@ -262,6 +263,14 @@ func (e *txRecordingEngine) Clean(context.Context) {}
 
 func (e *txRecordingEngine) Snapshot(context.Context, database.Tx) (database.DumpSnapshot, error) {
 	return nil, nil
+}
+
+func (e *txRecordingEngine) SnapshotApplied(context.Context) (database.DumpSnapshot, database.Tx, error) {
+	return nil, e.appliedTx, nil
+}
+
+func (e *txRecordingEngine) SetAppliedTx(tx database.Tx) {
+	e.appliedTx = tx
 }
 
 func (e *txRecordingEngine) RestoreDumpElem(context.Context, database.DumpElem) error {
