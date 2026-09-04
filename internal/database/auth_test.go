@@ -70,10 +70,16 @@ func (stubStorage) Scan(context.Context, string, string, uint32) (ScanResult, er
 func newTestDatabase(t *testing.T) *Database {
 	t.Helper()
 
+	return newTestDatabaseWithReadOnly(t, nil)
+}
+
+func newTestDatabaseWithReadOnly(t *testing.T, readOnly func() bool) *Database {
+	t.Helper()
+
 	logger := zerolog.Nop()
 	comp := compute.NewCompute(compute.NewParser(&logger), compute.NewAnalyzer(&logger), &logger)
 
-	return NewDatabase(comp, stubStorage{}, &logger, 4096)
+	return NewDatabase(comp, stubStorage{}, &logger, 4096, readOnly)
 }
 
 func authContext(t *testing.T) (context.Context, *security.Session) {
@@ -87,6 +93,40 @@ func authContext(t *testing.T) (context.Context, *security.Session) {
 	session := security.NewSession(registry)
 
 	return security.WithSession(context.Background(), session), session
+}
+
+func TestReadOnlyReplicaRejectsWrites(t *testing.T) {
+	db := newTestDatabaseWithReadOnly(t, func() bool { return true })
+	ctx, session := authContext(t)
+	require.NoError(t, session.Authenticate("admin-token-value"))
+
+	for _, query := range []string{
+		"INCR key 60",
+		"DEL key 60",
+		"MDEL key 60 key2 60",
+		"RLIMIT FW key 100 60",
+		"QUOTA SET name 10",
+		"QUOTA ACQ name 1 client",
+		"QUOTA REL name client",
+		"QUOTA DEL name",
+		"FLUSHDB",
+		"TRUNCATE",
+	} {
+		require.Contains(t, db.HandleQuery(ctx, query), "instance is a read-only replica", query)
+	}
+
+	for _, query := range []string{"GET key 60", "SCAN cursor 10", "QUOTA INF name"} {
+		require.NotContains(t, db.HandleQuery(ctx, query), "read-only replica", query)
+	}
+}
+
+func TestReadOnlyGateStaysOpenOnMaster(t *testing.T) {
+	db := newTestDatabaseWithReadOnly(t, func() bool { return false })
+	ctx, session := authContext(t)
+	require.NoError(t, session.Authenticate("admin-token-value"))
+
+	require.Equal(t, "ok|1", db.HandleQuery(ctx, "INCR key 60"))
+	require.Equal(t, "ok|1", db.HandleQuery(ctx, "FLUSHDB"))
 }
 
 func TestUnauthenticatedCommandsAreRejected(t *testing.T) {

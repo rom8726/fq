@@ -41,6 +41,7 @@ const (
 	CodeMessageSizeTooSmall   Code = 5003
 
 	CodeUnsupportedCompression Code = 5004
+	CodeReadOnlyReplica        Code = 5005
 
 	CodeInternal              Code = 9000
 	CodeInternalConfiguration Code = 9001
@@ -90,6 +91,7 @@ var codes = []CodeInfo{
 		"CodeUnsupportedCompression",
 		"replica does not support the configured compression codec",
 	},
+	{CodeReadOnlyReplica, "CodeReadOnlyReplica", "instance is a read-only replica"},
 	{CodeInternal, "CodeInternal", "internal error"},
 	{CodeInternalConfiguration, "CodeInternalConfiguration", "internal configuration error"},
 }

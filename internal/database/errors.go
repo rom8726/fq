@@ -24,4 +24,6 @@ var (
 		protocol.CodeInvalidScanCursor, "invalid scan cursor")
 	ErrScanIndexDisabled = protocol.NewError(
 		protocol.CodeScanIndexDisabled, "scan index is disabled")
+	ErrReadOnlyReplica = protocol.NewError(
+		protocol.CodeReadOnlyReplica, "instance is a read-only replica")
 )

@@ -1052,7 +1052,7 @@ func startTestDatabaseWithDumpAndKeyIndex(
 	strg.Start(ctx)
 
 	comp := compute.NewCompute(compute.NewParser(&logger), compute.NewAnalyzer(&logger), &logger)
-	db := database.NewDatabase(comp, strg, &logger, 64<<10)
+	db := database.NewDatabase(comp, strg, &logger, 64<<10, nil)
 	address := freeLocalAddress(t)
 	server, err := network.NewTCPServer(address, 128, 64<<10, time.Second, &logger,
 		network.WithConnContext(func(ctx context.Context, _ net.Conn) context.Context {
@@ -1184,7 +1184,7 @@ func startQueryServer(
 	t.Helper()
 
 	comp := compute.NewCompute(compute.NewParser(logger), compute.NewAnalyzer(logger), logger)
-	db := database.NewDatabase(comp, strg, logger, 64<<10)
+	db := database.NewDatabase(comp, strg, logger, 64<<10, nil)
 	address := freeLocalAddress(t)
 	server, err := network.NewTCPServer(address, 128, 64<<10, time.Second, logger,
 		network.WithConnContext(func(ctx context.Context, _ net.Conn) context.Context {

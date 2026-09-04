@@ -57,6 +57,25 @@ func commandRole(query compute.Query) security.Role {
 	return role
 }
 
+func isReadOnlyQuery(query compute.Query) bool {
+	switch query.CommandID() {
+	case compute.GetCommandID,
+		compute.ScanCommandID,
+		compute.PScanCommandID,
+		compute.WatchCommandID,
+		compute.StreamCommandID,
+		compute.PStreamCommandID,
+		compute.QStreamCommandID,
+		compute.QPStreamCommandID,
+		compute.InspectCommandID:
+		return true
+	case compute.QuotaCommandID:
+		return commandRole(query) == security.RoleRO
+	default:
+		return false
+	}
+}
+
 func (d *Database) handleAuthQuery(
 	session *security.Session,
 	query compute.Query,

@@ -94,6 +94,7 @@ type Database struct {
 	storageLayer   storageLayer
 	logger         *zerolog.Logger
 	maxMessageSize int
+	readOnly       func() bool
 	inspector      inspector
 }
 
@@ -106,12 +107,14 @@ func NewDatabase(
 	storageLayer storageLayer,
 	logger *zerolog.Logger,
 	maxMessageSize int,
+	readOnly func() bool,
 ) *Database {
 	return &Database{
 		computeLayer:   computeLayer,
 		storageLayer:   storageLayer,
 		logger:         logger,
 		maxMessageSize: maxMessageSize,
+		readOnly:       readOnly,
 	}
 }
 
@@ -201,6 +204,10 @@ func (d *Database) HandleQueryStream(ctx context.Context, queryStr string, write
 		if err := session.Authorize(commandRole(query)); err != nil {
 			return write(d.appendErrorMsg(responseBuffer.buf[:0], err))
 		}
+	}
+
+	if d.readOnly != nil && !isReadOnlyQuery(query) && d.readOnly() {
+		return write(d.appendErrorMsg(responseBuffer.buf[:0], ErrReadOnlyReplica))
 	}
 
 	var response []byte

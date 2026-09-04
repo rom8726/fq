@@ -91,3 +91,9 @@ func TestCreateNetworkRejectsBrokenTLS(t *testing.T) {
 
 	require.Error(t, err)
 }
+
+func TestReadOnlyIsTrueOnlyForSlave(t *testing.T) {
+	require.False(t, (&Initializer{}).readOnly())
+	require.False(t, (&Initializer{master: &replication.Master{}}).readOnly())
+	require.True(t, (&Initializer{slave: &replication.Slave{}}).readOnly())
+}

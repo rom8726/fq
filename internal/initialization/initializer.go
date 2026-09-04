@@ -217,7 +217,7 @@ func (i *Initializer) StartDatabase(ctx context.Context) error {
 		close(i.dumpStream)
 	}()
 
-	db := database.NewDatabase(computeLayer, strg, i.logger, i.maxMessageSize)
+	db := database.NewDatabase(computeLayer, strg, i.logger, i.maxMessageSize, i.readOnly)
 	inspector := inspect.New(inspect.Deps{
 		Cfg:       i.cfg,
 		Storage:   strg,
@@ -313,6 +313,10 @@ func (i *Initializer) createStorageLayer() (*storage.Storage, error) {
 	}
 
 	return strg, nil
+}
+
+func (i *Initializer) readOnly() bool {
+	return i.slave != nil && !i.slave.IsMaster()
 }
 
 func (i *Initializer) initializeReplication(replica interface{}) {
